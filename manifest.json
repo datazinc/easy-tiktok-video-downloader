@@ -1,0 +1,25 @@
+{
+  "name": "Easy TikTok Profile Download",
+  "description": "Extract all tiktok profile video links like a pro!",
+  "version": "1.0",
+  "manifest_version": 3,
+  "host_permissions": ["*://*.tiktok.com/"],
+  "permissions": ["activeTab"],
+  "web_accessible_resources": [
+    {
+      "resources": ["injex.js"],
+      "matches": ["*://*.tiktok.com/*"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://*.tiktok.com/*"],
+      "js": ["content.js"],
+      "css": ["injex.css"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

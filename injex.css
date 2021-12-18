@@ -1,0 +1,51 @@
+.ettpd-wrapper {
+  position: fixed;
+  height: 400px;
+  width: 308px;
+  background-color: yellow;
+  bottom: 70px;
+  right: 20px;
+  z-index: 999;
+  overflow: overlay;
+  border-radius: 4px;
+  -webkit-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+  -moz-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+  box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+}
+
+.ettpd-a:hover {
+  text-decoration: underline;
+}
+
+.ettpd-ta {
+  width: 100%;
+  height: 40px;
+  border: none;
+}
+
+.ettpd-btn,
+.ettpd-span {
+  width: 100%;
+  border: none;
+  padding: 4px;
+  background-color: #fe2c55;
+  cursor: pointer;
+  transition: background-color ease-in-out 200ms;
+}
+
+.ettpd-btn:hover {
+  background-color: #f88aa0;
+}
+
+.ettpd-span {
+  width: 300px;
+  display: block;
+  position: fixed;
+  bottom: 50px;
+  right: 20px;
+  padding: -4px;
+  height: 20px;
+  border-bottom-left-radius: 4px;
+  border-bottom-right-radius: 4px;
+  text-align: center;
+}
