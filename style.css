@@ -1,11 +1,42 @@
-html, body{
-    margin: 0;
-    padding: 0;
+html,
+body {
+  margin: 0;
+  padding: 0;
 }
-div{
-    padding: 5px;
-    height: 200px;
-    width: 200px;
-    background-color: yellow;
-    font-size: 1.2em;
+div {
+  padding: 5px;
+  width: 500px;
+  background-color: yellow;
+  font-size: 1.2em;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+input {
+  border: 1px solid black;
+  padding: 3px;
+  font-size: 1.1em;
+}
+
+button {
+  border: none;
+  padding: 4px 30px;
+
+  background-color: #fe2c55;
+  cursor: pointer;
+  transition: background-color ease-in-out 200ms;
+}
+#start-wrapper {
+display: flex;
+flex-direction: row;
+}
+
+h3{
+    margin-top: 0;
+}
+
+p{
+    margin: 5px;
+    padding: 2px;
 }

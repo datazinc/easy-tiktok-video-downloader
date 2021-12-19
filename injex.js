@@ -18,8 +18,8 @@ let allDirectLinks = [];
     this.addEventListener("load", function () {
       let data = {}
       try {
-      data = JSON.parse(this.responseText);    
-      } catch (error) {}
+        data = JSON.parse(this.responseText);
+      } catch (error) { }
       if (data.itemList) {
         let path = document.location.pathname;
         if (!requestObjects[path]) requestObjects[path] = [];
@@ -36,7 +36,7 @@ function displayFoundUrls(requests) {
   allDirectLinks = [];
   const _id = "ttk-downloader-wrapper";
   if (requests?.length) document.getElementById(_id)?.remove();
-
+  else return;
   let wrapper = document.createElement("div");
   wrapper.className = "ettpd-wrapper";
   let copyAllLinksBtn = document.createElement("button");
@@ -82,7 +82,7 @@ function displayFoundUrls(requests) {
   reportBugBtn.innerText = "Report Bugs";
   let reportBugBtnLink = document.createElement("a");
   reportBugBtnLink.target = "_blank";
-  reportBugBtnLink.href = "https://github.com/Aimuhire";
+  reportBugBtnLink.href = "https://forms.gle/Up1JaQJjxSBNYsZw5";
   reportBugBtnLink.appendChild(reportBugBtn);
   wrapper.appendChild(itemsList);
 
