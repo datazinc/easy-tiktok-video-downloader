@@ -2,7 +2,6 @@ let requestObjects = {};
 let allDirectLinks = [];
 
 (function () {
-
   var XHR = XMLHttpRequest.prototype;
   var open = XHR.open;
   var send = XHR.send;
@@ -16,7 +15,7 @@ let allDirectLinks = [];
   // Listen to traffic
   XHR.send = function (postData) {
     this.addEventListener("load", function () {
-      let data = {}
+      let data = {};
       try {
         data = JSON.parse(this.responseText);
       } catch (error) { }
@@ -48,6 +47,7 @@ function displayFoundUrls(requests) {
   let allLinksTextArea = document.createElement("textarea");
   allLinksTextArea.className = "ettpd-ta";
   creditsText.innerHTML = `&copy; ${new Date().getFullYear()} - Made by DataZinc💛`;
+  creditsText.onclick = hideDownloader;
   copyAllLinksBtn.addEventListener("click", () =>
     copyAllLinks(allLinksTextArea, copyAllLinksBtn)
   );
@@ -66,7 +66,8 @@ function displayFoundUrls(requests) {
         let anc = document.createElement("a");
         anc.className = "ettpd-a";
         anc.target = "_blank";
-        anc.innerText = `Video ${idx}: ${media?.desc}`;
+        anc.innerText = `Video ${idx}`;
+        if (media?.desc) anc.innerText += ` : ${media?.desc}`;
         anc.href = media?.video?.playAddr;
         allDirectLinks.push(anc.href);
 
@@ -82,7 +83,7 @@ function displayFoundUrls(requests) {
   reportBugBtn.innerText = "Report Bugs";
   let reportBugBtnLink = document.createElement("a");
   reportBugBtnLink.target = "_blank";
-  reportBugBtnLink.href = "https://forms.gle/Up1JaQJjxSBNYsZw5";
+  reportBugBtnLink.href = "https://bit.ly/ettpd-issues";
   reportBugBtnLink.appendChild(reportBugBtn);
   wrapper.appendChild(itemsList);
 
@@ -92,6 +93,28 @@ function displayFoundUrls(requests) {
   wrapper.prepend(allLinksTextArea);
   wrapper.prepend(copyAllLinksBtn);
   wrapper.append(creditsText);
+
+  let closeButton = document.createElement("button");
+  closeButton.id = "ettpd-close";
+  closeButton.onclick = hideDownloader;
+  closeButton.innerText = "X";
+  console.log(closeButton.style);
+  console.log(wrapper.clientHeight);
+  wrapper.prepend(closeButton);
+}
+
+function hideDownloader() {
+  document.getElementById("ttk-downloader-wrapper")?.remove();
+  let showDownloaderBtn = document.createElement("button");
+  showDownloaderBtn.id = "ettpd-show";
+  showDownloaderBtn.innerText = "Show Download Links";
+  showDownloaderBtn.onclick = showDownloader;
+  document.body.appendChild(showDownloaderBtn);
+}
+
+function showDownloader() {
+  displayFoundUrls(requestObjects[document.location.pathname]);
+  document.getElementById("ettpd-show")?.remove();
 }
 
 function pollNextData() {
