@@ -1,7 +1,7 @@
 {
   "name": "Easy TikTok Profile Download",
   "description": "Extract all tiktok profile video links like a pro!",
-  "version": "1.1",
+  "version": "1.2",
   "manifest_version": 3,
   "host_permissions": ["*://*.tiktok.com/"],
   "permissions": ["activeTab"],
