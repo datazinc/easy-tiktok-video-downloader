@@ -1,5 +1,7 @@
-let requestObjects = {};
+let postItems = {};
 let allDirectLinks = [];
+let isFirstTime = true;
+let displayedItemsId = {};
 
 (function () {
   var XHR = XMLHttpRequest.prototype;
@@ -10,32 +12,30 @@ let allDirectLinks = [];
     this._url = url;
     return open.apply(this, arguments);
   };
-  // Get initial page data :)
-  pollNextData();
   // Listen to traffic
   XHR.send = function (postData) {
     this.addEventListener("load", function () {
       let data = {};
       try {
-        data = JSON.parse(this.responseText);
-      } catch (error) { }
+        if (this.responseType === "" || this.responseType === "text")
+          data = JSON.parse(this.responseText);
+      } catch (error) {}
       if (data.itemList) {
-        let path = document.location.pathname;
-        if (!requestObjects[path]) requestObjects[path] = [];
-        requestObjects[path].push(data);
-        displayFoundUrls(requestObjects[path]);
+        handleFoundItems(data.itemList);
       }
     });
     return send.apply(this, arguments);
   };
 })();
 
-function displayFoundUrls(requests) {
+function displayFoundUrls() {
   // reset all direct links
   allDirectLinks = [];
+  let items = postItems[getCurrentPageUsername()];
   const _id = "ttk-downloader-wrapper";
-  if (requests?.length) document.getElementById(_id)?.remove();
-  else return;
+
+  if (!items || !items?.length) return;
+  document.getElementById(_id)?.remove();
   let wrapper = document.createElement("div");
   wrapper.className = "ettpd-wrapper";
   let copyAllLinksBtn = document.createElement("button");
@@ -46,6 +46,8 @@ function displayFoundUrls(requests) {
   creditsText.className = "ettpd-span";
   let allLinksTextArea = document.createElement("textarea");
   allLinksTextArea.className = "ettpd-ta";
+  let currentVideoBtn = document.createElement("button");
+  currentVideoBtn.classList = "ettpd-current-video-btn ettpd-btn";
   creditsText.innerHTML = `&copy; ${new Date().getFullYear()} - Made by DataZinc💛`;
   creditsText.onclick = hideDownloader;
   copyAllLinksBtn.addEventListener("click", () =>
@@ -58,27 +60,24 @@ function displayFoundUrls(requests) {
   wrapper.id = _id;
   let itemsList = document.createElement("ol");
   let idx = 1;
-  requests.forEach((request) => {
-    let items = request?.props?.pageProps?.items || request?.itemList || [];
-    if (items.length) {
-      items.forEach((media) => {
-        let item = document.createElement("li");
-        let anc = document.createElement("a");
-        anc.className = "ettpd-a";
-        anc.target = "_blank";
-        anc.innerText = `Video ${idx}`;
-        if (media?.desc) anc.innerText += ` : ${media?.desc}`;
-        anc.href = media?.video?.playAddr;
-        allDirectLinks.push(anc.href);
+  items.forEach((media) => {
+    let item = document.createElement("li");
+    let anc = document.createElement("a");
+    anc.className = "ettpd-a";
+    anc.target = "_blank";
+    anc.innerText = `Video ${idx}`;
+    if (media?.desc) anc.innerText += ` : ${media?.desc}`;
+    anc.href = media?.video?.playAddr;
+    allDirectLinks.push(anc.href);
 
-        item.appendChild(anc);
-        itemsList.appendChild(item);
-        idx++;
-      });
-    }
+    item.appendChild(anc);
+    itemsList.appendChild(item);
+    idx++;
   });
-  copyAllLinksBtn.innerText = `Copy All ${allDirectLinks?.length || 0} Links: ${document.location?.pathname?.split("/")[1]
-    }`;
+
+  copyAllLinksBtn.innerText = `Copy All ${
+    allDirectLinks?.length || 0
+  } Links: ${getCurrentPageUsername()}`;
 
   reportBugBtn.innerText = "Report Bugs";
   let reportBugBtnLink = document.createElement("a");
@@ -89,6 +88,20 @@ function displayFoundUrls(requests) {
 
   document.body.appendChild(wrapper);
   allLinksTextArea.value = allDirectLinks.join(" \n");
+  if (document.location.pathname.split("/").length == 4) {
+    currentVideoBtn.innerText = "Download Current Page Video!";
+    let currentVideo = postItems[getCurrentPageUsername()].find(
+      (item) => item.id == document.location.pathname.split("/")[3]
+    );
+
+    let currentVideoLink = document.createElement("a");
+    currentVideoLink.target = "_blank";
+    currentVideoLink.href = currentVideo?.video?.playAddr;
+    currentVideoLink.download =
+      getCurrentPageUsername() + currentVideo?.id + ".mp4";
+    currentVideoLink.appendChild(currentVideoBtn);
+    if (currentVideo) wrapper.prepend(currentVideoLink);
+  }
   wrapper.prepend(reportBugBtnLink);
   wrapper.prepend(allLinksTextArea);
   wrapper.prepend(copyAllLinksBtn);
@@ -98,8 +111,6 @@ function displayFoundUrls(requests) {
   closeButton.id = "ettpd-close";
   closeButton.onclick = hideDownloader;
   closeButton.innerText = "X";
-  console.log(closeButton.style);
-  console.log(wrapper.clientHeight);
   wrapper.prepend(closeButton);
 }
 
@@ -113,21 +124,18 @@ function hideDownloader() {
 }
 
 function showDownloader() {
-  displayFoundUrls(requestObjects[document.location.pathname]);
+  displayFoundUrls();
   document.getElementById("ettpd-show")?.remove();
 }
 
-function pollNextData() {
-  if (document.getElementById("__NEXT_DATA__")) {
-    let path = document.location.pathname;
-    if (!requestObjects[path]) requestObjects[path] = [];
-    requestObjects[path].push(
-      JSON.parse(document.getElementById("__NEXT_DATA__").innerText)
-    );
-  } else
-    setTimeout(() => {
-      pollNextData();
-    }, 3000);
+function pollInitialData() {
+  const loggedInDataItems = getLoggedInInitialData();
+  if (loggedInDataItems.length) handleFoundItems(loggedInDataItems);
+  const loggedOutDataItems = getLoggedOutInitialData();
+  if (loggedOutDataItems.length) handleFoundItems(loggedOutDataItems);
+  setTimeout(() => {
+    pollInitialData();
+  }, 3000);
 }
 
 function copyAllLinks(inputElement, mainBtn) {
@@ -141,14 +149,119 @@ function copyAllLinks(inputElement, mainBtn) {
   }, 3000);
 }
 
-let currentPath = document.location.pathname;
+function handleFoundItems(newItems) {
+  if (!postItems[getCurrentPageUsername()])
+    postItems[getCurrentPageUsername()] = [];
+  let nonDuplicateItems = generateNonDuplicateItems(
+    postItems[getCurrentPageUsername()],
+    newItems
+  );
+  if (nonDuplicateItems.length)
+    postItems[`/@${nonDuplicateItems[0].author}`] = nonDuplicateItems;
 
-setInterval(() => {
-  if (currentPath != document.location.pathname) {
-    currentPath = document.location.pathname;
-    allDirectLinks = [];
-    const _id = "ttk-downloader-wrapper";
-    document.getElementById(_id)?.remove();
-    displayFoundUrls(requestObjects[document.location.pathname]);
+  let currentPathContentId = document.location.pathname;
+
+  postItems[getCurrentPageUsername()].forEach(
+    (item) => (currentPathContentId += item.id)
+  );
+  if (displayedItemsId[getCurrentPageUsername()] != currentPathContentId) {
+    displayedItemsId[getCurrentPageUsername()] = currentPathContentId;
+    displayFoundUrls();
   }
-}, 1000);
+}
+
+function generateNonDuplicateItems(nonDuplicateItems, newItems) {
+  if (!Array.isArray(nonDuplicateItems))
+    throw Error("nonDuplicateItems must be an array");
+  if (!newItems || !newItems.length) {
+    return [];
+  }
+
+  newItems.forEach((item) => {
+    if (
+      nonDuplicateItems.findIndex((nonDupItem) => nonDupItem.id == item.id) < 0
+    ) {
+      if (
+        getCurrentPageUsername() == item?.author ||
+        getCurrentPageUsername() == item?.author?.uniqueId
+      ) {
+        nonDuplicateItems.push(item);
+      }
+    }
+  });
+  return nonDuplicateItems;
+}
+
+// TODO: Know why the website is aborting request instead of overwriting the abort method with a dummy function.
+window.AbortController.prototype.abort = () => {};
+
+const browserFetch = window.fetch;
+window.fetch = async (...args) => {
+  const response = await browserFetch(...args);
+  response
+    .clone()
+    .json()
+    .then((body) => {
+      if (body.itemList) {
+        handleFoundItems(body.itemList);
+      }
+    });
+  return response;
+};
+
+function getLoggedInInitialData() {
+  // List of {id, url}
+  let orderedItems = [];
+  try {
+    let preLoadedList =
+      window.SIGI_STATE.ItemList["user-post"]?.preloadList || [];
+    // meta data
+    let preLoadedListMetadata = window.SIGI_STATE.ItemModule;
+
+    preLoadedList.forEach((item) => {
+      orderedItems.push(preLoadedListMetadata[item.id]);
+    });
+  } catch (error) {}
+  try {
+    let singleVideoId = window.SIGI_STATE.ItemList.video.list[0];
+    let singleVideoMetadata = window.SIGI_STATE.ItemModule[singleVideoId];
+    orderedItems.push(singleVideoMetadata);
+  } catch (error) {}
+
+  return orderedItems;
+}
+
+function getLoggedOutInitialData() {
+  let items = [];
+  if (document.getElementById("__NEXT_DATA__")) {
+    let initialData = JSON.parse(
+      document.getElementById("__NEXT_DATA__").innerText
+    );
+
+    items = initialData?.props?.pageProps?.items || [];
+  }
+  return items;
+}
+
+// Launch global polls
+// Initial Data Poll
+window.onload = () => {
+  pollInitialData();
+
+  // Page change poll
+  let currentPageUsername = getCurrentPageUsername();
+
+  setInterval(() => {
+    if (currentPageUsername != getCurrentPageUsername()) {
+      currentPageUsername = getCurrentPageUsername();
+      allDirectLinks = [];
+      const _id = "ttk-downloader-wrapper";
+      document.getElementById(_id)?.remove();
+      displayFoundUrls();
+    }
+  }, 1000);
+};
+
+function getCurrentPageUsername() {
+  return document.location.pathname.split("/")[1].split("@")[1];
+}
