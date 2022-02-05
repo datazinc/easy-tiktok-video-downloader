@@ -183,7 +183,9 @@ function generateNonDuplicateItems(nonDuplicateItems, newItems) {
     ) {
       if (
         getCurrentPageUsername() == item?.author ||
-        getCurrentPageUsername() == item?.author?.uniqueId
+        getCurrentPageUsername() == item?.author?.uniqueId ||
+        window.SIGI_STATE.AppContext.appContext.$user.uniqueId ==
+          getCurrentPageUsername()
       ) {
         nonDuplicateItems.push(item);
       }
