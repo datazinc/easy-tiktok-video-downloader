@@ -20,7 +20,7 @@ let filterVideosState = "INIT";
       try {
         if (this.responseType === "" || this.responseType === "text")
           data = JSON.parse(this.responseText);
-      } catch (error) {}
+      } catch (error) { }
       if (data.itemList) {
         handleFoundItems(data.itemList);
       }
@@ -76,9 +76,8 @@ function displayFoundUrls() {
     idx++;
   });
 
-  copyAllLinksBtn.innerText = `Copy All ${
-    allDirectLinks?.length || 0
-  } Links: ${getCurrentPageUsername()}`;
+  copyAllLinksBtn.innerText = `Copy All ${allDirectLinks?.length || 0
+    } Links: ${getCurrentPageUsername()}`;
 
   copyAllLinksBtn.innerText += filterVideosState.startsWith("LIKES")
     ? " likes"
@@ -117,8 +116,9 @@ function displayFoundUrls() {
     if (currentVideo) wrapper.prepend(currentVideoLink);
   }
   // Only show the filter toggle if logged in user is the current page user
+  console.log("COPY - user id", window.SIGI_STATE.AppContext)
   if (
-    window.SIGI_STATE.AppContext.appContext.$user.uniqueId ==
+    window.SIGI_STATE.AppContext.appContext.user.uniqueId ==
     getCurrentPageUsername()
   ) {
     wrapper.prepend(likedVideosOnlyBtn);
@@ -127,6 +127,7 @@ function displayFoundUrls() {
   wrapper.prepend(allLinksTextArea);
   wrapper.prepend(copyAllLinksBtn);
   wrapper.append(creditsText);
+  console.log("COPY - ALL ADDED TO ELEMENT");
 
   let closeButton = document.createElement("button");
   closeButton.id = "ettpd-close";
@@ -230,8 +231,8 @@ function generateNonDuplicateItems(nonDuplicateItems, newItems) {
       if (
         getCurrentPageUsername() == item?.author ||
         getCurrentPageUsername() == item?.author?.uniqueId ||
-        window.SIGI_STATE.AppContext.appContext.$user.uniqueId ==
-          getCurrentPageUsername()
+        window.SIGI_STATE.AppContext.appContext.user.uniqueId ==
+        getCurrentPageUsername()
       ) {
         nonDuplicateItems.push(item);
       }
@@ -257,7 +258,7 @@ function toggleShowLikedVideosOnly(btnElement) {
 }
 
 // TODO: Know why the website is aborting request instead of overwriting the abort method with a dummy function.
-window.AbortController.prototype.abort = () => {};
+window.AbortController.prototype.abort = () => { };
 
 const browserFetch = window.fetch;
 window.fetch = async (...args) => {
@@ -285,12 +286,12 @@ function getLoggedInInitialData() {
     preLoadedList.forEach((item) => {
       orderedItems.push(preLoadedListMetadata[item.id]);
     });
-  } catch (error) {}
+  } catch (error) { }
   try {
     let singleVideoId = window.SIGI_STATE.ItemList.video.list[0];
     let singleVideoMetadata = window.SIGI_STATE.ItemModule[singleVideoId];
     orderedItems.push(singleVideoMetadata);
-  } catch (error) {}
+  } catch (error) { }
 
   return orderedItems;
 }

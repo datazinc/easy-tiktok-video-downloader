@@ -1,7 +1,7 @@
 {
   "name": "Easy TikTok Profile Download",
   "description": "Extract liked videos and any profile video links like a pro!",
-  "version": "1.4",
+  "version": "1.5",
   "manifest_version": 3,
   "host_permissions": ["*://*.tiktok.com/"],
   "permissions": ["activeTab"],
