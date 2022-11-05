@@ -51,7 +51,8 @@
 }
 
 #ettpd-close,
-#ettpd-show {
+#ettpd-show,
+#ettpd-liked-only {
   position: fixed;
   border: none;
   background: yellow;
@@ -62,10 +63,27 @@
   -moz-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
   box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
 }
-#ettpd-close {
+#ettpd-close,
+#ettpd-liked-only {
   border-radius: 3px;
   padding: 4px;
 }
+#ettpd-liked-only {
+  position: relative;
+  width: 100%;
+  background: #53f5ef;
+  color: black;
+  margin: 5px 0;
+}
+
+#ettpd-liked-only:hover {
+  background: #00b1ab;
+  transition: background-color ease-in-out 200ms;
+}
+#ettpd-liked-only:active {
+  background: #fe2c55;
+}
+
 #ettpd-show {
   padding: 7px;
   bottom: 70px;

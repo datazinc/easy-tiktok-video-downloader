@@ -2,6 +2,7 @@ let postItems = {};
 let allDirectLinks = [];
 let isFirstTime = true;
 let displayedItemsId = {};
+let filterVideosState = "INIT";
 
 (function () {
   var XHR = XMLHttpRequest.prototype;
@@ -79,11 +80,24 @@ function displayFoundUrls() {
     allDirectLinks?.length || 0
   } Links: ${getCurrentPageUsername()}`;
 
-  reportBugBtn.innerText = "Report Bugs";
+  copyAllLinksBtn.innerText += filterVideosState.startsWith("LIKES")
+    ? " likes"
+    : "";
+
+  reportBugBtn.innerText = "Report Bugs (Refreshing fix most bugs :| )";
   let reportBugBtnLink = document.createElement("a");
   reportBugBtnLink.target = "_blank";
   reportBugBtnLink.href = "https://bit.ly/ettpd-issues";
   reportBugBtnLink.appendChild(reportBugBtn);
+
+  let likedVideosOnlyBtn = document.createElement("button");
+  likedVideosOnlyBtn.id = "ettpd-liked-only";
+  likedVideosOnlyBtn.onclick = () =>
+    toggleShowLikedVideosOnly(likedVideosOnlyBtn);
+  likedVideosOnlyBtn.innerText = filterVideosState.startsWith("LIKES")
+    ? "Showing Liked Videos (click to undo)"
+    : "Filter Liked Videos (First click on liked videos)";
+
   wrapper.appendChild(itemsList);
 
   document.body.appendChild(wrapper);
@@ -101,6 +115,13 @@ function displayFoundUrls() {
       getCurrentPageUsername() + currentVideo?.id + ".mp4";
     currentVideoLink.appendChild(currentVideoBtn);
     if (currentVideo) wrapper.prepend(currentVideoLink);
+  }
+  // Only show the filter toggle if logged in user is the current page user
+  if (
+    window.SIGI_STATE.AppContext.appContext.$user.uniqueId ==
+    getCurrentPageUsername()
+  ) {
+    wrapper.prepend(likedVideosOnlyBtn);
   }
   wrapper.prepend(reportBugBtnLink);
   wrapper.prepend(allLinksTextArea);
@@ -156,9 +177,35 @@ function handleFoundItems(newItems) {
     postItems[getCurrentPageUsername()],
     newItems
   );
-  if (nonDuplicateItems.length)
-    postItems[`/@${nonDuplicateItems[0].author}`] = nonDuplicateItems;
+  if (nonDuplicateItems && nonDuplicateItems.length) {
+    if (filterVideosState.startsWith("LIKES")) {
+      nonDuplicateItems = nonDuplicateItems.filter(
+        (post) =>
+          post?.author != getCurrentPageUsername() &&
+          post?.author?.uniqueId != getCurrentPageUsername()
+      );
+      postItems[getCurrentPageUsername()] = nonDuplicateItems;
+    } else if (filterVideosState.startsWith("ALL")) {
+      nonDuplicateItems = nonDuplicateItems.filter(
+        (post) =>
+          post?.author == getCurrentPageUsername() ||
+          post?.author?.uniqueId == getCurrentPageUsername()
+      );
+      postItems[getCurrentPageUsername()] = nonDuplicateItems;
+    }
 
+    // fail safe
+    if (nonDuplicateItems.length)
+      postItems[getCurrentPageUsername()] = nonDuplicateItems;
+  }
+  if (nonDuplicateItems.length)
+    postItems[getCurrentPageUsername()] = nonDuplicateItems;
+
+  // Should be done after updating the postItems
+  if (!filterVideosState.endsWith("UPDATED") && filterVideosState != "INIT") {
+    displayFoundUrls();
+    filterVideosState += "_UPDATED";
+  }
   let currentPathContentId = document.location.pathname;
 
   postItems[getCurrentPageUsername()].forEach(
@@ -176,7 +223,6 @@ function generateNonDuplicateItems(nonDuplicateItems, newItems) {
   if (!newItems || !newItems.length) {
     return [];
   }
-
   newItems.forEach((item) => {
     if (
       nonDuplicateItems.findIndex((nonDupItem) => nonDupItem.id == item.id) < 0
@@ -192,6 +238,22 @@ function generateNonDuplicateItems(nonDuplicateItems, newItems) {
     }
   });
   return nonDuplicateItems;
+}
+
+function toggleShowLikedVideosOnly(btnElement) {
+  // tricky tricks - set it to LIKES if it's set on ALL or INIT, set to to ALL, if it's set on LIKES
+  filterVideosState =
+    filterVideosState != "INIT"
+      ? filterVideosState.startsWith("LIKES")
+        ? "ALL"
+        : "LIKES"
+      : "LIKES";
+
+  btnElement.innerText = filterVideosState.startsWith("LIKES")
+    ? "Showing Liked Videos (click to undo)"
+    : "Filter Liked Videos(First click on liked videos)";
+  // Refresh to show valid data;
+  if (filterVideosState == "ALL") window.location.href = window.location.href;
 }
 
 // TODO: Know why the website is aborting request instead of overwriting the abort method with a dummy function.
