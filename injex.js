@@ -3,7 +3,7 @@ let allDirectLinks = [];
 let isFirstTime = true;
 let displayedItemsId = {};
 let filterVideosState = "INIT";
-
+let downloadedURLs = [];
 (function () {
   var XHR = XMLHttpRequest.prototype;
   var open = XHR.open;
@@ -39,8 +39,8 @@ function displayFoundUrls() {
   document.getElementById(_id)?.remove();
   let wrapper = document.createElement("div");
   wrapper.className = "ettpd-wrapper";
-  let copyAllLinksBtn = document.createElement("button");
-  copyAllLinksBtn.className = "ettpd-btn";
+  let downloadAllLinksBtn = document.createElement("button");
+  downloadAllLinksBtn.className = "ettpd-btn";
   let reportBugBtn = document.createElement("button");
   reportBugBtn.className = "ettpd-btn";
   let creditsText = document.createElement("span");
@@ -51,13 +51,18 @@ function displayFoundUrls() {
   currentVideoBtn.classList = "ettpd-current-video-btn ettpd-btn";
   creditsText.innerHTML = `&copy; ${new Date().getFullYear()} - Made by DataZinc💛`;
   creditsText.onclick = hideDownloader;
-  copyAllLinksBtn.addEventListener("click", () =>
-    copyAllLinks(allLinksTextArea, copyAllLinksBtn)
+  downloadAllLinksBtn.addEventListener("click", () =>
+    downloadAllLinks(downloadAllLinksBtn)
   );
 
-  allLinksTextArea.addEventListener("click", () =>
-    copyAllLinks(allLinksTextArea, copyAllLinksBtn)
-  );
+  allLinksTextArea.addEventListener("click", () => {
+    allLinksTextArea.select();
+    document.execCommand("copy");
+    allLinksTextArea.setSelectionRange(0, 0);
+    allLinksTextArea.select();
+    alert("Copied to clipboard!");
+  });
+
   wrapper.id = _id;
   let itemsList = document.createElement("ol");
   let idx = 1;
@@ -69,17 +74,16 @@ function displayFoundUrls() {
     anc.innerText = `Video ${idx}`;
     if (media?.desc) anc.innerText += ` : ${media?.desc}`;
     anc.href = media?.video?.playAddr;
-    allDirectLinks.push(anc.href);
-
+    allDirectLinks.push([anc.href, media?.desc, getCurrentPageUsername()]);
     item.appendChild(anc);
     itemsList.appendChild(item);
     idx++;
   });
 
-  copyAllLinksBtn.innerText = `Copy All ${allDirectLinks?.length || 0
+  downloadAllLinksBtn.innerText = `Download All ${allDirectLinks?.length || 0
     } Links: ${getCurrentPageUsername()}`;
 
-  copyAllLinksBtn.innerText += filterVideosState.startsWith("LIKES")
+  downloadAllLinksBtn.innerText += filterVideosState.startsWith("LIKES")
     ? " likes"
     : "";
 
@@ -100,35 +104,29 @@ function displayFoundUrls() {
   wrapper.appendChild(itemsList);
 
   document.body.appendChild(wrapper);
-  allLinksTextArea.value = allDirectLinks.join(" \n");
+  allLinksTextArea.value = allDirectLinks.map((link) => link[0]).join("\n");
   if (document.location.pathname.split("/").length == 4) {
     currentVideoBtn.innerText = "Download Current Page Video!";
     let currentVideo = postItems[getCurrentPageUsername()].find(
       (item) => item.id == document.location.pathname.split("/")[3]
     );
 
-    let currentVideoLink = document.createElement("a");
-    currentVideoLink.target = "_blank";
-    currentVideoLink.href = currentVideo?.video?.playAddr;
-    currentVideoLink.download =
-      getCurrentPageUsername() + currentVideo?.id + ".mp4";
+    let currentVideoLink = document.createElement("span");
+    currentVideoLink.onclick = () => downloadURLToDisk(currentVideo?.video?.playAddr, currentVideo?.desc?.replace(/ /g, `-`) + ".mp4");
     currentVideoLink.appendChild(currentVideoBtn);
     if (currentVideo) wrapper.prepend(currentVideoLink);
   }
   // Only show the filter toggle if logged in user is the current page user
-  console.log("COPY - user id", window.SIGI_STATE.AppContext)
   if (
-    window.SIGI_STATE.AppContext.appContext.user.uniqueId ==
+    window.SIGI_STATE.AppContext.appContext.user?.uniqueId ==
     getCurrentPageUsername()
   ) {
     wrapper.prepend(likedVideosOnlyBtn);
   }
   wrapper.prepend(reportBugBtnLink);
   wrapper.prepend(allLinksTextArea);
-  wrapper.prepend(copyAllLinksBtn);
+  wrapper.prepend(downloadAllLinksBtn);
   wrapper.append(creditsText);
-  console.log("COPY - ALL ADDED TO ELEMENT");
-
   let closeButton = document.createElement("button");
   closeButton.id = "ettpd-close";
   closeButton.onclick = hideDownloader;
@@ -160,15 +158,14 @@ function pollInitialData() {
   }, 3000);
 }
 
-function copyAllLinks(inputElement, mainBtn) {
-  inputElement.select();
-  document.execCommand("copy");
-  inputElement.setSelectionRange(0, 0);
-  inputElement.select();
-  mainBtn.innerText = "All Links Copied!";
-  setTimeout(() => {
-    mainBtn.innerText = "Copy All Links";
-  }, 3000);
+async function downloadAllLinks(mainBtn) {
+  for (let index = 0; index < allDirectLinks?.length; index++) {
+    if (downloadedURLs.includes(allDirectLinks?.at(index)?.at(0))) continue;
+    downloadedURLs.push(allDirectLinks?.at(index)?.at(0));
+    await downloadURLToDisk(allDirectLinks?.at(index)?.at(0), `${allDirectLinks?.at(index)?.at(2)}-video-${index + 1}-${allDirectLinks?.at(index)?.at(1).replace(/ /g, `-`)}.mp4`);
+    mainBtn.innerHTML = `Downloading  ${index + 1} of ${allDirectLinks?.length || 0}`;
+  }
+  mainBtn.innerHTML = `Downloaded ${allDirectLinks?.length || 0} Videos!`;
 }
 
 function handleFoundItems(newItems) {
@@ -231,7 +228,7 @@ function generateNonDuplicateItems(nonDuplicateItems, newItems) {
       if (
         getCurrentPageUsername() == item?.author ||
         getCurrentPageUsername() == item?.author?.uniqueId ||
-        window.SIGI_STATE.AppContext.appContext.user.uniqueId ==
+        window.SIGI_STATE.AppContext.appContext.user?.uniqueId ==
         getCurrentPageUsername()
       ) {
         nonDuplicateItems.push(item);
@@ -328,5 +325,22 @@ window.onload = () => {
 };
 
 function getCurrentPageUsername() {
-  return document.location.pathname.split("/")[1].split("@")[1];
+  return document.location.pathname.split("/")[1].split("@")[1] || "😃";
+}
+
+function downloadURLToDisk(url, filename) {
+  return new Promise((resolve, reject) => {
+    fetch(url)
+      .then(response => response.blob())
+      .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        resolve();
+      });
+  });
 }
