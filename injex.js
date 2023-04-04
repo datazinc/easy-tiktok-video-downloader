@@ -4,6 +4,9 @@ let isFirstTime = true;
 let displayedItemsId = {};
 let filterVideosState = "INIT";
 let downloadedURLs = [];
+let hasRated = localStorage.getItem("hasRated") == "true";
+// load value from local storage
+
 (function () {
   var XHR = XMLHttpRequest.prototype;
   var open = XHR.open;
@@ -60,7 +63,7 @@ function displayFoundUrls() {
     document.execCommand("copy");
     allLinksTextArea.setSelectionRange(0, 0);
     allLinksTextArea.select();
-    alert("Copied to clipboard!");
+    alert("Copied to clipboard! Will not work in downloaders due to recent TikTok API changes.");
   });
 
   wrapper.id = _id;
@@ -112,7 +115,13 @@ function displayFoundUrls() {
     );
 
     let currentVideoLink = document.createElement("span");
-    currentVideoLink.onclick = () => downloadURLToDisk(currentVideo?.video?.playAddr, currentVideo?.desc?.replace(/ /g, `-`) + ".mp4");
+    currentVideoLink.onclick = () => {
+      downloadURLToDisk(currentVideo?.video?.playAddr, currentVideo?.desc?.replace(/ /g, `-`).slice(0, 20) + ".mp4");
+      setTimeout(() => {
+        showRateUsPopUp();
+      }, 1000);
+    }
+
     currentVideoLink.appendChild(currentVideoBtn);
     if (currentVideo) wrapper.prepend(currentVideoLink);
   }
@@ -162,10 +171,41 @@ async function downloadAllLinks(mainBtn) {
   for (let index = 0; index < allDirectLinks?.length; index++) {
     if (downloadedURLs.includes(allDirectLinks?.at(index)?.at(0))) continue;
     downloadedURLs.push(allDirectLinks?.at(index)?.at(0));
-    await downloadURLToDisk(allDirectLinks?.at(index)?.at(0), `${allDirectLinks?.at(index)?.at(2)}-video-${index + 1}-${allDirectLinks?.at(index)?.at(1).replace(/ /g, `-`)}.mp4`);
+    await downloadURLToDisk(allDirectLinks?.at(index)?.at(0), `${allDirectLinks?.at(index)?.at(2)}-video-${index + 1}-${allDirectLinks?.at(index)?.at(1).replace(/ /g, `-`).slice(0, 20)}.mp4`);
     mainBtn.innerHTML = `Downloading  ${index + 1} of ${allDirectLinks?.length || 0}`;
   }
   mainBtn.innerHTML = `Downloaded ${allDirectLinks?.length || 0} Videos!`;
+  // redirect to chrome web store
+  showRateUsPopUp();
+}
+
+function showRateUsPopUp() {
+  if (hasRated) return;
+  // show the rating popup
+  const div = document.createElement("div");
+  div.style.position = "fixed";
+  div.style.top = "0";
+  div.style.left = "0";
+  div.style.width = "100%";
+  div.style.height = "100%";
+  div.style.zIndex = "999"
+  div.style.backgroundColor = "rgba(0,0,0,0.5)";
+  div.innerHTML = `<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 400px; height: 200px; background-color: white; border-radius: 10px; padding: 20px; box-sizing: border-box;">
+      <h2>Please rate us on chrome web store!</h2>
+      <p style="margin-bottom: 20px">Check the downloaded videos in your device files and rate us. It will help us a lot!🥰</p>
+      <a href="https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg" target="_blank" style="text-decoration: none; color: white; background-color: #1da1f2; padding: 10px; border-radius: 5px; border: none; cursor: pointer; width: 100%; text-align: center; display: block">Rate Now</a>`;
+  const anchor = div.querySelector("a");
+  anchor.onclick = () => {
+    hasRatedTrue();
+  }
+  document.body.appendChild(div);
+  function hasRatedTrue() {
+    localStorage.setItem("hasRated", true);
+    hasRated = true;
+  }
+  div.onclick = () => {
+    div.remove();
+  }
 }
 
 function handleFoundItems(newItems) {
@@ -329,6 +369,9 @@ function getCurrentPageUsername() {
 }
 
 function downloadURLToDisk(url, filename) {
+  if (filename == '.mp4') {
+    filename = getCurrentPageUsername() + '-video.mp4'
+  }
   return new Promise((resolve, reject) => {
     fetch(url)
       .then(response => response.blob())
