@@ -112,7 +112,7 @@ function displayFoundUrls() {
   wrapper.appendChild(itemsList);
 
   document.body.appendChild(wrapper);
-  allLinksTextArea.value = allDirectLinks?.length ? "Please use this feature while logged out. Copying links will not work if you are logged in. Use the download button instead. (Click here to copy all links)": "No videos found. Refresh page to try again.";
+  allLinksTextArea.value = allDirectLinks?.length ? "Please use this feature while logged out. Copying links will not work if you are logged in. Use the download button instead. (Click here to copy all links)": "No videos found. Refresh page to try again. FYP does not work instantly, please scroll down to get some downloadable content.";
   if (document.location.pathname.split("/").length == 4) {
     currentVideoBtn.innerText = "Download Current Page Video!";
     let currentVideo = postItems[getCurrentPageUsername()].find(
