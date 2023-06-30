@@ -1,7 +1,7 @@
 {
   "name": "Easy TikTok Video Downloader",
   "description": "Download liked videos or any tiktok account videos easily!",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "manifest_version": 3,
   "host_permissions": ["*://*.tiktok.com/"],
   "permissions": [],
