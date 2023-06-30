@@ -5,7 +5,6 @@ let displayedItemsId = {};
 let filterVideosState = "INIT";
 let downloadedURLs = [];
 let hasRated = localStorage.getItem("hasRated") == "true";
-// load value from local storage
 
 (function () {
   var XHR = XMLHttpRequest.prototype;
@@ -28,7 +27,11 @@ let hasRated = localStorage.getItem("hasRated") == "true";
         handleFoundItems(data.itemList);
       }
     });
-    return send.apply(this, arguments);
+    try {
+      return send.apply(this, arguments);
+    } catch (error) {
+      console.warn("Wrapper xhr error: ", error);
+    }
   };
 })();
 
@@ -38,7 +41,7 @@ function displayFoundUrls() {
   let items = postItems[getCurrentPageUsername()];
   const _id = "ttk-downloader-wrapper";
 
-  if (!items || !items?.length) return;
+  if (!items || !items?.length) items = [];
   document.getElementById(_id)?.remove();
   let wrapper = document.createElement("div");
   wrapper.className = "ettpd-wrapper";
@@ -49,6 +52,7 @@ function displayFoundUrls() {
   let creditsText = document.createElement("span");
   creditsText.className = "ettpd-span";
   let allLinksTextArea = document.createElement("textarea");
+  allLinksTextArea.style.height = "100px";
   allLinksTextArea.className = "ettpd-ta";
   let currentVideoBtn = document.createElement("button");
   currentVideoBtn.classList = "ettpd-current-video-btn ettpd-btn";
@@ -59,11 +63,13 @@ function displayFoundUrls() {
   );
 
   allLinksTextArea.addEventListener("click", () => {
+    allLinksTextArea.value = allDirectLinks.map((link) => link[0]).join("\n");
     allLinksTextArea.select();
     document.execCommand("copy");
     allLinksTextArea.setSelectionRange(0, 0);
     allLinksTextArea.select();
-    alert("Copied to clipboard! Will not work in downloaders due to recent TikTok API changes.");
+    alert("Links copied to clipboard! Make sure you are logged out!!! Copied links will not work in downloaders if you are logged in. Use the download button instead.");
+    allLinksTextArea.value = "The copied links do not work in downloaders due to recent TikTok API changes. Use the download button instead.";
   });
 
   wrapper.id = _id;
@@ -83,8 +89,7 @@ function displayFoundUrls() {
     idx++;
   });
 
-  downloadAllLinksBtn.innerText = `Download All ${allDirectLinks?.length || 0
-    } Links: ${getCurrentPageUsername()}`;
+  downloadAllLinksBtn.innerText = allDirectLinks?.length ? `Download All ${allDirectLinks.length} Links: ${getCurrentPageUsername()}` : "Refresh Page";
 
   downloadAllLinksBtn.innerText += filterVideosState.startsWith("LIKES")
     ? " likes"
@@ -107,7 +112,7 @@ function displayFoundUrls() {
   wrapper.appendChild(itemsList);
 
   document.body.appendChild(wrapper);
-  allLinksTextArea.value = allDirectLinks.map((link) => link[0]).join("\n");
+  allLinksTextArea.value = allDirectLinks?.length ? "Please use this feature while logged out. Copying links will not work if you are logged in. Use the download button instead. (Click here to copy all links)": "No videos found. Refresh page to try again.";
   if (document.location.pathname.split("/").length == 4) {
     currentVideoBtn.innerText = "Download Current Page Video!";
     let currentVideo = postItems[getCurrentPageUsername()].find(
@@ -168,6 +173,12 @@ function pollInitialData() {
 }
 
 async function downloadAllLinks(mainBtn) {
+  // reload page if allDirectLinks is empty
+  if (!allDirectLinks?.length) {
+    window.location.reload();
+    return;
+  }
+
   for (let index = 0; index < allDirectLinks?.length; index++) {
     if (downloadedURLs.includes(allDirectLinks?.at(index)?.at(0))) continue;
     downloadedURLs.push(allDirectLinks?.at(index)?.at(0));
@@ -190,12 +201,16 @@ function showRateUsPopUp() {
   div.style.height = "100%";
   div.style.zIndex = "999"
   div.style.backgroundColor = "rgba(0,0,0,0.5)";
-  div.innerHTML = `<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 400px; height: 200px; background-color: white; border-radius: 10px; padding: 20px; box-sizing: border-box;">
-      <h2>Please rate us on chrome web store!</h2>
-      <p style="margin-bottom: 20px">Check the downloaded videos in your device files and rate us. It will help us a lot!🥰</p>
-      <a href="https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg" target="_blank" style="text-decoration: none; color: white; background-color: #1da1f2; padding: 10px; border-radius: 5px; border: none; cursor: pointer; width: 100%; text-align: center; display: block">Rate Now</a>`;
-  const anchor = div.querySelector("a");
-  anchor.onclick = () => {
+  div.innerHTML = `<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 400px; height: 400px; background-color: white; border-radius: 10px; padding: 20px; box-sizing: border-box;">
+      <p>Disable ad-blockers if download fails & refresh. <br/><br/></p><h3>Please give us 5 stars on chrome web store!</h3>
+      <h style="margin-bottom: 20px">Check the downloaded videos in your device files and rate us. It will help us a lot!🥰<br/><br/></p>
+      <p>The problem with IDM and similar downloaders occurs when you're logged in. So, use this extension while logged out. Link copying won't function if you're signed in; instead, use the download button.</p>
+      <p>Thank you for using our extension!</p>
+      <a href="https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg" target="_blank" style="text-decoration: none; color: white; background-color: #1da1f2; padding: 10px; border-radius: 5px; border: none; cursor: pointer; width: 100%; text-align: center; display: block; margin-top: 30px">Rate Now</a>
+      <span style="margin-top: 10px; display: block; color: red; text-decoration: underline; text-align: center; cursor: pointer;">Stop Seing This Notice</span>
+      `;
+  const span = div.querySelector("span");
+  span.onclick = () => {
     hasRatedTrue();
   }
   document.body.appendChild(div);
@@ -209,12 +224,14 @@ function showRateUsPopUp() {
 }
 
 function handleFoundItems(newItems) {
+
   if (!postItems[getCurrentPageUsername()])
     postItems[getCurrentPageUsername()] = [];
   let nonDuplicateItems = generateNonDuplicateItems(
     postItems[getCurrentPageUsername()],
     newItems
   );
+
   if (nonDuplicateItems && nonDuplicateItems.length) {
     if (filterVideosState.startsWith("LIKES")) {
       nonDuplicateItems = nonDuplicateItems.filter(
@@ -252,7 +269,7 @@ function handleFoundItems(newItems) {
   if (displayedItemsId[getCurrentPageUsername()] != currentPathContentId) {
     displayedItemsId[getCurrentPageUsername()] = currentPathContentId;
     displayFoundUrls();
-  }
+  };
 }
 
 function generateNonDuplicateItems(nonDuplicateItems, newItems) {
@@ -269,7 +286,7 @@ function generateNonDuplicateItems(nonDuplicateItems, newItems) {
         getCurrentPageUsername() == item?.author ||
         getCurrentPageUsername() == item?.author?.uniqueId ||
         window.SIGI_STATE.AppContext.appContext.user?.uniqueId ==
-        getCurrentPageUsername()
+        getCurrentPageUsername() || getCurrentPageUsername().startsWith("/")
       ) {
         nonDuplicateItems.push(item);
       }
@@ -299,9 +316,10 @@ window.AbortController.prototype.abort = () => { };
 
 const browserFetch = window.fetch;
 window.fetch = async (...args) => {
-  const response = await browserFetch(...args);
-  response
-    .clone()
+  const response = await browserFetch(...args).catch((err) => {
+    console.warn("Wrapper fetch error: : ", err);
+  });
+  response?.clone()
     .json()
     .then((body) => {
       if (body.itemList) {
@@ -349,6 +367,7 @@ function getLoggedOutInitialData() {
 // Initial Data Poll
 window.onload = () => {
   pollInitialData();
+  displayFoundUrls();
 
   // Page change poll
   let currentPageUsername = getCurrentPageUsername();
@@ -365,7 +384,11 @@ window.onload = () => {
 };
 
 function getCurrentPageUsername() {
-  return document.location.pathname.split("/")[1].split("@")[1] || "😃";
+  let potentialUsername = document.location.pathname.split("/")[1].split("@");
+  if (potentialUsername.length > 1) {
+    return potentialUsername[1];
+  }
+  return `/${potentialUsername[0]}`;
 }
 
 function downloadURLToDisk(url, filename) {
