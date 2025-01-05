@@ -1,7 +1,7 @@
 {
   "name": "Easy TikTok Video Downloader (Remove Watermark)",
-  "description": "Download liked videos or any tiktok account videos easily without watermark.",
-  "version": "2.1.1",
+  "description": "Download liked videos or any TikTok videos easily without watermark. Download search results, likes, all user videos, and more.",
+  "version": "3.0.0",
   "manifest_version": 3,
   "host_permissions": ["*://*.tiktok.com/"],
   "permissions": [],
