@@ -1,92 +1,291 @@
-let postItems = {};
-let allDirectLinks = [];
-let isFirstTime = true;
-let displayedItemsId = {};
-let filterVideosState = "INIT";
-let downloadedURLs = [];
-let filterCurrentProfile = false;
-let filterLikedVideos = false;
-let filterFavoriteVideos = false;
-let hasRated = localStorage.getItem("hasRated") == "true";
-let displayedItemsHash = "";
-let displayedPath = "";
-let likedVideos = {};
-let isDownloading = false;
-let isDownloadingAll = false;
-let isDownloaderClosed = localStorage.getItem("isDownloaderClosed") == "true";
-if (hasRated) {
-  hasRated = Math.random() < 0.95; // 5% chance to show the popup again even if the user has rated
-}
-let isRateUsPopUpOpen = false;
+// Constants
+const STORAGE_KEYS = {
+  HAS_RATED: "hasRated",
+  IS_DOWNLOADER_CLOSED: "isDownloaderClosed",
+};
 
-(function () {
-  var XHR = XMLHttpRequest.prototype;
-  var open = XHR.open;
-  var send = XHR.send;
-  XHR.open = function (method, url) {
-    this._method = method;
-    this._url = url;
-    return open.apply(this, arguments);
-  };
-  // Listen to traffic
-  XHR.send = function (postData) {
-    this.addEventListener("load", function () {
-      let data = {};
-      try {
-        if (this.responseType === "" || this.responseType === "text")
-          data = JSON.parse(this.responseText);
+const DOM_IDS = {
+  DOWNLOADER_WRAPPER: "ttk-downloader-wrapper",
+  SHOW_DOWNLOADER: "ettpd-show",
+  NEXT_DATA: "__NEXT_DATA__",
+};
 
-        if (data.itemList) {
-          handleFoundItems(data.itemList?.filter((item) => item.id));
-        }
-        if (Array.isArray(data.data)) {
-          handleFoundItems(
-            data.data.map((entry) => entry?.item).filter((item) => item?.id)
-          );
-        }
-      } catch (error) {
-        console.warn("Low level error in XHR.send", error);
+const UI_ELEMENTS = {
+  LIKED_TAB_SELECTOR: 'p[role="tab"]',
+  VIDEO_WRAPPER_SELECTOR: 'div[id^="xgwrapper"]',
+};
+
+// State management using a single source of truth
+const AppState = {
+  postItems: new Map(),
+  allDirectLinks: [],
+  displayedState: {
+    itemsHash: "",
+    path: "",
+  },
+  filters: {
+    currentProfile: false,
+    likedVideos: false,
+    favoriteVideos: false,
+    state: "INIT",
+  },
+  downloadedURLs: [],
+  likedVideos: {},
+  downloading: {
+    isActive: false,
+    isDownloadingAll: false,
+  },
+  ui: {
+    isDownloaderClosed:
+      localStorage.getItem(STORAGE_KEYS.IS_DOWNLOADER_CLOSED) === "true",
+    isRatePopupOpen: false,
+    hasRated:
+      localStorage.getItem(STORAGE_KEYS.HAS_RATED) === "true" &&
+      Math.random() < 0.95, // 5% chance to show the popup again even if the user has rated
+  },
+};
+
+// (function () {
+//   var XHR = XMLHttpRequest.prototype;
+//   var open = XHR.open;
+//   var send = XHR.send;
+//   XHR.open = function (method, url) {
+//     this._method = method;
+//     this._url = url;
+//     return open.apply(this, arguments);
+//   };
+//   // Listen to traffic
+//   XHR.send = function (postData) {
+//     this.addEventListener("load", function () {
+//       let data = {};
+//       try {
+//         if (this.responseType === "" || this.responseType === "text")
+//           data = JSON.parse(this.responseText);
+
+//         if (data.itemList) {
+//           handleFoundItems(data.itemList?.filter((item) => item.id));
+//         }
+//         if (Array.isArray(data.data)) {
+//           handleFoundItems(
+//             data.data.map((entry) => entry?.item).filter((item) => item?.id)
+//           );
+//         }
+//       } catch (error) {
+//         console.warn("Low level error in XHR.send", error);
+//       }
+//     });
+//     return send.apply(this, arguments);
+//   };
+// })();
+
+class NetworkInterceptor {
+  constructor() {
+    window.AbortController.prototype.abort = () => {};
+    this.originalXHR = XMLHttpRequest.prototype;
+    this.originalFetch = window.fetch;
+    this.init();
+  }
+
+  init() {
+    this.overrideXHR();
+    this.overrideFetch();
+  }
+
+  handleResponse(data) {
+    try {
+      if (data.itemList && data.itemList.length && data.itemList[0]?.id) {
+        this.handleFoundItems(data.itemList.filter((item) => item.id));
       }
-    });
-    return send.apply(this, arguments);
-  };
-})();
+
+      if (Array.isArray(data.data)) {
+        this.handleFoundItems(
+          data.data.map((entry) => entry?.item).filter((item) => item?.id)
+        );
+      }
+    } catch (error) {
+      console.warn("Error while processing response data", error);
+    }
+  }
+
+  handleFoundItems(newItems) {
+    try {
+      if (!newItems || !newItems.length || !newItems[0]) newItems = [];
+      let defaultScope = window?.__$UNIVERSAL_DATA$__?.__DEFAULT_SCOPE__;
+      let videoDetail = defaultScope
+        ? defaultScope["webapp.video-detail"]
+        : null;
+      let structAuthorId = videoDetail?.itemInfo?.itemStruct?.author?.uniqueId;
+      let videoItem = videoDetail?.itemInfo?.itemStruct;
+      if (
+        videoItem?.id &&
+        AppState.postItems[structAuthorId].findIndex(
+          (post) => post.id == videoItem.id
+        ) < 0
+      ) {
+        AppState.postItems[structAuthorId].push(videoItem);
+      }
+    } catch (error) {
+      console.warn("Error in adding itemStruct", error);
+    }
+
+    for (let i = 0; i < newItems.length; i++) {
+      let item = newItems[i];
+      let authorId = item?.author?.uniqueId;
+      if (!authorId) continue;
+      if (!AppState.postItems[authorId]) AppState.postItems[authorId] = [];
+      if (
+        AppState.postItems[authorId].findIndex((post) => post.id == item.id) < 0
+      ) {
+        AppState.postItems[authorId].push(item);
+      }
+      if (AppState.filters.likedVideos) {
+        if (!likedVideos[getCurrentPageUsername()])
+          likedVideos[getCurrentPageUsername()] = [];
+        if (
+          likedVideos[getCurrentPageUsername()].findIndex(
+            (post) => post.id == item.id
+          ) < 0
+        ) {
+          likedVideos[getCurrentPageUsername()].push(item);
+        }
+      }
+    }
+
+    displayFoundUrls();
+
+    // if (!AppState.postItems[getCurrentPageUsername()])
+    //   AppState.postItems[getCurrentPageUsername()] = [];
+    // let nonDuplicateItems = generateNonDuplicateItems(
+    //   AppState.postItems[getCurrentPageUsername()],
+    //   newItems
+    // );
+    // if (nonDuplicateItems && nonDuplicateItems.length) {
+    //   if (filterVideosState.startsWith("LIKES")) {
+    //     nonDuplicateItems = nonDuplicateItems.filter(
+    //       (post) =>
+    //         post?.author != getCurrentPageUsername() &&
+    //         post?.author?.uniqueId != getCurrentPageUsername()
+    //     );
+    //     AppState.postItems[getCurrentPageUsername()] = nonDuplicateItems;
+    //   } else if (filterVideosState.startsWith("ALL")) {
+    //     nonDuplicateItems = nonDuplicateItems.filter(
+    //       (post) =>
+    //         post?.author == getCurrentPageUsername() ||
+    //         post?.author?.uniqueId == getCurrentPageUsername()
+    //     );
+    //     AppState.postItems[getCurrentPageUsername()] = nonDuplicateItems;
+    //   }
+
+    //   // fail safe
+    //   if (nonDuplicateItems.length)
+    //     AppState.postItems[getCurrentPageUsername()] = nonDuplicateItems;
+    // }
+    // if (nonDuplicateItems.length)
+    //   AppState.postItems[getCurrentPageUsername()] = nonDuplicateItems;
+
+    // // Should be done after updating the AppState.postItems
+    // if (!filterVideosState.endsWith("UPDATED") && filterVideosState != "INIT") {
+    //   displayFoundUrls();
+    //   filterVideosState += "_UPDATED";
+    // }
+    // let currentPathContentId = document.location.pathname;
+
+    // AppState.postItems[getCurrentPageUsername()].forEach(
+    //   (item) => (currentPathContentId += item.id)
+    // );
+    // if (displayedItemsId[getCurrentPageUsername()] != currentPathContentId) {
+    //   displayedItemsId[getCurrentPageUsername()] = currentPathContentId;
+    //   displayFoundUrls();
+    // }
+  }
+
+  overrideXHR() {
+    const open = this.originalXHR.open;
+    const send = this.originalXHR.send;
+    const self = this;
+
+    this.originalXHR.open = function (method, url) {
+      this._method = method;
+      this._url = url;
+      return open.apply(this, arguments);
+    };
+
+    this.originalXHR.send = function (postData) {
+      this.addEventListener("load", function () {
+        try {
+          let data = {};
+          if (this.responseType === "" || this.responseType === "text") {
+            data = JSON.parse(this.responseText);
+          }
+          self.handleResponse(data);
+        } catch (error) {
+          console.log("Low-level error in XHR.send", error);
+        }
+      });
+
+      return send.apply(this, arguments);
+    };
+  }
+
+  overrideFetch() {
+    const self = this;
+
+    window.fetch = async (...args) => {
+      const response = await self.originalFetch(...args);
+      response
+        .clone()
+        .json()
+        .then((data) => self.handleResponse(data))
+        .catch((error) => {
+          console.log("Low-level error in fetch", error);
+        });
+
+      return response;
+    };
+  }
+}
+
+// Initialize the interceptor
+
+document.addEventListener("DOMContentLoaded", () => {
+  new NetworkInterceptor();
+});
 
 function displayFoundUrls({ forced } = {}) {
-  if (isDownloaderClosed) return hideDownloader();
-  if (isDownloading || isDownloadingAll) {
+  if (AppState.ui.isDownloaderClosed) return hideDownloader();
+  if (AppState.downloading.isActive || AppState.downloading.isDownloadingAll) {
     return;
   }
 
   let items = [];
 
-  if (filterCurrentProfile) {
-    items = postItems[getCurrentPageUsername()] || [];
-  } else if (filterLikedVideos) {
+  if (AppState.filters.currentProfile) {
+    items = AppState.postItems[getCurrentPageUsername()] || [];
+  } else if (AppState.filters.likedVideos) {
     const searchText = `Videos liked by ${getCurrentPageUsername()} are currently hidden`;
     if (!document.body.innerText.includes(searchText)) {
       items = likedVideos[getCurrentPageUsername()] || [];
     }
   } else {
-    for (const key in postItems) {
-      items.push(...postItems[key]);
+    for (const key in AppState.postItems) {
+      items.push(...AppState.postItems[key]);
     }
   }
   if (
-    displayedItemsHash == getPostsHash(items) &&
+    AppState.displayedState.itemsHash == getPostsHash(items) &&
     !forced &&
-    displayedPath == document.location.pathname
+    AppState.displayedState.path == document.location.pathname
   ) {
     return;
   }
   // reset all direct links
 
-  allDirectLinks = [];
+  AppState.allDirectLinks = [];
   const _id = "ttk-downloader-wrapper";
   document.getElementById(_id)?.remove();
   // Hash the displayed items
-  displayedItemsHash = getPostsHash(items);
-  displayedPath = document.location.pathname;
+  AppState.displayedState.itemsHash = getPostsHash(items);
+  AppState.displayedState.path = document.location.pathname;
   // Create the downloader
   let wrapper = document.createElement("div");
   wrapper.className = "ettpd-wrapper";
@@ -102,7 +301,7 @@ function displayFoundUrls({ forced } = {}) {
   creditsText.onclick = hideDownloader;
   downloadAllLinksBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    isDownloadingAll = true;
+    AppState.downloading.isDownloadingAll = true;
     downloadAllLinks(downloadAllLinksBtn);
   });
 
@@ -150,7 +349,7 @@ function displayFoundUrls({ forced } = {}) {
     itemsList.appendChild(item);
 
     // Push direct links to array
-    allDirectLinks.push({
+    AppState.allDirectLinks.push({
       url: anc.href,
       desc: media?.desc,
       videoId: media?.id,
@@ -159,25 +358,28 @@ function displayFoundUrls({ forced } = {}) {
     });
   });
 
-  if (!allDirectLinks?.length && Object.keys(postItems).length == 0) {
+  if (
+    !AppState.allDirectLinks?.length &&
+    Object.keys(AppState.postItems).length == 0
+  ) {
     // hide the downloader
     hideDownloaderOnEmpty();
   }
   downloadAllLinksBtn.innerText = `Download All ${
-    allDirectLinks?.length || 0
+    AppState.allDirectLinks?.length || 0
   } videos!`;
   let subText = document.createElement("span");
   subText.style.display = "block";
   subText.innerText = " (Click to download all)";
 
-  if (filterCurrentProfile)
+  if (AppState.filters.currentProfile)
     subText.innerText = ` (@${getCurrentPageUsername()})`;
-  if (filterLikedVideos)
+  if (AppState.filters.likedVideos)
     subText.innerText = ` (Liked by ${getCurrentPageUsername()})`;
   downloadAllLinksBtn.appendChild(subText);
 
-  if (isDownloading) {
-    downloadAllLinksBtn.disabled = isDownloading;
+  if (AppState.downloading.isActive) {
+    downloadAllLinksBtn.disabled = AppState.downloading.isActive;
   }
 
   // downloadAllLinksBtn.innerText += filterVideosState.startsWith("LIKES")
@@ -195,11 +397,11 @@ function displayFoundUrls({ forced } = {}) {
   document.body.appendChild(wrapper);
   if (document.location.pathname.split("/").length == 4) {
     currentVideoBtn.innerText = "Download Playing Video!";
-    if (isDownloading) {
+    if (AppState.downloading.isActive) {
       currentVideoBtn.innerText = "Downloading Current Video...";
-      currentVideoBtn.disabled = isDownloading;
+      currentVideoBtn.disabled = AppState.downloading.isActive;
     }
-    let currentVideo = postItems[getCurrentPageUsername()]?.find(
+    let currentVideo = AppState.postItems[getCurrentPageUsername()]?.find(
       (item) => item.id == document.location.pathname.split("/")[3]
     );
 
@@ -219,8 +421,10 @@ function displayFoundUrls({ forced } = {}) {
   // Only show the filter toggle if logged in user is the current page user
   try {
     if (
-      window.__$UNIVERSAL_DATA$__.__DEFAULT_SCOPE__["webapp.user-detail"]
-        .userInfo.user.uniqueId == getCurrentPageUsername()
+      window?.__$UNIVERSAL_DATA$__?.__DEFAULT_SCOPE__ &&
+      window?.__$UNIVERSAL_DATA$__?.__DEFAULT_SCOPE__["webapp.user-detail"] &&
+      window?.__$UNIVERSAL_DATA$__?.__DEFAULT_SCOPE__["webapp.user-detail"]
+        ?.userInfo?.user?.uniqueId == getCurrentPageUsername()
     ) {
       // wrapper.prepend(likedVideosOnlyBtn);
     }
@@ -240,12 +444,12 @@ function displayFoundUrls({ forced } = {}) {
     let currentProfileOnlyContainer = document.createElement("div");
     currentProfileOnlyContainer.className = "ettpd-current-profile-container";
     let currentProfileOnly = document.createElement("input");
-    currentProfileOnly.checked = filterCurrentProfile;
+    currentProfileOnly.checked = AppState.filters.currentProfile;
     currentProfileOnly.type = "checkbox";
     currentProfileOnly.id = "ettpd-current-profile";
     currentProfileOnly.onclick = () => {
-      filterCurrentProfile = !filterCurrentProfile;
-      if (filterCurrentProfile) filterLikedVideos = false;
+      AppState.filters.currentProfile = !AppState.filters.currentProfile;
+      if (AppState.filters.currentProfile) AppState.filters.likedVideos = false;
       displayFoundUrls({ forced: true });
     };
     let currentProfileOnlyLabel = document.createElement("label");
@@ -258,16 +462,16 @@ function displayFoundUrls({ forced } = {}) {
     let likedVideosOnlyContainer = document.createElement("div");
     likedVideosOnlyContainer.className = "ettpd-liked-only-container";
     let likedVideosOnly = document.createElement("input");
-    likedVideosOnly.checked = filterLikedVideos;
+    likedVideosOnly.checked = AppState.filters.likedVideos;
     likedVideosOnly.type = "checkbox";
     likedVideosOnly.id = "ettpd-liked-only";
     likedVideosOnly.onclick = () => {
       displayFoundUrls({ forced: true });
-      if (!filterLikedVideos) {
+      if (!AppState.filters.likedVideos) {
         startLikesPolling();
-        filterCurrentProfile = false;
+        AppState.filters.currentProfile = false;
       } else {
-        filterLikedVideos = false;
+        AppState.filters.likedVideos = false;
       }
     };
     let likedVideosOnlyLabel = document.createElement("label");
@@ -291,8 +495,11 @@ function displayFoundUrls({ forced } = {}) {
   let closeButton = document.createElement("button");
   closeButton.id = "ettpd-close";
   closeButton.onclick = () => {
-    isDownloaderClosed = true;
-    localStorage.setItem("isDownloaderClosed", isDownloaderClosed);
+    AppState.ui.isDownloaderClosed = true;
+    localStorage.setItem(
+      STORAGE_KEYS.IS_DOWNLOADER_CLOSED,
+      AppState.ui.isDownloaderClosed
+    );
     hideDownloader();
   };
   closeButton.innerText = "X";
@@ -312,14 +519,17 @@ function hideDownloader() {
   showDownloaderBtn.id = "ettpd-show";
   showDownloaderBtn.innerText = "Open Video Downloader";
   showDownloaderBtn.onclick = () => {
-    if (!allDirectLinks?.length && Object.keys(postItems).length == 0) {
+    if (
+      !AppState.allDirectLinks?.length &&
+      Object.keys(AppState.postItems).length == 0
+    ) {
       alert(
         "Could not fetch any videos to download😔... Hover over the video you want to download and click on the download button to download it."
       );
       return;
     }
-    localStorage.setItem("isDownloaderClosed", false);
-    isDownloaderClosed = false;
+    localStorage.setItem(STORAGE_KEYS.IS_DOWNLOADER_CLOSED, false);
+    AppState.ui.isDownloaderClosed = false;
     showDownloader();
   };
   document.body.appendChild(showDownloaderBtn);
@@ -343,36 +553,39 @@ function pollInitialData() {
 }
 
 async function downloadAllLinks(mainBtn) {
-  isDownloadingAll = true;
+  AppState.downloading.isDownloadingAll = true;
   try {
-    if (!allDirectLinks?.length)
+    if (!AppState.allDirectLinks?.length)
       alert(
         "Could not fetch any videos to download😔... Hover over the video you want to download and click on the download button to download it."
       );
-    for (let index = 0; index < allDirectLinks?.length; index++) {
-      if (downloadedURLs.includes(allDirectLinks?.at(index)?.url)) continue;
-      downloadedURLs.push(allDirectLinks?.at(index)?.url);
+    for (let index = 0; index < AppState.allDirectLinks?.length; index++) {
+      if (downloadedURLs.includes(AppState.allDirectLinks?.at(index)?.url))
+        continue;
+      downloadedURLs.push(AppState.allDirectLinks?.at(index)?.url);
       await downloadURLToDisk(
-        allDirectLinks?.at(index)?.url,
-        `tiktok-video-${allDirectLinks?.at(index)?.videoId}-${
-          allDirectLinks?.at(index)?.authorId ||
-          allDirectLinks?.at(index)?.currentPageUsername
-        }-${index + 1}-${allDirectLinks
+        AppState.allDirectLinks?.at(index)?.url,
+        `tiktok-video-${AppState.allDirectLinks?.at(index)?.videoId}-${
+          AppState.allDirectLinks?.at(index)?.authorId ||
+          AppState.allDirectLinks?.at(index)?.currentPageUsername
+        }-${index + 1}-${AppState.allDirectLinks
           ?.at(index)
           ?.desc?.replace(/ /g, `-`)
           .slice(0, 20)}.mp4`
       );
       mainBtn.innerHTML = `Downloading  ${index + 1} of ${
-        allDirectLinks?.length || 0
+        AppState.allDirectLinks?.length || 0
       }`;
     }
-    mainBtn.innerHTML = `Downloaded ${allDirectLinks?.length || 0} Videos!`;
+    mainBtn.innerHTML = `Downloaded ${
+      AppState.allDirectLinks?.length || 0
+    } Videos!`;
   } catch (error) {
     console.warn("Error in downloading all links", error);
     mainBtn.innerHTML = `Failed to download all videos!`;
   }
   setTimeout(() => {
-    isDownloadingAll = false;
+    AppState.downloading.isDownloadingAll = false;
   }, 3000);
 
   // redirect to chrome web store
@@ -380,9 +593,9 @@ async function downloadAllLinks(mainBtn) {
 }
 
 function showRateUsPopUp() {
-  if (hasRated) return;
-  if (isRateUsPopUpOpen) return;
-  isRateUsPopUpOpen = true;
+  if (AppState.ui.hasRated) return;
+  if (AppState.ui.isRatePopupOpen) return;
+  AppState.ui.isRatePopupOpen = true;
   hideDownloader();
   // show the rating popup
   const div = document.createElement("div");
@@ -443,8 +656,8 @@ function showRateUsPopUp() {
   };
   document.body.appendChild(div);
   function hasRatedTrue() {
-    localStorage.setItem("hasRated", true);
-    hasRated = true;
+    localStorage.setItem(STORAGE_KEYS.HAS_RATED, true);
+    AppState.ui.hasRated = true;
   }
   div.onclick = () => {
     div.remove();
@@ -454,16 +667,19 @@ function showRateUsPopUp() {
 function handleFoundItems(newItems) {
   try {
     if (!newItems || !newItems.length || !newItems[0]) newItems = [];
-    let videoDetail =
-      window.__$UNIVERSAL_DATA$__.__DEFAULT_SCOPE__["webapp.video-detail"];
-    let structAuthorId = videoDetail.itemInfo.itemStruct.author.uniqueId;
-    let structItem = videoDetail.itemInfo.itemStruct;
+    let defaultScope = window?.__$UNIVERSAL_DATA$__?.__DEFAULT_SCOPE__;
+    let videoDetail = defaultScope ? defaultScope["webapp.video-detail"] : null;
+    let structAuthorId = videoDetail?.itemInfo?.itemStruct?.author?.uniqueId;
+    let videoItem = videoDetail?.itemInfo?.itemStruct;
+    console.log(defaultScope, videoItem);
     if (
-      structItem?.id &&
-      postItems[structAuthorId].findIndex((post) => post.id == structItem.id) <
-        0
+      videoItem?.id &&
+      AppState.postItems[structAuthorId] &&
+      AppState.postItems[structAuthorId].findIndex(
+        (post) => post.id == videoItem.id
+      ) < 0
     ) {
-      postItems[structAuthorId].push(structItem);
+      AppState.postItems[structAuthorId].push(videoItem);
     }
   } catch (error) {
     console.warn("Error in adding itemStruct", error);
@@ -473,11 +689,13 @@ function handleFoundItems(newItems) {
     let item = newItems[i];
     let authorId = item?.author?.uniqueId;
     if (!authorId) continue;
-    if (!postItems[authorId]) postItems[authorId] = [];
-    if (postItems[authorId].findIndex((post) => post.id == item.id) < 0) {
-      postItems[authorId].push(item);
+    if (!AppState.postItems[authorId]) AppState.postItems[authorId] = [];
+    if (
+      AppState.postItems[authorId].findIndex((post) => post.id == item.id) < 0
+    ) {
+      AppState.postItems[authorId].push(item);
     }
-    if (filterLikedVideos) {
+    if (AppState.filters.likedVideos) {
       if (!likedVideos[getCurrentPageUsername()])
         likedVideos[getCurrentPageUsername()] = [];
       if (
@@ -492,10 +710,10 @@ function handleFoundItems(newItems) {
 
   displayFoundUrls();
 
-  // if (!postItems[getCurrentPageUsername()])
-  //   postItems[getCurrentPageUsername()] = [];
+  // if (!AppState.postItems[getCurrentPageUsername()])
+  //   AppState.postItems[getCurrentPageUsername()] = [];
   // let nonDuplicateItems = generateNonDuplicateItems(
-  //   postItems[getCurrentPageUsername()],
+  //   AppState.postItems[getCurrentPageUsername()],
   //   newItems
   // );
   // if (nonDuplicateItems && nonDuplicateItems.length) {
@@ -505,31 +723,31 @@ function handleFoundItems(newItems) {
   //         post?.author != getCurrentPageUsername() &&
   //         post?.author?.uniqueId != getCurrentPageUsername()
   //     );
-  //     postItems[getCurrentPageUsername()] = nonDuplicateItems;
+  //     AppState.postItems[getCurrentPageUsername()] = nonDuplicateItems;
   //   } else if (filterVideosState.startsWith("ALL")) {
   //     nonDuplicateItems = nonDuplicateItems.filter(
   //       (post) =>
   //         post?.author == getCurrentPageUsername() ||
   //         post?.author?.uniqueId == getCurrentPageUsername()
   //     );
-  //     postItems[getCurrentPageUsername()] = nonDuplicateItems;
+  //     AppState.postItems[getCurrentPageUsername()] = nonDuplicateItems;
   //   }
 
   //   // fail safe
   //   if (nonDuplicateItems.length)
-  //     postItems[getCurrentPageUsername()] = nonDuplicateItems;
+  //     AppState.postItems[getCurrentPageUsername()] = nonDuplicateItems;
   // }
   // if (nonDuplicateItems.length)
-  //   postItems[getCurrentPageUsername()] = nonDuplicateItems;
+  //   AppState.postItems[getCurrentPageUsername()] = nonDuplicateItems;
 
-  // // Should be done after updating the postItems
+  // // Should be done after updating the AppState.postItems
   // if (!filterVideosState.endsWith("UPDATED") && filterVideosState != "INIT") {
   //   displayFoundUrls();
   //   filterVideosState += "_UPDATED";
   // }
   // let currentPathContentId = document.location.pathname;
 
-  // postItems[getCurrentPageUsername()].forEach(
+  // AppState.postItems[getCurrentPageUsername()].forEach(
   //   (item) => (currentPathContentId += item.id)
   // );
   // if (displayedItemsId[getCurrentPageUsername()] != currentPathContentId) {
@@ -577,31 +795,30 @@ function populatePostItems(nonDuplicateItems, newItems) {
 // }
 
 // TODO: Know why the website is aborting request instead of overwriting the abort method with a dummy function.
-window.AbortController.prototype.abort = () => {};
 
-const browserFetch = window.fetch;
-window.fetch = async (...args) => {
-  const response = await browserFetch(...args);
-  response
-    .clone()
-    .json()
-    .then((data) => {
-      try {
-        if (data.itemList && data.itemList.length && data.itemList[0]?.id) {
-          handleFoundItems(data.itemList.filter((item) => item.id));
-        }
+// const browserFetch = window.fetch;
+// window.fetch = async (...args) => {
+//   const response = await browserFetch(...args);
+//   response
+//     .clone()
+//     .json()
+//     .then((data) => {
+//       try {
+//         if (data.itemList && data.itemList.length && data.itemList[0]?.id) {
+//           handleFoundItems(data.itemList.filter((item) => item.id));
+//         }
 
-        if (Array.isArray(data.data)) {
-          handleFoundItems(
-            data.data.map((entry) => entry?.item).filter((item) => item?.id)
-          );
-        }
-      } catch (error) {
-        console.warn("Low level error in fetch", error);
-      }
-    });
-  return response;
-};
+//         if (Array.isArray(data.data)) {
+//           handleFoundItems(
+//             data.data.map((entry) => entry?.item).filter((item) => item?.id)
+//           );
+//         }
+//       } catch (error) {
+//         console.warn("Low level error in fetch", error);
+//       }
+//     });
+//   return response;
+// };
 
 function getLoggedInInitialData() {
   // List of {id, url}
@@ -648,7 +865,7 @@ window.onload = () => {
     if (currentPageUsername != getCurrentPageUsername()) {
       try {
         currentPageUsername = getCurrentPageUsername();
-        allDirectLinks = [];
+        AppState.allDirectLinks = [];
         const _id = "ttk-downloader-wrapper";
         document.getElementById(_id)?.remove();
         let likedTab = getLikedTab();
@@ -656,11 +873,11 @@ window.onload = () => {
         if (
           likedTab &&
           likedTab.getAttribute("aria-selected") === "true" &&
-          !filterLikedVideos
+          !AppState.filters.likedVideos
         ) {
           startLikesPolling();
         } else {
-          filterLikedVideos = false;
+          AppState.filters.likedVideos = false;
           removeDocumentClickListener();
         }
         showDownloader();
@@ -675,7 +892,7 @@ function getCurrentPageUsername() {
   return document.location.pathname.split("/")[1].split("@")[1] || "😃";
 }
 function downloadURLToDisk(url, filename) {
-  isDownloading = true;
+  AppState.downloading.isActive = true;
   displayFoundUrls({ forced: true });
   // if (filename === ".mp4") {
   //   filename = getCurrentPageUsername() + "-video.mp4";
@@ -684,7 +901,7 @@ function downloadURLToDisk(url, filename) {
   return new Promise((resolve, reject) => {
     fetch(url, { credentials: "include" }) // Ensure cookies are sent with the request
       .then((response) => {
-        isDownloading = false;
+        AppState.downloading.isActive = false;
         displayFoundUrls({ forced: true });
 
         if (!response.ok) {
@@ -714,7 +931,7 @@ function downloadURLToDisk(url, filename) {
         resolve();
       })
       .catch((error) => {
-        isDownloading = false;
+        AppState.downloading.isActive = false;
         displayFoundUrls({ forced: true });
         console.warn("ETTPD Download failed:", error);
         downloadURLToDiskOld(url, filename);
@@ -737,8 +954,8 @@ function getPostsHash(items) {
 
 function getSrcById(id) {
   try {
-    for (const key in postItems) {
-      const item = postItems[key].find((item) => item.id == id);
+    for (const key in AppState.postItems) {
+      const item = AppState.postItems[key].find((item) => item.id == id);
       if (item) {
         return item.video.playAddr;
       }
@@ -747,11 +964,11 @@ function getSrcById(id) {
     console.warn("Error in getting src by id", error);
   }
   try {
-    let videoDetail =
-      window.__$UNIVERSAL_DATA$__.__DEFAULT_SCOPE__["webapp.video-detail"]
-        .itemInfo.itemStruct;
-    if (videoDetail.id == id) {
-      return videoDetail.video.playAddr;
+    let defaultScope = window?.__$UNIVERSAL_DATA$__?.__DEFAULT_SCOPE__;
+    let videoDetail = defaultScope ? defaultScope["webapp.video-detail"] : null;
+    let videoItem = videoDetail?.itemInfo?.itemStruct;
+    if (videoItem?.id == id) {
+      return videoItem.video.playAddr;
     }
   } catch (error) {
     console.warn("Error in getting src by id", error);
@@ -775,7 +992,7 @@ function getLikedTab() {
 function startLikesPolling() {
   addDocumentClickListener();
   setTimeout(() => {
-    filterLikedVideos = true;
+    AppState.filters.likedVideos = true;
   }, 100);
 
   // Find the "Liked" tab by searching for its text content
@@ -797,12 +1014,12 @@ function addDocumentClickListener() {
     if (e.target.classList.contains("download-all-btn")) {
       return;
     }
-    // If filterLikedVideos is true, the user is viewing liked videos
-    if (filterLikedVideos) {
+    // If AppState.filters.likedVideos is true, the user is viewing liked videos
+    if (AppState.filters.likedVideos) {
       alert(
         "Just scroll down to load more liked videos. The downloader will automatically fetch them for you! Clicking anywhere resets the filter."
       );
-      filterLikedVideos = false;
+      AppState.filters.likedVideos = false;
     }
     removeDocumentClickListener();
   });
@@ -855,18 +1072,19 @@ setInterval(() => {
 
           if (videoSrc)
             downloadURLToDisk(videoSrc, `tiktok-video-${videoId}.mp4`);
-        }); 
+        });
 
         // First remove any existing download buttons
         const existingDownloadButtons = document.querySelectorAll(
-          `div.download-btn-container`);
+          `div.download-btn-container`
+        );
         existingDownloadButtons?.forEach((button) => button.remove());
 
         downloadButtonContainer.appendChild(downloadButton);
-        let anchor = videoElement.parentElement; 
+        let anchor = videoElement.parentElement;
         while (anchor && anchor.tagName !== "A") {
-          if(!anchor) break;
-          anchor = anchor.parentElement; 
+          if (!anchor) break;
+          anchor = anchor.parentElement;
         }
         if (anchor && anchor.tagName === "A") {
           downloadButtonContainer.style.zIndex = "1";
@@ -874,9 +1092,7 @@ setInterval(() => {
         } else {
           wrapper.appendChild(downloadButtonContainer);
           downloadButtonContainer.style.zIndex = "2";
-
         }
-        
       }
     }
   });
