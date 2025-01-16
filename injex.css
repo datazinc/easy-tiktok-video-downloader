@@ -203,7 +203,6 @@ label[for="ettpd-current-profile"] {
   background-color: #fe2c55;
   color: #fff;
   cursor: pointer;
-  z-index: 2;
 }
 
 .download-btn:hover {
@@ -218,6 +217,7 @@ label[for="ettpd-current-profile"] {
 
 .download-btn-container {
   position: absolute;
+  top:0;
   width: 100%;
   height: 0;
   display: flex;

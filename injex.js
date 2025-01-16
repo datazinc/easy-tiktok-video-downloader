@@ -855,10 +855,28 @@ setInterval(() => {
 
           if (videoSrc)
             downloadURLToDisk(videoSrc, `tiktok-video-${videoId}.mp4`);
-        });
-        // Attach the button outside of the wrapper
+        }); 
+
+        // First remove any existing download buttons
+        const existingDownloadButtons = document.querySelectorAll(
+          `div.download-btn-container`);
+        existingDownloadButtons?.forEach((button) => button.remove());
+
         downloadButtonContainer.appendChild(downloadButton);
-        wrapper.appendChild(downloadButtonContainer); // Place it on the body to avoid wrapper layout conflicts
+        let anchor = videoElement.parentElement; 
+        while (anchor && anchor.tagName !== "A") {
+          if(!anchor) break;
+          anchor = anchor.parentElement; 
+        }
+        if (anchor && anchor.tagName === "A") {
+          downloadButtonContainer.style.zIndex = "1";
+          anchor.parentElement?.appendChild(downloadButtonContainer);
+        } else {
+          wrapper.appendChild(downloadButtonContainer);
+          downloadButtonContainer.style.zIndex = "2";
+
+        }
+        
       }
     }
   });
