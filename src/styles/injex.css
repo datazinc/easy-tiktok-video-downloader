@@ -1,0 +1,489 @@
+.ettpd-wrapper {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  height: 400px;
+  width: 308px;
+  background-color: yellow;
+  bottom: 100px;
+  right: 20px;
+  z-index: 99999;
+  overflow: visible;
+  border-radius: 4px;
+  padding-bottom: 35px;
+  -webkit-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+  -moz-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+  box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+}
+
+.ettpd-a {
+  color: black;
+}
+.ettpd-a:hover {
+  color: black;
+  text-decoration: underline;
+}
+.ettpd-a:visited {
+  color: black;
+}
+.ettpd-a:active {
+  color: white;
+}
+.ettpd-ol {
+  color: black;
+  width: 300px;
+  overflow-y: auto;
+  margin: 0;
+}
+.ettpd-ol li {
+  padding: 4px;
+  border-bottom: 1px solid #fe2c55;
+}
+.ettpd-ta {
+  width: 100%;
+  height: 40px;
+  border: none;
+}
+
+.ettpd-btn,
+.ettpd-span {
+  width: 100%;
+  border: none;
+  padding: 4px;
+  background-color: #fe2c55;
+  cursor: pointer;
+  transition: background-color ease-in-out 200ms;
+}
+
+.ettpd-btn:hover {
+  background-color: #f88aa0;
+}
+.ettpd-btn {
+  padding-right: 20px;
+  margin: 15px 8px;
+  border-radius: 4px;
+  font-weight: bold;
+  -webkit-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+  -moz-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+  box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+}
+
+.ettpd-report-bug {
+  background-color: #53f5ef;
+  color: black;
+  position: absolute;
+  font-size: x-small;
+  bottom: -7px;
+}
+
+.ettpd-report-bug:hover {
+  background-color: #00b1ab;
+  transition: background-color ease-in-out 200ms;
+}
+.ettpd-copyright {
+  height: 20px;
+  font-size: x-small;
+  margin-right: 4px;
+  bottom: 80px;
+}
+.ettpd-span {
+  width: 300px;
+  display: block;
+  position: fixed;
+  right: 20px;
+  padding: -4px;
+  height: 20px;
+  border-bottom-left-radius: 4px;
+  border-bottom-right-radius: 4px;
+  text-align: center;
+}
+
+#ettpd-close,
+#ettpd-show,
+#ettpd-liked-only {
+  position: fixed;
+  border: none;
+  background: yellow;
+  color: #fe2c55;
+  font-weight: bold;
+  cursor: pointer;
+  -webkit-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+  -moz-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+  box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+}
+#ettpd-close,
+#ettpd-liked-only {
+  border-radius: 3px;
+  padding: 4px;
+}
+
+#ettpd-close {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  border-radius: 100%;
+  padding: 0 5px;
+}
+#ettpd-liked-only {
+  position: relative;
+  width: 100%;
+  background: #53f5ef;
+  color: black;
+  margin: 5px 0;
+}
+
+#ettpd-liked-only:hover {
+  background: #00b1ab;
+  transition: background-color ease-in-out 200ms;
+}
+#ettpd-liked-only:active {
+  background: #fe2c55;
+}
+
+#ettpd-show {
+  padding: 7px;
+  bottom: 70px;
+  right: 20px;
+  z-index: 99999;
+  border-radius: 7px;
+}
+
+.ettpd-current-video-btn {
+  background-color: white;
+}
+
+.ettpd-filter-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px;
+  margin-bottom: 5px;
+}
+#ettpd-liked-only,
+#ettpd-current-profile {
+  max-height: 10px;
+  max-width: 10px;
+  margin-right: 3px;
+}
+
+label[for="ettpd-liked-only"] {
+  color: black;
+}
+
+label[for="ettpd-current-profile"] {
+  color: black;
+  max-width: 150px;
+  padding-right: 4px;
+  text-wrap-mode: nowrap;
+}
+
+.ettpd-liked-only-container,
+.ettpd-current-profile-container {
+  display: flex;
+  align-items: center;
+  background-color: #53f5ef;
+  padding: 2px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ettpd-item-list-container {
+  display: flex;
+  overflow: auto;
+}
+
+.download-btn {
+  position: absolute;
+  top: 0;
+  border: none;
+  border-bottom-right-radius: 40px;
+  border-bottom-left-radius: 40px;
+  border-bottom: 1px solid white;
+  padding: 5px 20px;
+  background-color: #fe2c55;
+  color: #fff;
+  cursor: pointer;
+}
+
+.download-btn:hover {
+  background-color: #f88aa0;
+  transition: background-color ease-in-out 200ms;
+}
+.download-btn:active {
+  background-color: white;
+  color: black;
+  transition: background-color ease-in-out 200ms;
+}
+
+.download-btn-container {
+  position: relative;
+  top: 0;
+  width: 100%;
+  height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.ettpd-download-btn-holder { 
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.ettpd-download-btn {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  background: linear-gradient(45deg, #fe2c55, #f88aa0);
+  color: white;
+  font-weight: bold;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(254, 44, 85, 0.3);
+}
+.ettpd-download-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(254, 44, 85, 0.4);
+  background: linear-gradient(45deg, #f88aa0, #fe2c55);
+}
+.ettpd-download-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 2px 10px rgba(254, 44, 85, 0.2);
+}
+
+.ettpd-text-container {
+  margin-bottom: 4px;
+}
+
+.ettpd-author-link {
+  font-weight: bold;
+  color: #fe2c55;
+  text-decoration: none;
+  margin-right: 14px;
+}
+
+.ettpd-author-link:hover {
+  text-decoration: underline;
+}
+
+/* src/styles/modal.css */
+.ettpd-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+
+.ettpd-modal-box {
+  background-color: #ffffff;
+  padding: 24px;
+  border-radius: 12px;
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+  text-align: center;
+  width: 90%;
+  max-width: 500px;
+  font-family: Arial, sans-serif;
+}
+
+.ettpd-modal-title {
+  font-size: 1.5em;
+  color: #1da1f2;
+  margin-bottom: 12px;
+}
+
+.ettpd-modal-message {
+  font-size: 1em;
+  color: #555;
+  margin-bottom: 20px;
+}
+
+.ettpd-modal-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.ettpd-modal-button {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  background-color: #1da1f2;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.ettpd-modal-button:hover {
+  background-color: #0a84d6;
+}
+
+.ettpd-preferences-box {
+  display: flex;
+  justify-content: flex-start;
+  padding: 6px 10px;
+}
+
+.ettpd-pref-btn {
+  background-color: #1da1f2;
+  color: white;
+  font-weight: bold;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+  font-size: 0.9em;
+}
+
+.ettpd-pref-btn:hover {
+  background-color: #0a84d6;
+}
+
+
+.ettpd-modal-input {
+  width: 100%;
+  padding: 10px 14px;
+  margin: 10px 0;
+  font-size: 1em;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  box-sizing: border-box;
+}
+
+.ettpd-modal-error {
+  color: #e53935;
+  font-size: 0.9em;
+  margin-bottom: 10px;
+}
+
+.ettpd-modal-button-group {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.ettpd-modal-button {
+  flex: 1;
+  padding: 10px 16px;
+  font-size: 0.95em;
+  font-weight: 600;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.ettpd-modal-button.primary {
+  background-color: #1da1f2;
+  color: white;
+}
+
+.ettpd-modal-button.primary:hover {
+  background-color: #0a84d6;
+}
+
+.ettpd-modal-button.danger {
+  background-color: #f44336;
+  color: white;
+}
+
+.ettpd-modal-button.danger:hover {
+  background-color: #d32f2f;
+}
+
+.ettpd-modal-feedback {
+  font-size: 0.9em;
+  color: #2e7d32;
+  margin: 6px 0;
+  font-weight: 500;
+}
+.ettpd-modal-current-path {
+  font-size: 0.9em;
+  color: #555;
+  margin-bottom: 10px;
+}
+.ettpd-modal-current-path-value {
+  font-weight: bold;
+  color: #1da1f2;
+  margin-left: 4px;
+}
+
+/*  Settings CSS */
+
+.ettpd-settings-toggle {
+  background-color: #ffffff;
+  color: #1da1f2;
+  font-weight: bold;
+  border: 1px solid #1da1f2;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.9em;
+  cursor: pointer;
+  margin: 8px 10px;
+  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.ettpd-settings-toggle:hover {
+  background-color: #1da1f2;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+.ettpd-preferences-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
+  background-color: #f4f4f4;
+  border-radius: 6px;
+  margin: 0 10px 8px 10px;
+}
+
+.ettpd-pref-label {
+  font-size: 0.85em;
+  color: #555;
+  font-weight: bold;
+}
+
+.ettpd-pref-btn {
+  background-color: #1da1f2;
+  color: white;
+  font-weight: bold;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+  font-size: 0.9em;
+}
+
+.ettpd-pref-btn:hover {
+  background-color: #0a84d6;
+}
+
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #ccc;
+  border-top-color: #333;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-left: 8px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -3,24 +3,54 @@
   "description": "Download liked videos or any TikTok videos easily without watermark. Download search results, likes, all user videos, and more.",
   "version": "3.0.1",
   "manifest_version": 3,
-  "host_permissions": ["*://*.tiktok.com/"],
-  "permissions": [],
+  "host_permissions": [
+    "*://*.tiktok.com/*"
+  ],
+  "permissions": [
+    "downloads"
+  ],
+  "background": {
+    "service_worker": "src/background/background.js",
+    "type": "module"
+  },
   "web_accessible_resources": [
     {
-      "resources": ["injex.js"],
-      "matches": ["*://*.tiktok.com/*"]
+      "resources": [
+        "src/modules/downloader/downloader.js",
+        "src/modules/downloader/ui.js",
+        "src/modules/downloader/handlers.js",
+        "src/modules/networking/networkInterceptor.js",
+        "src/modules/polling/polling.js",
+        "src/modules/state/constants.js",
+        "src/modules/state/state.js",
+        "src/modules/utils/utils.js",
+        "src/content/inject.js",
+        "src/index.js",
+        "src/styles/injex.css",
+        "src/styles/style.css"
+      ],
+      "matches": [
+        "*://*.tiktok.com/*"
+      ]
     }
   ],
   "content_scripts": [
     {
-      "matches": ["*://*.tiktok.com/*"],
-      "js": ["content.js"],
-      "css": ["injex.css"],
+      "matches": [
+        "*://*.tiktok.com/*"
+      ],
+      "js": [
+        "src/content/content.js",
+        "src/content/inject.js"
+      ],
+      "css": [
+        "src/styles/injex.css"
+      ],
       "run_at": "document_start"
     }
   ],
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "src/popup/popup.html"
   },
   "icons": {
     "16": "icons/icon16.png",
