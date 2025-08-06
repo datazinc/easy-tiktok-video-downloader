@@ -16,7 +16,6 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "src/modules/downloader/downloader.js",
         "src/modules/downloader/ui.js",
         "src/modules/downloader/handlers.js",
         "src/modules/networking/networkInterceptor.js",
@@ -27,7 +26,8 @@
         "src/content/inject.js",
         "src/index.js",
         "src/styles/injex.css",
-        "src/styles/style.css"
+        "src/styles/style.css",
+        "src/js/confetti.browser.min.js"
       ],
       "matches": [
         "*://*.tiktok.com/*"

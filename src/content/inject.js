@@ -1,17 +1,20 @@
 (function injectResources() {
-  const s = document.createElement("script");
-  s.type = "module";
-  s.src = chrome.runtime.getURL("src/modules/networking/networkInterceptor.js");
-  (document.head || document.documentElement).appendChild(s);
-
   const resources = [
+    {
+      type: "script",
+      src: "src/modules/networking/networkInterceptor.js",
+      isModule: true,
+    },
+    {
+      type: "script",
+      src: "src/js/confetti.browser.min.js",
+      isModule: true,
+    },
     { type: "link", href: "src/styles/injex.css" },
-    // { type: "link", href: "src/styles/style.css" },
     { type: "script", src: "src/index.js", isModule: true },
   ];
 
   const inject = () => {
-    console.log("ettvdebugger: Injecting resources...");
     resources.forEach(({ type, href, src, isModule }) => {
       const existing = document.querySelector(
         `${href ? `${type}[href="${chrome.runtime.getURL(href)}"]` : ""}${
@@ -36,7 +39,6 @@
       }
 
       (document.head || document.documentElement).appendChild(element);
-      console.log(`ettvdebugger Injected ${type}: ${href || src}`, element);
     });
   };
 

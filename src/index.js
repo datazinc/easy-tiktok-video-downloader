@@ -3,12 +3,11 @@ import {
   startPolling,
   startPollingPageChanges,
 } from "./modules/polling/polling.js";
-import { displayFoundUrls } from "./modules/downloader/downloader.js";
+import AppState from "./modules/state/state.js";
+import { displayFoundUrls } from "./modules/utils/utils.js";
 
-// window.addEventListener("DOMContentLoaded", () => {
-  startPolling();
-  startPollingPageChanges();
-  displayFoundUrls({ forced: true });
-// });
-
-console.log("ettvdebugger: INDEX LOADED...");
+startPolling();
+startPollingPageChanges(); 
+displayFoundUrls({ forced: true });
+ 
+if (AppState.debug.active) console.log("INDEX LOADED!!!!");

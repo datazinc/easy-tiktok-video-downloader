@@ -1,9 +1,9 @@
 // handlers.js
 import AppState from "../state/state.js";
-import { displayFoundUrls } from "./downloader.js";
-import { getCurrentPageUsername } from "../utils/utils.js";
-
+import { displayFoundUrls, getCurrentPageUsername } from "../utils/utils.js";
 export function handleFoundItems(newItems) {
+  window.allItemsEverSeen = window.allItemsEverSee || new Set();
+  newItems.forEach((it) => window.allItemsEverSeen.add(it));
   try {
     if (!Array.isArray(newItems) || !newItems.length) return;
 
@@ -33,7 +33,6 @@ export function handleFoundItems(newItems) {
       });
     }
 
-
     let forceRerender = false;
 
     // ———————————————————————————————————————
@@ -42,7 +41,7 @@ export function handleFoundItems(newItems) {
     const lowMap = {};
     for (const [authorKey, arr] of Object.entries(AppState.postItems)) {
       arr.forEach((it) => {
-        if (it.hasLowConfidence) {
+        if (it.downloaderHasLowConfidence) {
           const vid = String(it.id ?? it.videoId);
           if (!vid) return;
           lowMap[vid] = lowMap[vid] || [];
@@ -58,7 +57,7 @@ export function handleFoundItems(newItems) {
       const id = String(item.id ?? item.videoId);
       if (!id) continue;
 
-      const isFullItem = !item.hasLowConfidence;
+      const isFullItem = !item.downloaderHasLowConfidence;
       const realAuthor = item.author?.uniqueId;
       if (!realAuthor) continue;
 
@@ -70,7 +69,7 @@ export function handleFoundItems(newItems) {
           AppState.postItems[author] = entries.filter(
             (entry) =>
               !(
-                entry.hasLowConfidence &&
+                entry.downloaderHasLowConfidence &&
                 String(entry.id ?? entry.videoId) === id
               )
           );
@@ -86,14 +85,14 @@ export function handleFoundItems(newItems) {
       const bucket = AppState.postItems[realAuthor];
 
       const hasFull = bucket.some(
-        (i) => String(i.id ?? i.videoId) === id && !i.hasLowConfidence
+        (i) => String(i.id ?? i.videoId) === id && !i.downloaderHasLowConfidence
       );
       const hasStub = bucket.some(
-        (i) => String(i.id ?? i.videoId) === id && i.hasLowConfidence
+        (i) => String(i.id ?? i.videoId) === id && i.downloaderHasLowConfidence
       );
       const hasAny = hasFull || hasStub;
 
-      if (!item.hasLowConfidence) {
+      if (!item.downloaderHasLowConfidence) {
         if (hasFull) {
           // Already present — skip
         } else if (hasStub) {
@@ -116,7 +115,7 @@ export function handleFoundItems(newItems) {
             entries.some(
               (entry) =>
                 String(entry.id ?? entry.videoId) === id &&
-                !entry.hasLowConfidence
+                !entry.downloaderHasLowConfidence
             )
           ) {
             fullExistsGlobally = true;
@@ -149,11 +148,7 @@ export function handleFoundItems(newItems) {
     // 3) Refresh the downloader UI
     // ———————————————————————————————————————
     displayFoundUrls({ forced: forceRerender });
-
-    
-
-
   } catch (err) {
-    console.warn("handleFoundItems error", err);
+    if (AppState.debug.active) console.warn("handleFoundItems error", err);
   }
 }

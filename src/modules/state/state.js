@@ -1,7 +1,78 @@
 // state.js
-import { STORAGE_KEYS } from "./constants.js";
+import {
+  FILE_STORAGE_LOCATION_TEMPLATE_PRESETS,
+  STORAGE_KEYS,
+} from "./constants.js";
+
+function safeParseJSON(jsonValue, fallback = {}) {
+  if (jsonValue == null) return fallback;
+  try {
+    const parsed = JSON.parse(jsonValue);
+    return parsed == null ? fallback : parsed;
+  } catch (e) {
+    console.warn("Failed to parse JSON from localStorage:", jsonValue, e);
+    return fallback;
+  }
+}
+
+function safeParseRateDonateDates(jsonValue, fallback = {}) {
+  const parsed = safeParseJSON(jsonValue, fallback);
+
+  const fixDate = (val) => {
+    const n = Number(val);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  return {
+    lastDonatedAt: fixDate(parsed.lastDonatedAt),
+    lastRatedAt: fixDate(parsed.lastRatedAt),
+    lastShownAt: fixDate(parsed.lastShownAt),
+    shownCount: typeof parsed.shownCount === "number" ? parsed.shownCount : 0,
+  };
+}
+
+function safeParseScrapperDetails(jsonValue, fallback = {}) {
+  const parsed = safeParseJSON(jsonValue, fallback);
+
+  const fixDate = (val) => {
+    const n = Number(val);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  return {
+    isScrapping: parsed.isScrapping,
+    startedAt: fixDate(parsed.startedAt),
+    lastSuccessfullScrollAt: fixDate(parsed.lastSuccessfullScrollAt),
+    selectedTab: parsed.selectedTab,
+    scrappedPostsCount:
+      typeof parsed.scrappedPostsCount === "number"
+        ? parsed.scrappedPostsCount
+        : 0,
+  };
+}
+
+function getBooleanFromStorage(key, fallback = false) {
+  try {
+    return localStorage.getItem(key) === "true";
+  } catch (e) {
+    console.warn(`Failed to read boolean from localStorage for key ${key}:`, e);
+    return fallback;
+  }
+}
+
+function getStringOrNull(key) {
+  try {
+    return localStorage.getItem(key) || null;
+  } catch (e) {
+    console.warn(`Failed to read string from localStorage for key ${key}:`, e);
+    return null;
+  }
+}
 
 const AppState = {
+  debug: {
+    active: true,
+  },
   isLoggedIn: false,
   postItems: {},
   allDirectLinks: [],
@@ -16,30 +87,167 @@ const AppState = {
     state: "INIT",
   },
   downloadedURLs: [],
+  sessionHasConfirmedDownloads: false,
+  currentTierProgress: safeParseJSON(
+    localStorage.getItem(STORAGE_KEYS.CURRENT_TIER_PROGRESS),
+    { downloads: 0, recommendations: 0 }
+  ),
+  leaderboard: {
+    newlyConfirmedUrls: [],
+    currentlyUpdating: false,
+    lastUpdateHash: "",
+    allTimeDownloadsCount: Number(
+      getStringOrNull(STORAGE_KEYS.DOWNLOADS_ALL_TIME_COUNT) || 0
+    ),
+    weekDownloadsData: safeParseJSON(
+      localStorage.getItem(STORAGE_KEYS.DOWNLOADS_WEEKLY_DATA),
+      {
+        count: 0,
+        weekId: "missing",
+      }
+    ),
+  },
+  recommendationsLeaderboard: {
+    newlyRecommendedUrls: [],
+    currentlyUpdating: false,
+    lastUpdateHash: "",
+    allTimeRecommendationsCount: Number(
+      localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_ALL_TIME_COUNT) || 0
+    ),
+    weekRecommendationsData: safeParseJSON(
+      localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_WEEKLY_DATA),
+      { count: 0, weekId: "missing" }
+    ),
+  },
   likedVideos: {},
   downloading: {
     isActive: false,
     isDownloadingAll: false,
   },
   ui: {
-    isDownloaderClosed:
-      localStorage.getItem(STORAGE_KEYS.IS_DOWNLOADER_CLOSED) === "true",
+    downloaderPositionType: getStringOrNull(
+      STORAGE_KEYS.DOWNLOADER_POSITION_TYPE
+    ),
+    live_ETTPD_CUSTOM_POS: getStringOrNull(
+      STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION
+    ),
+    isPreferenceBoxOpen: false,
+    isScrapperBoxOpen: false,
+    isDownloaderClosed: getBooleanFromStorage(
+      STORAGE_KEYS.IS_DOWNLOADER_CLOSED
+    ),
     isRatePopupOpen: false,
-    hasRated: false,
-    // localStorage.getItem(STORAGE_KEYS.HAS_RATED) === "true" &&
-    // Math.random() < 0.95,
+    isDragging: false,
+    autoSwipeConfigurations: {
+      nextClickTimeout: null,
+      countdownInterval: null,
+      remainingTime: 0,
+    },
   },
   downloadPreferences: {
     skipFailedDownloads: false,
     skipAds: true,
-    folderName: localStorage.getItem(STORAGE_KEYS.DOWNLOAD_FOLDER) || "", // new field
-    showFolderPicker:
-      localStorage.getItem(STORAGE_KEYS.SHOW_FOLDER_PICKER) === "true", // new field
+    autoScrollMode: "off",
+    autoScrollModePrev: "",
+    includeCSV: false,
+    fullPathTemplate:
+      safeParseJSON(
+        localStorage.getItem(STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE),
+        {}
+      ) || FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault),
+    showFolderPicker: getBooleanFromStorage(STORAGE_KEYS.SHOW_FOLDER_PICKER),
   },
+  rateDonate: safeParseRateDonateDates(
+    localStorage.getItem(STORAGE_KEYS.RATE_DONATE_DATA),
+    {
+      lastDonatedAt: null,
+      lastRatedAt: null,
+      lastShownAt: null,
+      shownCount: 0,
+    }
+  ),
+  scrapperDetails: safeParseScrapperDetails(
+    localStorage.getItem(STORAGE_KEYS.SCRAPPER_DETAILS),
+    {
+      lastSuccessfullScrollAt: null,
+      startedAt: null,
+      selectedTab: null,
+      isScrapping: null,
+      scrappedPostsCount: null
+    }
+  ),
 };
+
 try {
-  window.AppState = AppState; // Expose AppState globally for debugging
-  console.log("ettvdebugger: AppState initialized", AppState);
-} catch (error) { }
+  window.AppStateETTVD = AppState; // Expose AppState globally for debugging
+  if (AppState.debug.active)
+    console.log("ettvdebugger: AppState initialized", AppState);
+} catch (error) {}
+
+export function resetAppStateToDefaults() {
+  // Reset localStorage-dependent values
+  localStorage.removeItem(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE);
+  localStorage.removeItem("ETTPD_CUSTOM_POS");
+  localStorage.removeItem(STORAGE_KEYS.IS_DOWNLOADER_CLOSED);
+  localStorage.removeItem(STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE);
+  localStorage.removeItem(STORAGE_KEYS.FULL_PATH_TEMPLATES);
+  localStorage.removeItem(STORAGE_KEYS.SHOW_FOLDER_PICKER);
+
+  // Reset AppState
+  AppState.debug.active = false;
+  AppState.isLoggedIn = false;
+  AppState.postItems = {};
+  AppState.allDirectLinks = [];
+  AppState.displayedState = {
+    itemsHash: "",
+    path: "",
+  };
+  AppState.filters = {
+    currentProfile: false,
+    likedVideos: false,
+    favoriteVideos: false,
+    state: "INIT",
+  };
+  AppState.downloadedURLs = [];
+  // AppState.comfirmedDownloadedUrlsCount = 0;
+  AppState.likedVideos = {};
+  AppState.downloading = {
+    isActive: false,
+    isDownloadingAll: false,
+  };
+  AppState.ui = {
+    downloaderPositionType: null,
+    live_ETTPD_CUSTOM_POS: null,
+    isPreferenceBoxOpen: false,
+    isDownloaderClosed: false,
+    isRatePopupOpen: false,
+    isDragging: false,
+    autoSwipeConfigurations: {
+      nextClickTimeout: null,
+      countdownInterval: null,
+      remainingTime: 0,
+    },
+  };
+  AppState.downloadPreferences = {
+    skipFailedDownloads: false,
+    skipAds: true,
+    autoScrollMode: "off",
+    includeCSV: false,
+    fullPathTemplate: {},
+    showFolderPicker: false,
+  };
+  // Set default
+  localStorage.setItem(
+    STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE,
+    JSON.stringify(
+      FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault)
+    )
+  );
+  // Default template
+  AppState.downloadPreferences.fullPathTemplate =
+    FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault);
+
+  console.log("AppState has been reset to defaults.");
+}
 
 export default AppState;

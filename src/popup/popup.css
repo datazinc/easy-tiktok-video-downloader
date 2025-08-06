@@ -8,7 +8,7 @@ body {
 }
 
 .container {
-  max-width: 520px;
+  width: 520px;
   margin: 30px auto;
   background-color: #ffffff;
   border-radius: 12px;
