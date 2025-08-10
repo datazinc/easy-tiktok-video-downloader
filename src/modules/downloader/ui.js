@@ -6,7 +6,6 @@ import {
   DOWNLOAD_FOLDER_DEFAULT,
 } from "../state/constants.js";
 import {
-  setDownloadFolderName,
   getDownloadFilePath,
   getSrcById,
   getPostInfoFrom,
@@ -14,7 +13,6 @@ import {
   getCurrentPageUsername,
   expectSmallViewer,
   getVideoUsernameFromAllDirectLinks,
-  canScrollTheList,
   canClickNextButton,
   downloadSingleMedia,
   downloadAllPostImagesHandler,
@@ -35,6 +33,11 @@ import {
   showCelebration,
   getRandomDownloadSuccessMessage,
   getTabSpans,
+  listScrollingCompleted,
+  toTitleCase,
+  showAlertModal,
+  shouldShowRatePopupLegacy,
+  getRecommendedPresetTemplate,
 } from "../utils/utils.js";
 import { startAutoSwipeLoop } from "../polling/polling.js";
 
@@ -87,7 +90,9 @@ export function createDownloaderWrapper() {
   if (!wrapper || !wrapper.style) return;
   console.warn(wrapper, "STYLE", wrapper.style);
   // Restore pinned position if exists
-  const saved = localStorage.getItem(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE);
+  const saved =
+    localStorage.getItem(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE) ||
+    "bottom-right";
   if (saved === "custom") {
     const pos =
       AppState.ui.live_ETTPD_CUSTOM_POS &&
@@ -119,13 +124,20 @@ export function createDownloaderWrapper() {
   return wrapper;
 }
 
-export function showScrapperControls() {
+export async function showScrapperControls() {
   const scrapperContainer = document.getElementById(
     DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER
   );
   if (!scrapperContainer) return;
+  scrapperContainer.style.display = AppState.ui.isScrapperBoxOpen
+    ? "flex"
+    : "none";
+  AppState.ui.isPreferenceBoxOpen =
+    scrapperContainer.style.display == "none"
+      ? AppState.ui.isPreferenceBoxOpen
+      : false;
+  if (!scrapperContainer) return;
 
-  const spans = getTabSpans();
   const controls = document.createElement("div");
   controls.className = "ettpd-scrapper-controls";
 
@@ -136,67 +148,104 @@ export function showScrapperControls() {
 
   const btnContainer = document.createElement("div");
   btnContainer.className = "ettpd-tab-buttons";
-  controls.style.display = AppState.ui.isScrapperBoxOpen ? "flex" : "none";
-  AppState.ui.isPreferenceBoxOpen =
-    controls.style.display == "none" ? AppState.ui.isPreferenceBoxOpen : false;
+  const spans = await getTabSpans(30 * 1000); // 30 seconds wait at most
+
   // Button Generator
   const tabOptions = [
     { key: "videos", label: "🎥 Scrape Videos" },
     { key: "reposts", label: "🔁 Scrape Reposts" },
     { key: "liked", label: "❤️ Scrape Likes" },
     { key: "favorites", label: "⭐ Scrape Favorites" },
+    { key: "collection", label: `🗂️ Scrape: ${spans.collection}` },
   ];
 
   tabOptions.forEach(({ key, label }) => {
     const tabSpan = spans[key];
-    if (!tabSpan || (tabSpan && !tabSpan.offsetParent)) return; // Skip if not available
+    if (
+      !tabSpan ||
+      (typeof tabSpan === "string" && !tabSpan.trim()) ||
+      (typeof tabSpan !== "string" && !tabSpan.offsetParent)
+    ) {
+      return;
+    }
 
     const btn = document.createElement("button");
-    btn.className = `ettpd-tab-btn ettpd-tab-btn-${key}`;
+    btn.className = `ettpd-tab-btn ettpd-tab-btn-${key} ${
+      AppState.scrapperDetails.selectedTab == key &&
+      (AppState.scrapperDetails.scrappingStage == "ongoing" ||
+        AppState.scrapperDetails.scrappingStage == "downloading")
+        ? "active"
+        : ""
+    }`;
     btn.textContent = label;
 
     btn.addEventListener("click", () => {
-      showScrapperStateUI(key, tabSpan);
+      // Remove active class from all tab buttons
+      document
+        .querySelectorAll(".ettpd-tab-btn.active")
+        .forEach((b) => b.classList.remove("active"));
+
+      // Set the clicked one as active
+      btn.classList.add("active");
+      if (key == "collection") {
+        AppState.scrapperDetails.selectedCollectionName = spans.collection;
+      }
+
+      // Your existing logic
+      showScrapperStateUI(key);
     });
 
     btnContainer.appendChild(btn);
   });
-  if (
-    tabOptions.filter(({ key }) => spans[key] && spans[key].offsetParent)
-      .length == 0
-  ) {
+  const tabsAvailable =
+    tabOptions.filter(({ key }) => {
+      const span = spans[key];
+      if (!span) return false;
+
+      if (typeof span === "string") {
+        return span.trim().length > 0; // allow non-empty string
+      }
+
+      return !!span.offsetParent; // DOM element visible
+    }).length !== 0;
+  if (!tabsAvailable) {
     const subtitle = document.createElement("span");
     subtitle.id = "tab-subtitle";
-    subtitle.innerText = "You must be on a profile page to use this feature.";
+    subtitle.innerText =
+      "🛑 Whoops — you're not on a profile or collection page. Turn on Auto Scroll in Settings (mode => 'Anytime'), smash that download, and you're golden. If this ain't it, refresh or hmu.";
+
     btnContainer.appendChild(subtitle);
-  }{
+  }
+  {
     const subtitle = document.getElementById("tab-subtitle");
     if (subtitle) {
       subtitle.remove();
     }
   }
-    controls.appendChild(btnContainer);
+
+  scrapperContainer
+    .querySelectorAll(".ettpd-scrapper-controls")
+    .forEach((el) => el.remove());
+
   scrapperContainer.appendChild(controls);
+  controls.appendChild(btnContainer);
+  if (
+    AppState.scrapperDetails.scrappingStage == "ongoing" ||
+    AppState.scrapperDetails.scrappingStage == "downloading"
+  ) {
+    if (tabsAvailable)
+      showScrapperStateUI(AppState.scrapperDetails.selectedTab);
+  }
   return controls;
 }
 
-function showScrapperStateUI(tabKey, tabSpan) {
-  // Remove any previous active UI
-  document.querySelector(".ettpd-scrapper-active-ui")?.remove();
-
-  const container = document.createElement("div");
-  container.className = "ettpd-scrapper-active-ui";
-
-  const heading = document.createElement("h4");
-  heading.textContent = `📂 ${tabSpan.textContent} Scrapper Selected`;
-  heading.className = "ettpd-scrapper-title";
-
+function explainerModal(tab) {
   const description = document.createElement("p");
   description.className = "ettpd-scrapper-info";
   description.innerHTML = `<p class="alert">
-  Clicking <strong>Start Download</strong> will reload the page and scrape
+  Clicking <strong>Start</strong> will reload the page and scrape
   <strong>every post</strong> under your currently selected tab —
-  <strong>@${getCurrentPageUsername()} <em>${tabSpan.textContent}</em></strong>.
+  <strong>@${getCurrentPageUsername()} <em>${tab}</em></strong>.
 </p>
 <blockquote class="black-text" style="margin-bottom: 10px;">
   If you can't <strong>see</strong> the posts, you can't <strong>download</strong> them. Duh. 😤
@@ -207,41 +256,125 @@ function showScrapperStateUI(tabKey, tabSpan) {
 <p class="alert">
   Want full control? Customize where your downloads go by setting up your own
   <strong>File Path Templates</strong> under <strong>Settings → File Paths</strong>. 🛠️
-</p>
-`;
+</p>`;
 
+  // Open the custom template modal
+  const configBtn = document.createElement("button");
+  configBtn.className = "ettpd-configure-filepaths-btn";
+  configBtn.textContent = "⚙️ Configure file paths";
+  configBtn.style.marginTop = "10px";
+  configBtn.onclick = () => {
+    createFilenameTemplateModal();
+  };
+
+  // NEW: one-click apply recommended template
+  const applyBtn = document.createElement("button");
+  applyBtn.className = "ettpd-configure-filepaths-btn";
+  applyBtn.textContent = "✨ Apply Recommended File Path Template";
+  applyBtn.style.marginTop = "10px";
+  applyBtn.style.backgroundColor = "#0a84d6";
+  applyBtn.style.color = "white";
+  applyBtn.onclick = () => {
+    // Update state first (your comment says saveTemplates needs it)
+    AppState.downloadPreferences.fullPathTemplate =
+      getRecommendedPresetTemplate();
+    const templates = getSavedTemplates();
+    const updated = templates.filter(
+      (t) => t.label !== AppState.downloadPreferences.fullPathTemplate.label
+    );
+    updated.push(AppState.downloadPreferences.fullPathTemplate);
+    // First update the state, since it's needed by saveTemplates
+    saveTemplates(updated);
+    saveSelectedTemplate();
+    showAlertModal("Saved Recommended Template!");
+  };
+
+  const example = document.createElement("div");
+  example.innerText = `Example: ${getRecommendedPresetTemplate().example}`;
+  example.style.marginTop = "5px";
+  example.style.fontSize = "11px";
   createModal({
-    children: [description],
+    children: [description, configBtn, applyBtn, example],
   });
+}
+
+function showScrapperStateUI(tabKey) {
+  // Remove any previous active UI
+  document.querySelector(".ettpd-scrapper-active-ui")?.remove();
+      
+  const container = document.createElement("div");
+  container.className = "ettpd-scrapper-active-ui";
+
+  const heading = document.createElement("h4");
+  heading.textContent = `📂 ${toTitleCase(tabKey)} Scrapper Selected`;
+  heading.className = "ettpd-scrapper-title";
+
   const actions = document.createElement("div");
   actions.className = "ettpd-scrapper-actions";
 
   const startBtn = document.createElement("button");
   startBtn.className = "ettpd-scrapper-start";
-  startBtn.textContent = "🚀 Start Download";
+  startBtn.title =
+    AppState.scrapperDetails.scrappingStage == "ongoing" ||
+    AppState.scrapperDetails.scrappingStage == "downloading"
+      ? "Press to cancel and start anew"
+      : "Initiate Scrapping";
+  startBtn.textContent =
+    AppState.scrapperDetails.scrappingStage == "ongoing" ||
+    AppState.scrapperDetails.scrappingStage == "downloading"
+      ? "🚀 Start*"
+      : "🚀 Start";
+  // startBtn.disabled =
+  //   AppState.scrapperDetails.scrappingStage == "ongoing" ||
+  //   AppState.scrapperDetails.scrappingStage == "downloading";
   startBtn.onclick = () => {
     console.log(`[Scrapper] Starting download for "${tabKey}"`);
     AppState.scrapperDetails.startedAt = Date.now();
     AppState.scrapperDetails.selectedTab = tabKey;
-    AppState.scrapperDetails.isScrapping = true;
+    AppState.scrapperDetails.scrappingStage = "initiated";
+    AppState.scrapperDetails.paused = false;
+    AppState.scrapperDetails.locked = true;
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
       JSON.stringify(AppState.scrapperDetails)
     );
     // Start scraping logic here
     window.location.href = window.location.pathname;
-
   };
 
   const pauseBtn = document.createElement("button");
   pauseBtn.className = "ettpd-scrapper-pause";
-  pauseBtn.textContent = "⏸️ Pause";
+  pauseBtn.textContent = AppState.scrapperDetails.paused
+    ? "▶️ Resume"
+    : "⏸️ Pause";
+  pauseBtn.disabled =
+    AppState.scrapperDetails.scrappingStage != "ongoing" &&
+    AppState.scrapperDetails.scrappingStage != "downloading";
+
   pauseBtn.onclick = () => {
-    console.log(`[Scrapper] Paused "${tabKey}"`);
-    // Pause logic here
+    AppState.scrapperDetails.paused = !AppState.scrapperDetails.paused;
+    if (AppState.scrapperDetails.paused) {
+      // Pause logic
+      AppState.downloadPreferences.autoScrollMode = "off";
+      pauseBtn.textContent = "▶️ Resume";
+      console.log(`[Scrapper] Paused "${tabKey}"`);
+    } else {
+      // Resume logic
+      AppState.downloadPreferences.autoScrollMode = "always";
+      pauseBtn.textContent = "⏸️ Pause";
+      console.log(`[Scrapper] Resumed "${tabKey}"`);
+    }
+  };
+  const learnBtn = document.createElement("button");
+  learnBtn.className = "ettpd-scrapper-learn";
+  learnBtn.textContent = "ℹ️ Info";
+  learnBtn.style.fontSize = "12px";
+  learnBtn.onclick = () => {
+    console.log(`[Scrapper] Showing explainer for "${tabKey}"`);
+    explainerModal(toTitleCase(tabKey));
   };
 
-  actions.append(startBtn, pauseBtn);
+  actions.append(startBtn, pauseBtn, learnBtn);
   container.append(heading, actions);
 
   // Insert below controls panel
@@ -280,18 +413,30 @@ function createDownloadAllButton(enabled = true) {
   const btn = document.createElement("button");
   btn.id = DOM_IDS.DOWNLOAD_ALL_BUTTON;
   btn.className = "ettpd-btn download-all-btn";
-  btn.textContent =
-    AppState.allDirectLinks.length && AppState.downloading.isDownloadingAll
-      ? `Downloaded ${AppState.downloadedURLs.length} of ${
-          AppState.allDirectLinks.length
-        } Post${AppState.allDirectLinks.length !== 1 ? "s" : ""}`
-      : AppState.allDirectLinks.length
-      ? `Download ${
-          AppState.allDirectLinks.length > 1
-            ? "all " + AppState.allDirectLinks.length
-            : AppState.allDirectLinks.length
-        } Post${AppState.allDirectLinks.length !== 1 ? "s" : ""}`
-      : "Nothing to download";
+  const total = AppState.allDirectLinks.length;
+  const done = AppState.downloadedURLs.length;
+
+  if (!total) {
+    btn.textContent = "🚫 Nothing to download";
+    btn.disabled = true;
+  } else if (AppState.downloading.isDownloadingAll) {
+    if (done < total) {
+      btn.textContent = `⏳ Downloading ${done + 1} of ${total} post${
+        total !== 1 ? "s" : ""
+      }…`;
+      btn.disabled = true;
+    } else {
+      btn.textContent = `✅ All ${total} post${
+        total !== 1 ? "s" : ""
+      } downloaded`;
+    }
+  } else {
+    btn.textContent = `⬇️ Download ${total > 1 ? `all ${total}` : "1"} post${
+      total !== 1 ? "s" : ""
+    }`;
+    btn.disabled = false;
+  }
+
   btn.disabled = !enabled;
   btn.onclick = (e) => {
     e.stopPropagation();
@@ -315,18 +460,30 @@ export function updateDownloadButtonLabel(btnElement, text) {
 export function updateDownloadButtonLabelSimple() {
   const downloadAllBtn = document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
   if (!downloadAllBtn) return;
-  downloadAllBtn.textContent =
-    AppState.allDirectLinks.length && AppState.downloading.isDownloadingAll
-      ? `Downloaded ${AppState.downloadedURLs.length} of ${
-          AppState.allDirectLinks.length
-        } Post${AppState.allDirectLinks.length !== 1 ? "s" : ""}`
-      : AppState.allDirectLinks.length
-      ? `Download ${
-          AppState.allDirectLinks.length > 1
-            ? "All " + AppState.allDirectLinks.length
-            : AppState.allDirectLinks.length
-        } Post${AppState.allDirectLinks.length !== 1 ? "s" : ""}`
-      : "Nothing to download";
+  const total = AppState.allDirectLinks.length;
+  const done = AppState.downloadedURLs.length;
+  const isDownloading = AppState.downloading.isDownloadingAll;
+
+  if (!total) {
+    downloadAllBtn.textContent = "🚫 Nothing to download";
+    downloadAllBtn.disabled = true;
+  } else if (isDownloading) {
+    if (done < total) {
+      downloadAllBtn.textContent = `⏳ Downloading ${
+        done + 1
+      } of ${total} Post${total !== 1 ? "s" : ""}…`;
+      downloadAllBtn.disabled = true;
+    } else {
+      downloadAllBtn.textContent = `✅ Downloaded all ${total} Post${
+        total !== 1 ? "s" : ""
+      }`;
+    }
+  } else {
+    downloadAllBtn.textContent = `⬇️ Download ${
+      total > 1 ? "All " + total : "1"
+    } Post${total !== 1 ? "s" : ""}`;
+    downloadAllBtn.disabled = false;
+  }
 }
 
 function createCurrentVideoButton(items) {
@@ -394,7 +551,12 @@ export function showStatsSpan() {
 
   if (weeklyCount === allTimeRecsCount && allTimeRecsCount > 0) {
     newHTML = `
-      ${formatStatsLine("This week?!", allTimeRecsCount, "top")}
+      ${formatStatsLine(
+        "This week?!",
+        allTimeRecsCount,
+        "top",
+        getUserRecommendationsCurrentTier
+      )}
       <div class="ettpd-stat-line-bottom" title="You're in a downloading mood 😏">📦 Fresh streak</div>
     `;
   } else {
@@ -494,11 +656,11 @@ export function updateDownloaderList(items, hashToDisplay) {
   document.getElementById(_id)?.remove();
 
   const wrapper = createDownloaderWrapper();
-
-  setTimeout(() => {
+  // Despicable hack
+  setTimeout(async () => {
     showStatsSpan();
-    showScrapperControls();
-  }, 0);
+    await showScrapperControls();
+  });
 
   // AppState.allDirectLinks = [];
   // ettpd-download-btn-holder
@@ -516,22 +678,33 @@ export function updateDownloaderList(items, hashToDisplay) {
 
   const scrapperContainer = document.createElement("div");
   scrapperContainer.id = DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER;
+  function updateVisibleBox() {
+    // if scrapper and pref are open give higher priority the scrapper
+    if (AppState.ui.isScrapperBoxOpen && AppState.ui.isPreferenceBoxOpen) {
+      AppState.ui.isScrapperBoxOpen = true;
+      AppState.ui.isPreferenceBoxOpen = false;
+    }
+    if (document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER))
+      document.getElementById(
+        DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER
+      ).style.display = AppState.ui.isScrapperBoxOpen ? "flex" : "none";
 
+    if (document.querySelector(".ettpd-preferences-box")) {
+      document.querySelector(".ettpd-preferences-box").style.display = AppState
+        .ui.isPreferenceBoxOpen
+        ? "flex"
+        : "none";
+    }
+  }
+  updateVisibleBox();
   userPostsBtn.onclick = (e) => {
     AppState.ui.isScrapperBoxOpen = !AppState.ui.isScrapperBoxOpen;
     AppState.ui.isPreferenceBoxOpen = AppState.ui.isScrapperBoxOpen
       ? false
       : AppState.ui.isScrapperBoxOpen;
 
-    if (document.querySelector(".ettpd-preferences-box"))
-      document.querySelector(".ettpd-preferences-box").style.display = AppState
-        .ui.isPreferenceBoxOpen
-        ? "flex"
-        : "none";
-
-    if (document.querySelector(".ettpd-scrapper-controls"))
-      document.querySelector(".ettpd-scrapper-controls").style.display =
-        AppState.ui.isScrapperBoxOpen ? "flex" : "none";
+    updateVisibleBox();
+    console.log("AUG7SCROLL isScrapperBoxOpen", AppState.ui.isScrapperBoxOpen);
   };
   // addClosePreferenceButton(preferencesBox);
 
@@ -847,8 +1020,9 @@ function makeElementDraggable(wrapper, handle) {
   //Dragging in motion
   document.addEventListener("mousemove", (e) => {
     if (
+      AppState.ui.isDragging &&
       localStorage.getItem(STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION) !==
-      AppState.ui.live_ETTPD_CUSTOM_POS
+        AppState.ui.live_ETTPD_CUSTOM_POS
     ) {
       // Persist location:
       AppState.ui.downloaderPositionType = "custom";
@@ -910,144 +1084,94 @@ export function hideDownloader() {
   document.body?.appendChild(showBtn);
 }
 
-// export function showRateUsPopUp() {
-//   if (AppState.ui.hasRated || AppState.ui.isRatePopupOpen) return;
-//   AppState.ui.isRatePopupOpen = true;
-//   hideDownloader();
+export function showRateUsPopUpLegacy() {
+  if (!shouldShowRatePopupLegacy()) return;
+  AppState.ui.isRatePopupOpen = true;
+  hideDownloader();
+  const overlay = document.createElement("div");
+  Object.assign(overlay.style, {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    width: "100%",
+    height: "100%",
+    backgroundColor: "rgba(0,0,0,0.4)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 9999,
+  });
 
-//   const overlay = document.createElement("div");
-//   Object.assign(overlay.style, {
-//     position: "fixed",
-//     top: 0,
-//     left: 0,
-//     width: "100%",
-//     height: "100%",
-//     backgroundColor: "rgba(0,0,0,0.4)",
-//     display: "flex",
-//     justifyContent: "center",
-//     alignItems: "center",
-//     zIndex: 9999,
-//   });
+  const box = document.createElement("div");
+  box.style.position = "fixed";
+  box.style.top = "0";
+  box.style.left = "0";
+  box.style.width = "100%";
+  box.style.height = "100%";
+  box.style.zIndex = "999";
+  box.style.backgroundColor = "rgba(31, 26, 26, 0.5)";
+  box.innerHTML = `
+  <div style="
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 400px;
+    max-width: 90%;
+    background-color: #ffffff;
+    color: #333333;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    font-family: Arial, sans-serif;
+    text-align: center;
+  ">
+    <h2 style="margin-bottom: 15px; font-size: 1.5em; color: #1da1f2;">Download Complete! 🎉</h2>
+    <p style="margin-bottom: 20px; font-size: 1em; line-height: 1.5; color: #555555;">
+      Your video has been successfully downloaded! 🎥<br>
+      We'd love your support—rate us 5 ⭐ on the Chrome Web Store to help us grow! 🥰
+    </p>
+    <a
+      href="https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg"
+      target="_blank"
+      style="
+        display: inline-block;
+        background-color: #1da1f2;
+        color: white;
+        padding: 12px 20px;
+        font-size: 1em;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: bold;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        transition: background-color 0.3s ease;
+      "
+      onmouseover="this.style.backgroundColor='#0a84d6';"
+      onmouseout="this.style.backgroundColor='#1da1f2';"
+    >
+      Rate Now
+    </a>
+  </div>
+`;
+  overlay.appendChild(box);
 
-//   const box = document.createElement("div");
-//   box.style.position = "fixed";
-//   box.style.top = "0";
-//   box.style.left = "0";
-//   box.style.width = "100%";
-//   box.style.height = "100%";
-//   box.style.zIndex = "999";
-//   box.style.backgroundColor = "rgba(31, 26, 26, 0.5)";
-//   box.innerHTML = `
-//   <div style="
-//     position: absolute;
-//     top: 50%;
-//     left: 50%;
-//     transform: translate(-50%, -50%);
-//     width: 400px;
-//     max-width: 90%;
-//     background-color: #ffffff;
-//     color: #333333;
-//     border-radius: 12px;
-//     padding: 20px;
-//     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-//     font-family: Arial, sans-serif;
-//     text-align: center;
-//   ">
-//     <h2 style="margin-bottom: 15px; font-size: 1.5em; color: #1da1f2;">Download Complete! 🎉</h2>
-//     <p style="margin-bottom: 20px; font-size: 1em; line-height: 1.5; color: #555555;">
-//       Your video has been successfully downloaded! 🎥<br>
-//       We'd love your support—rate us 5 ⭐ on the Chrome Web Store to help us grow! 🥰
-//     </p>
-//     <a
-//       href="https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg"
-//       target="_blank"
-//       style="
-//         display: inline-block;
-//         background-color: #1da1f2;
-//         color: white;
-//         padding: 12px 20px;
-//         font-size: 1em;
-//         border-radius: 8px;
-//         text-decoration: none;
-//         font-weight: bold;
-//         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-//         transition: background-color 0.3s ease;
-//       "
-//       onmouseover="this.style.backgroundColor='#0a84d6';"
-//       onmouseout="this.style.backgroundColor='#1da1f2';"
-//     >
-//       Rate Now
-//     </a>
-//   </div>
-// `;
-//   overlay.appendChild(box);
+  overlay.onclick = () => {
+    AppState.ui.isRatePopupOpen = false;
 
-//   overlay.onclick = () => {
-//     localStorage.setItem(STORAGE_KEYS.HAS_RATED, "true");
-//     AppState.ui.hasRated = true;
-//     overlay.remove();
-//   };
-
-//   document.body.appendChild(overlay);
-// }
-
-// src/modules/ui/modal.js
-// src/modules/ui/modal.js
-
-// export function showRateUsPopUp() {
-//   if (AppState.ui.hasRated || AppState.ui.isRatePopupOpen) return;
-//   AppState.ui.isRatePopupOpen = true;
-
-//   const title = document.createElement("h2");
-//   title.className = "ettpd-modal-title";
-//   title.textContent = "Download Complete! 🎉";
-
-//   const msg = document.createElement("p");
-//   msg.className = "ettpd-modal-message";
-//   msg.innerHTML = `
-//     Your video is yours. But the journey continues...<br>
-//     Choose your path. Help us grow. 🥹
-//   `;
-
-//   const rateBtn = document.createElement("a");
-//   rateBtn.href =
-//     "https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg";
-//   rateBtn.target = "_blank";
-//   rateBtn.className = "ettpd-pill-button blue-pill";
-//   rateBtn.textContent = "🔵 Rate Us (Blue Pill)";
-
-//   rateBtn.addEventListener("click", () => {
-//     localStorage.setItem(STORAGE_KEYS.HAS_RATED, "true");
-//     AppState.ui.hasRated = true;
-//     console.log("✅ User took the blue pill — marked as rated.");
-//   });
-
-//   const coffeeBtn = document.createElement("a");
-//   coffeeBtn.href = "https://linktr.ee/aimuhire";
-//   coffeeBtn.target = "_blank";
-//   coffeeBtn.className = "ettpd-pill-button red-pill";
-//   coffeeBtn.textContent = "🔴 Buy Coffee (Red Pill)";
-
-//   coffeeBtn.addEventListener("click", () => {
-//     localStorage.setItem(STORAGE_KEYS.HAS_RATED, "true");
-//     AppState.ui.hasRated = true;
-//     console.log("✅ User took the red pill — marked as rated.");
-//   });
-
-//   const btnContainer = document.createElement("div");
-//   btnContainer.className = "ettpd-rate-buttons";
-//   btnContainer.appendChild(rateBtn);
-//   btnContainer.appendChild(coffeeBtn);
-
-//   createModal({
-//     children: [title, msg, btnContainer],
-//     onClose: () => true,
-//   });
-// }
+    overlay.remove();
+  };
+  AppState.rateDonate.lastShownAt = Date.now();
+  AppState.rateDonate.shownCount += 1;
+  localStorage.setItem(
+    STORAGE_KEYS.RATE_DONATE_DATA,
+    JSON.stringify(AppState.rateDonate)
+  );
+  document.body.appendChild(overlay);
+}
 
 export function showStatsPopUp() {
   if (AppState.downloading.isDownloadingAll || AppState.downloading.isActive) {
-    return alert("Wait for the download to be over or refresh 🙂");
+    return showAlertModal("Wait for the download to be over or refresh 🙂");
   }
 
   if (AppState.downloadedURLs.length || AppState.sessionHasConfirmedDownloads) {
@@ -1229,7 +1353,7 @@ export function showStatsPopUp() {
     };
     AppState.currentTierProgress = { downloads: 0, recommendations: 0 };
 
-    alert("✅ All leaderboard data has been reset.");
+    showAlertModal("✅ All leaderboard data has been reset.");
     document.getElementById(DOM_IDS.MODAL_CONTAINER)?.remove();
     displayFoundUrls({ forced: true });
   });
@@ -1310,6 +1434,8 @@ export function createModal({ children = [], onClose = null }) {
 }
 
 export function showMorpheusRateUsPage() {
+  AppState.ui.isRatePopupOpen = true;
+  hideDownloader();
   showCelebration("mindblown");
   setTimeout(() => {
     createModalMorpheus({
@@ -1346,7 +1472,10 @@ export function showMorpheusRateUsPage() {
         overlay?.remove();
         if (typeof onClose === "function") onClose();
       },
-      onClose: (overlay) => overlay?.remove(),
+      onClose: (overlay) => {
+        AppState.ui.isRatePopupOpen = false;
+        overlay?.remove();
+      },
     });
 
     AppState.rateDonate.lastShownAt = Date.now();
@@ -1426,6 +1555,7 @@ export function createFilenameTemplateModal() {
 
   // Main container
   const layout = document.createElement("div");
+  layout.className = "layout";
   layout.style.padding = "10px";
   layout.style.color = "#fff";
 
@@ -1444,6 +1574,7 @@ export function createFilenameTemplateModal() {
     "sequenceNumber",
     "ad",
     "mediaType",
+    "tabName",
   ];
 
   const instructions = document.createElement("details");
@@ -1474,6 +1605,7 @@ export function createFilenameTemplateModal() {
       <li>Paths must be <strong>relative</strong>. No leading slashes or <code>..</code>.</li>
       <li>{ad} adds "ad" to the file path if the media is an advertisement.</li>
       <li>{mediaType} inserts either "image" or "video" based on the type of media being downloaded.</li>
+      <li>{tabName} Best for scrapping mode, it prints: Video, Reposts, Liked, Favorited! Recommended template replaces the initial username with the account being scrapped username so you find everything in the same folder. </li>
       <li>Use your imagination—or don't. Totally up to you.</li>
     </ul>
   </div>
@@ -1614,6 +1746,7 @@ export function createFilenameTemplateModal() {
       isAd: true,
       isImage: false,
       imagePostImages: ["img1", "img2", "img3", "img4"],
+      tabName: "Reposts",
     };
 
     const sanitize = (val) =>
@@ -1758,8 +1891,8 @@ export function createFilenameTemplateModal() {
   // Save & Apply
   saveBtn.onclick = async () => {
     renderPreviewAndErrors();
-    if (error.textContent) return alert("Fix errors before saving.");
-    if (!labelInput.value.trim()) return alert("Please enter a name.");
+    if (error.textContent) return showAlertModal("Fix errors before saving.");
+    if (!labelInput.value.trim()) return showAlertModal("Please enter a name.");
     const newTpl = {
       label: labelInput.value.trim(),
       template: inputPathTemplate.value.trim(),
@@ -1815,11 +1948,11 @@ export function createFilenameTemplateModal() {
   // Delete Handler
   deleteBtn.onclick = async () => {
     const val = comboSelect.value;
-    if (!val) return alert("Select a user template to delete.");
+    if (!val) return showAlertModal("Select a user template to delete.");
     const [type, idxStr] = val.split("-");
     const idx = parseInt(idxStr, 10);
     if (type !== "user") {
-      return alert("Cannot delete built-in presets.");
+      return showAlertModal("Cannot delete built-in presets.");
     }
     const removed = templates.splice(idx, 1)[0];
     saveTemplates(templates);
@@ -1900,23 +2033,26 @@ export function createPreferencesBox() {
   // 🧹 Clear List button
   const clearListBtn = document.createElement("button");
   clearListBtn.className = "ettpd-pref-btn";
-  clearListBtn.textContent = "🧹 Clear List";
+  clearListBtn.textContent = "🧹 Clean List";
   clearListBtn.onclick = (e) => {
     e.stopPropagation();
     if (
       AppState.downloading.isActive ||
       AppState.downloading.isDownloadingAll
     ) {
-      alert("Please wait for the download to be over or refresh!");
+      showAlertModal("Please wait for the download to be over or refresh!");
       return;
     }
     AppState.downloadedURLs = [];
     AppState.allDirectLinks = [];
-    AppState.postItems = {};
+    AppState.allItemsEverSeen = {};
     AppState.displayedState.itemsHash = "";
     AppState.displayedState.path = window.location.pathname;
     AppState.ui.isPreferenceBoxOpen = false;
     AppState.ui.isScrapperBoxOpen = false;
+    showAlertModal(
+      "🔄 All set! The download list now shows only the posts visible on the main screen — nothing from the sidebar.<br><br>💡 <b>Tip:</b> To scrape this page, scroll all the way down, then click <b>Download All</b> once you're happy with your list."
+    );
 
     setTimeout(() => {
       displayFoundUrls({ forced: true });
@@ -1944,7 +2080,6 @@ export function createPreferencesBox() {
     "filterUsername",
     (e) => {
       const checkbox = e.target;
-
       if (
         getCurrentPageUsername() === "😃" &&
         !AppState.filters.currentProfile
@@ -1955,7 +2090,9 @@ export function createPreferencesBox() {
         // Revert the checkbox state visually
         checkbox.checked = false;
 
-        alert("This feature only works when you are on a user page :)");
+        showAlertModal(
+          "This feature only works when you are on a user page :) 👀 Psst… The Scrapper's the glow-up. This legacy mode is giving 2019 vibes."
+        );
         return;
       }
 
@@ -2055,7 +2192,9 @@ export function createPreferencesBox() {
     const label = document.createElement("label");
     label.className = "ettpd-label";
     label.textContent = `Auto Scroll Mode (${
-      canScrollTheList() || canClickNextButton() ? "Available" : "Unavailable"
+      !listScrollingCompleted() || canClickNextButton()
+        ? "Available"
+        : "Unavailable"
     })`;
 
     const select = document.createElement("select");
@@ -2136,9 +2275,10 @@ export function createSettingsToggle(preferencesBox) {
 
     if (AppState.ui.isPreferenceBoxOpen) {
       AppState.ui.isScrapperBoxOpen = false;
-      if (document.querySelector(".ettpd-scrapper-controls"))
-        document.querySelector(".ettpd-scrapper-controls").style.display =
-          AppState.ui.isScrapperBoxOpen ? "flex" : "none";
+      if (document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER))
+        document.getElementById(
+          DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER
+        ).style.display = AppState.ui.isScrapperBoxOpen ? "flex" : "none";
 
       settingsBtn.textContent = "⚙️ Close";
       settingsBtn.style.border = "1px solid #fe2c55";
@@ -2304,6 +2444,11 @@ function createDownloadButton({
         "downloads",
         getRandomDownloadSuccessMessage(isImage ? "photo" : "video")
       );
+      if (!AppState.downloadPreferences.skipFailedDownloads) {
+        setTimeout(() => {
+          showRateUsPopUpLegacy();
+        }, 8000);
+      }
     } catch (err) {
       if (AppState.debug.active)
         console.warn("IMAGES_DL ❌ Download failed", err);
@@ -2601,47 +2746,34 @@ function downloadBtnInjectorForMainVideoSideGrid() {
 
     const wrapper = getImageDivPlayerContainerDownward(card);
     if (wrapper)
-      console.log(
-        "getImageDivPlayerContainerDownward",
-        wrapper.className.includes("DivPlayerContainer"),
-        wrapper
-      );
-    if (
-      wrapper &&
-      wrapper.className.includes("DivPlayerWrapper") &&
-      !wrapper.querySelector(".ettpd-download-btn")
-    ) {
-      const author =
-        getVideoUsernameFromAllDirectLinks(videoId) ||
-        getPostInfoFrom(card, {
-          origin: "safeGridObserver",
-        })?.username ||
-        getCurrentPageUsername() ||
-        "username";
+      if (
+        wrapper &&
+        wrapper.className.includes("DivPlayerWrapper") &&
+        !wrapper.querySelector(".ettpd-download-btn")
+      ) {
+        const author =
+          getVideoUsernameFromAllDirectLinks(videoId) ||
+          getPostInfoFrom(card, {
+            origin: "safeGridObserver",
+          })?.username ||
+          getCurrentPageUsername() ||
+          "username";
 
-      const getVideoSrc = () =>
-        getSrcById(videoId) ||
-        wrapper.querySelector("video source")?.src ||
-        wrapper.querySelector("video")?.src;
-      console.log("getImageDivPlayerContainerDownward", {
-        wrapperId: `grid-${videoId}`,
-        author,
-        videoId,
-        getVideoSrc,
-        parentEl: wrapper,
-        isSmallView: expectSmallViewer(),
-        from: "safeGridObserver",
-      });
-      createDownloadButton({
-        wrapperId: `grid-${videoId}`,
-        author,
-        videoId,
-        getVideoSrc,
-        parentEl: wrapper.parentElement.parentElement, // This will definitely break in the future
-        isSmallView: true,
-        from: "safeGridObserver",
-      });
-    }
+        const getVideoSrc = () =>
+          getSrcById(videoId) ||
+          wrapper.querySelector("video source")?.src ||
+          wrapper.querySelector("video")?.src;
+
+        createDownloadButton({
+          wrapperId: `grid-${videoId}`,
+          author,
+          videoId,
+          getVideoSrc,
+          parentEl: wrapper.parentElement.parentElement, // This will definitely break in the future
+          isSmallView: true,
+          from: "safeGridObserver",
+        });
+      }
   });
 }
 /**
@@ -2681,7 +2813,7 @@ export function createAutoSwipeUI() {
   ui = document.createElement("div");
   ui.id = "autoSwipeUI";
   ui.style.position = "fixed";
-  ui.style.bottom = 0;
+  ui.style.bottom = "8px";
   ui.style.right = "10px";
   ui.style.zIndex = "99999";
   ui.style.backgroundColor = "rgba(0,0,0,0.7)";
@@ -2737,7 +2869,6 @@ export function createAutoSwipeUI() {
   ui.appendChild(timerText);
   ui.appendChild(pauseBtn);
   document.body?.appendChild(ui);
-
 }
 // ui.js
 

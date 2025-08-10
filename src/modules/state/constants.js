@@ -53,51 +53,52 @@ export const DOWNLOAD_FOLDER_DEFAULT_PLACEHOLDER =
 
 export const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS = [
   {
-    isDefault: true,
-    label: "🟢 Default (@folder, all core info)",
+    label: "🟢 Recommended (@folder, all core info)",
     template:
-      "@/@{authorUsername|unknown}/{ad}-{authorUsername|no-author}-{videoId|no-id}-{sequenceNumber}-{desc:30|-}.mp4",
-    example: DOWNLOAD_FOLDER_DEFAULT + "/@coolguy/coolguy-abc123-1.mp4",
+      "@/@{authorUsername|:profile:}/{tabName}/{ad}-{authorUsername|no-author}-{videoId|no-id}-{sequenceNumber}-{desc:30|-}.mp4",
+    example: DOWNLOAD_FOLDER_DEFAULT + "/@coolguy/Liked/coolguy-739462775-1.mp4",
+    isRecommended: true
   },
   {
     label: "📁 Video Flat by Author",
     template: "videos/{authorUsername|unknown}/{videoId|no-id}.mp4",
-    example: "videos/coolguy/abc123.mp4",
+    example: "videos/coolguy/739462775.mp4",
   },
   {
     label: "🖼️ Image Series (force numbered)",
     template:
       "images/{authorUsername|unknown}/{videoId|no-id}-{sequenceNumber|required}.jpeg",
-    example: "images/coolguy/abc123-1.jpeg",
+    example: "images/coolguy/739462775-1.jpeg",
   },
   {
     label: "🧠 Descriptive (limit desc)",
     template:
       "desc_clips/{authorUsername|unknown}/{videoId|no-id}-{desc:30|no-desc}.mp4",
-    example: "desc_clips/coolguy/abc123-My-best-clip-ever.mp4",
+    example: "desc_clips/coolguy/739462775-My-best-clip-ever.mp4",
   },
   {
     label: "📢 Hashtags Folder (Weird ahh)",
     template: "hashtags/{hashtags|no-tags}/{videoId|no-id}.mp4",
-    example: "hashtags/fun-relax/abc123.mp4",
+    example: "hashtags/fun-relax/739462775.mp4",
   },
   {
     label: "🎶 Music by Artist",
     template:
       "music/{musicAuthor|unknown}/{videoId|no-id}-{authorUsername|no-author}.mp4",
-    example: "music/DJFlow/abc123-coolguy.mp4",
+    example: "music/DJFlow/739462775-coolguy.mp4",
   },
   {
     label: "🎛️ Creative Combo",
     template:
       "mix/{musicTitle|untitled}/{authorUsername|unknown}-{videoId|no-id}-{desc:20|no-desc}-{sequenceNumber}.mp4",
-    example: "mix/Chill-Vibes/coolguy-abc123-Fun-tiktok-clip-1.mp4",
+    example: "mix/Chill-Vibes/coolguy-739462775-Fun-tiktok-clip-1.mp4",
   },
   {
+    isDefault: true,
     label: "📦 Legacy Flat Format",
     template:
-      "{authorUsername|user}-{videoId|no-id}-{sequenceNumber|required}.mp4",
-    example: "coolguy-abc123-1.mp4",
+      "{ad}-@{authorUsername|user}-{tabName}-{videoId|no-id}-{desc}-{sequenceNumber|required}.mp4",
+    example: "ad-@coolguy-Videos-739462775-1.mp4",
   },
 ];
 
@@ -106,44 +107,41 @@ export const PRUNE_AFTER_MAX_WEEKS_OF_LOW_DOWNLOADS = 12;
 export const PRUNE_LOW_DOWNLOADS_COUNT = 5;
 
 export const DOWNLOAD_TIER_THRESHOLDS = [
-  { min: 1, name: "Lil Clicker", emoji: "🍼" }, // 1
-  { min: 5, name: "Hatchling", emoji: "🐣" }, // 5
-  { min: 10, name: "Certified", emoji: "📥" }, // 10
-  { min: 25, name: "Smooth Op", emoji: "😎" }, // 25
-  { min: 50, name: "On Fire", emoji: "🔥" }, // 50
-  { min: 100, name: "Clip Connoisseur", emoji: "🎬" }, // 100
-  { min: 250, name: "Trend Thief", emoji: "⚡" }, // 250
-  { min: 500, name: "Goblin Mode", emoji: "🧌" }, // 500
-  { min: 1000, name: "Demon Time", emoji: "👹" }, // 1K
-  { min: 5000, name: "Link Legend", emoji: "🧠" }, // 5K
-  { min: 10000, name: "Vault Dragon", emoji: "🐉" }, // 10K
-  { min: 50000, name: "Dead King", emoji: "💀👑" }, // 50K
-  { min: 100000, name: "Ultimate Hoarder", emoji: "🐉" }, // 100K
+  { min: 10, name: "Smooth Op", emoji: "😎" }, // 10
+  { min: 25, name: "On Fire", emoji: "🔥" }, // 25
+  { min: 50, name: "Clip Connoisseur", emoji: "🎬" }, // 50
+  { min: 100, name: "Trend Thief", emoji: "⚡" }, // 100
+  { min: 250, name: "Goblin Mode", emoji: "🧌" }, // 250
+  { min: 500, name: "Demon Time", emoji: "👹" }, // 500
+  { min: 1_000, name: "HD Greed", emoji: "🖥️" }, // 1K
+  { min: 5_000, name: "Dead King", emoji: "💀👑" }, // 5K
+  { min: 10_000, name: "Ultimate Hoarder", emoji: "📦" }, // 10K
+  { min: 50_000, name: "Cache Cryptid", emoji: "🦝" }, // 50K
+  { min: 100_000, name: "Downloadlord", emoji: "👑" }, // 100K
+  { min: 1_000_000, name: "Data Deity", emoji: "💾" }, // 1M
+  { min: 10_000_000, name: "Cloud Overlord", emoji: "☁️" }, // 10M
 ];
-
 
 export const RECOMMENDATION_TIER_THRESHOLDS = [
-  { min: 1, name: "Just Hatched", emoji: "🥚" }, // 1
-  { min: 5, name: "Lil Gremlin", emoji: "🧌" }, // 5
-  { min: 10, name: "Intern Vibes", emoji: "🪪" }, // 10
-  { min: 25, name: "Feeding", emoji: "🍽️" }, // 25
-  { min: 50, name: "Online-ish", emoji: "📶" }, // 50
-  { min: 100, name: "Fed Up", emoji: "🍔" }, // 100
-  { min: 250, name: "Tastebud", emoji: "👅" }, // 250
-  { min: 500, name: "Main Char", emoji: "🎬" }, // 500
-  { min: 1000, name: "Algo Beast", emoji: "📡" }, // 1K
-  { min: 5000, name: "5K Deep", emoji: "🕳️" }, // 5K
-  { min: 10000, name: "Cooked", emoji: "🔥" }, // 10K
-  { min: 50000, name: "No Return", emoji: "🚪" }, // 50K
-  { min: 100000, name: "Overfed", emoji: "🤯" }, // 100K
-  { min: 250000, name: "Lost Cause", emoji: "🧬" }, // 250K
-  { min: 500000, name: "Soulbound", emoji: "🔗" }, // 500K
-  { min: 1000000, name: "Too Online", emoji: "💀" }, // 1M
-  { min: 5000000, name: "Pixelated", emoji: "📲" }, // 5M
-  { min: 10000000, name: "Touch Grass", emoji: "🌱" }, // 10M
+  { min: 1_000, name: "Just Hatched", emoji: "🥚" }, // 1K
+  { min: 2_000, name: "Lil Gremlin", emoji: "🧌" }, // 2K
+  { min: 3_500, name: "Intern Vibes", emoji: "🪪" }, // 3.5K
+  { min: 5_000, name: "Feeding", emoji: "🍽️" }, // 5K
+  { min: 7_500, name: "Online-ish", emoji: "📶" }, // 7.5K
+  { min: 10_000, name: "Fed Up", emoji: "🍔" }, // 10K
+  { min: 15_000, name: "Tastebud", emoji: "👅" }, // 15K
+  { min: 25_000, name: "Main Char", emoji: "🎬" }, // 25K
+  { min: 50_000, name: "Algo Beast", emoji: "📡" }, // 50K
+  { min: 100_000, name: "100K Deep", emoji: "🕳️" }, // 100K
+  { min: 250_000, name: "Cooked", emoji: "🔥" }, // 250K
+  { min: 500_000, name: "No Return", emoji: "🚪" }, // 500K
+  { min: 1_000_000, name: "Overfed", emoji: "🤯" }, // 1M
+  { min: 2_500_000, name: "Lost Cause", emoji: "🧬" }, // 2.5M
+  { min: 5_000_000, name: "Soulbound", emoji: "🔗" }, // 5M
+  { min: 10_000_000, name: "Too Online", emoji: "💀" }, // 10M
+  { min: 50_000_000, name: "Pixelated", emoji: "📲" }, // 50M
+  { min: 100_000_000, name: "Touch Grass", emoji: "🌱" }, // 100M
 ];
-
-
 
 export const DOWNLOAD_SUCCESS_MESSAGES = [
   // === Template-based messages ===
@@ -251,3 +249,106 @@ export const DOWNLOAD_SUCCESS_MESSAGES = [
   () => "✨ Sprinkle some more files in. You've got this.",
   () => "Download complete. You've officially entered the matrix.",
 ];
+
+export const SCRAPER_DONE_MESSAGES = [
+  "✅ Mission complete — all posts secured!",
+  "🎯 Done & dusted — your haul is ready!",
+  "📦 Delivery complete — enjoy the goods!",
+  "🏁 Scraper crossed the finish line!",
+  "🔥 Operation finished — clean sweep!",
+  "💾 Saved & sealed — until next time!",
+  "🚀 Downloads wrapped — smooth ride!",
+  "🧊 Chill, everything's downloaded.",
+  "🐉 Legendary sweep — all yours now.",
+  "🌈 Scraper rainbowed the whole tab!",
+];
+
+export const HYPE_TEMPLATES = {
+  recommendations: [
+    // Gen-Z vibes
+    `🚀 LEVEL UP: {{emoji}} <b>{{name}}</b>  
+     {{min}}+ recommendations — the algo is obsessed with you 🔥`,
+    `✨ {{emoji}} {{name}} unlocked  
+     {{min}}+ recs — main character energy activated 🎬`,
+    `🌪️ {{emoji}} {{name}} tier achieved  
+     {{min}}+ recs — your feed is pure heat ⚡`,
+    `💎 {{emoji}} Welcome to <b>{{name}}</b>  
+     {{min}}+ recs — certified GOAT vibes 🐐`,
+
+    // Professional / neutral
+    `📈 Milestone reached: {{emoji}} {{name}}  
+     {{min}}+ recommendations delivered to your feed`,
+    `🏁 Unlocked: {{emoji}} {{name}}  
+     You've crossed {{min}} recommendations`,
+    `✅ Progress update — {{emoji}} {{name}}  
+     {{min}}+ recommendations surfaced`,
+
+    // Wholesome / friendly
+    `🌼 {{emoji}} {{name}} unlocked  
+     {{min}}+ recommendations — the feed knows what you love`,
+    `🌟 Nice! {{emoji}} {{name}}  
+     {{min}}+ recommendations found their way to you`,
+    `🎉 {{emoji}} {{name}}  
+     {{min}}+ recommendations — keep exploring`,
+
+    // Gamer energy
+    `🕹️ GG! {{emoji}} {{name}} tier  
+     {{min}}+ recommendations — the RNG favored you 🎲`,
+    `⚔️ Unlock achieved: {{emoji}} {{name}}  
+     {{min}}+ recommendations — streak continues`,
+    `🏆 Speedrun vibes — {{emoji}} {{name}}  
+     {{min}}+ recommendations secured`,
+
+    // Sports tone
+    `🏟️ {{emoji}} {{name}} on the board  
+     {{min}}+ recommendations — momentum's real`,
+    `🥇 {{emoji}} {{name}} unlocked  
+     {{min}}+ recommendations — keep the pace`,
+    `📣 Big play: {{emoji}} {{name}}  
+     {{min}}+ recommendations — crowd goes wild`,
+  ],
+
+  downloads: [
+    // Gen-Z vibes
+    `⬇️ DEMON MODE: {{emoji}} <b>{{name}}</b>  
+     {{min}}+ downloads — you're farming bangers 🔥`,
+    `💥 {{emoji}} {{name}} unlocked  
+     {{min}}+ downloads — zero chill, max sauce 🧪`,
+    `🧲 {{emoji}} {{name}}  
+     {{min}}+ downloads — you pull heat on demand`,
+    `🚨 {{emoji}} {{name}} tier  
+     {{min}}+ downloads — certified curator`,
+
+    // Professional / neutral
+    `📦 Milestone: {{emoji}} {{name}}  
+     {{min}}+ downloads added to your library`,
+    `✅ Unlocked: {{emoji}} {{name}}  
+     {{min}}+ downloads — great collection discipline`,
+    `📁 {{emoji}} {{name}} reached  
+     {{min}}+ downloads archived`,
+
+    // Wholesome / friendly
+    `🌈 {{emoji}} {{name}} unlocked  
+     {{min}}+ downloads — your stash is looking cozy`,
+    `🌟 {{emoji}} {{name}}  
+     {{min}}+ downloads — saved with love`,
+    `🎀 {{emoji}} {{name}} achieved  
+     {{min}}+ downloads — neat and tidy`,
+
+    // Gamer energy
+    `🎮 Loot secured: {{emoji}} {{name}}  
+     {{min}}+ downloads — perfect inventory management`,
+    `🧱 Crafting tier: {{emoji}} {{name}}  
+     {{min}}+ downloads — S-tier collector`,
+    `🏹 Crit hit! {{emoji}} {{name}}  
+     {{min}}+ downloads — stash leveled up`,
+
+    // Sports tone
+    `🏆 {{emoji}} {{name}} — clutch  
+     {{min}}+ downloads — trophy cabinet expanding`,
+    `📊 {{emoji}} {{name}}  
+     {{min}}+ downloads — numbers don't lie`,
+    `🥁 {{emoji}} {{name}} unlocked  
+     {{min}}+ downloads — keep the streak alive`,
+  ],
+};

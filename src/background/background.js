@@ -42,3 +42,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep sendResponse alive
   }
 });
+
+
+console.log("✅ Background loaded");

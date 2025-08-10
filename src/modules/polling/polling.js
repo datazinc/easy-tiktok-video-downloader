@@ -1,4 +1,7 @@
-import { handleFoundItems } from "../downloader/handlers.js";
+import {
+  handleFoundItems,
+  isVisitedItemBetterOrNew,
+} from "../downloader/handlers.js";
 import AppState from "../state/state.js";
 import {
   clearDownloadBtnContainers,
@@ -8,16 +11,23 @@ import {
 } from "../downloader/ui.js";
 import {
   getCurrentPageUsername,
-  getPostInfoFrom,
+  // getPostInfoFrom,
   clickNextButton,
   canClickNextButton,
-  canScrollTheList,
+  listScrollingCompleted,
   scrollToLastUserPost,
-  convertTikTokRawToMediaObject,
+  // convertTikTokRawToMediaObject,
   getCurrentPlayingArticle,
   displayFoundUrls,
   detectScrollEnd,
   getTabSpans,
+  getRenderedPostsMetadata,
+  // buildMediaObjectFromRaw,
+  showCelebration,
+  toTitleCase,
+  showAlertModal,
+  findFiberItemById,
+  getClosestPlayingVideoId,
 } from "../utils/utils.js";
 import { DOM_IDS, STORAGE_KEYS } from "../state/constants.js";
 (function patchHistory() {
@@ -48,61 +58,72 @@ window.addEventListener("locationchange", () => {
 export function pollInitialData() {
   // if (AppState.debug.active)
   console.log("POLLINIT ettvdebugger: Polling initial data…");
-
-  // logged-in preloadList
   try {
-    const list = window?.SIGI_STATE?.ItemList["user-post"]?.preloadList || [];
-    const mod = window?.SIGI_STATE?.ItemModule || {};
-    handleFoundItems(list.map((i) => mod[i.id]).filter(Boolean));
-  } catch {}
+    // logged-in preloadList
+    try {
+      const list = window?.SIGI_STATE?.ItemList["user-post"]?.preloadList || [];
+      const mod = window?.SIGI_STATE?.ItemModule || {};
+      handleFoundItems(list.map((i) => mod[i.id]).filter(Boolean));
+    } catch {}
 
-  // logged-out JSON in __NEXT_DATA__
-  try {
-    const raw = document.getElementById("__NEXT_DATA__")?.innerText;
-    const items = JSON.parse(raw || "{}").props?.pageProps?.items || [];
-    handleFoundItems(items.filter((i) => i.id));
-  } catch {}
+    // logged-out JSON in __NEXT_DATA__
+    try {
+      const raw = document.getElementById("__NEXT_DATA__")?.innerText;
+      const items = JSON.parse(raw || "{}").props?.pageProps?.items || [];
+      handleFoundItems(items.filter((i) => i.id));
+    } catch {}
 
-  // React-Fiber fallback
-  try {
-    const video = window?.MultiMediaPreloader?.preloader?.video;
-    const offsetParent = video?.offsetParent;
-    if (offsetParent) {
-      const fiberKey = Object.keys(offsetParent).find((k) =>
-        k.startsWith("__reactFiber$")
+    // Visible-Fiber fallback item
+    try {
+      const fiberItem = findFiberItemById(
+        getCurrentPlayingArticle(),
+        getClosestPlayingVideoId()
       );
-      const fiberNode = offsetParent[fiberKey];
-      const fiberItem = fiberNode?.child?.pendingProps;
-      console.log("POLLINIT: ", fiberItem);
-      if (fiberItem?.id && fiberItem?.url) {
-        // TODO: Buggy.
-
-        const postInfo = getPostInfoFrom(
-          getCurrentPlayingArticle() || offsetParent,
-          {
-            origin: "pollInitialData",
-          }
-        );
-        console.log("POLLINIT:  POSTINFO", postInfo);
-        const mediaObject = convertTikTokRawToMediaObject(fiberItem);
-        console.log("POLLINIT:  mediaObject", mediaObject);
-
-        if (!mediaObject) return;
-        mediaObject.author.uniqueId =
-          mediaObject.author.uniqueId || postInfo.username;
-        mediaObject.desc = mediaObject.desc || postInfo.description;
-        mediaObject.isAd = mediaObject.isAd ?? postInfo.isAd;
-        console.log("POLLINIT:  mediaObject updated", mediaObject);
-
-        handleFoundItems([mediaObject]);
+      if (fiberItem?.item) {
+        fiberItem.item.downloaderHasLowConfidence = true;
+        handleFoundItems([fiberItem.item]);
       }
+    } catch (err) {
+      if (AppState.debug.active) console.warn("reactFiber error:", err);
+    }
+    // React-Fiber profile list (Best for missed initial item_list requests due to slow ahh injection)
+    try {
+      const rawList = getRenderedPostsMetadata();
+      if (!rawList || !rawList.length) return;
+
+      // dedupe within this batch
+      const parsed = [];
+
+      for (let i = 0; i < rawList.length; i++) {
+        const item = rawList[i];
+
+        // normalize the id early and use the SAME key everywhere
+        const idRaw = item?.id ?? item?.aweme_id ?? item?.video?.id;
+        const id = idRaw == null ? null : String(idRaw).trim();
+        if (!id) continue;
+        if (!isVisitedItemBetterOrNew(item)) continue; // seen before
+
+        try {
+          const media = item;
+          const mid = media?.id == null ? null : String(media.id).trim();
+          if (!mid || mid !== id) {
+            continue;
+          }
+          AppState.allItemsEverSeen[mid] = item;
+          parsed.push(media);
+        } catch (e) {
+          if (AppState.debug.active)
+            console.warn("Failed to parse media at index", i, e);
+        }
+      }
+
+      if (parsed.length) handleFoundItems(parsed);
+    } catch (err) {
+      if (AppState.debug.active) console.warn("reactFiber list error:", err);
     }
   } catch (err) {
-    if (AppState.debug.active) console.warn("reactFiber error:", err);
+    console.error(err);
   }
-
-  // Schedule next poll in 3 seconds
-  setTimeout(pollInitialData, 3000);
 }
 
 /**
@@ -114,6 +135,7 @@ function pollUI() {
   attachDownloadButtons();
   scanAndInject();
   autoNextOnVideoEnded();
+  pollInitialData();
 }
 
 function autoNextOnVideoEnded() {
@@ -134,60 +156,54 @@ function autoNextOnVideoEnded() {
 }
 
 /**
- * Watches for page‐username changes and re-boots your UI/context.
- */
-export function startPollingPageChanges() {
-  if (AppState.debug.active)
-    console.log("ettvdebugger: Starting page change polling…");
-  let currentUser = getCurrentPageUsername();
-
-  setInterval(() => {
-    const u = getCurrentPageUsername();
-    if (u !== currentUser) {
-      currentUser = u;
-      AppState.allDirectLinks = [];
-      document.getElementById("ttk-downloader-wrapper")?.remove();
-
-      // re-apply any tab filters
-      const tab = document.querySelector('[aria-selected="true"]');
-      AppState.filters.likedVideos = !!(
-        tab && tab.textContent?.includes("Liked")
-      );
-      displayFoundUrls({ forced: true });
-    }
-  }, 1000);
-}
-
-/**
  * Starts the auto swipe loop with countdown.
  */
 export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
   createAutoSwipeUI();
   const timerText = document.getElementById("swipeTimerText");
 
-  function loop() {
+  async function loop() {
     if (AppState.debug.active)
       console.log(
         "SWIPE UP in the loop",
         AppState.downloadPreferences.autoScrollMode
       );
-    if (AppState.scrapperDetails.isScrapping) {
-      AppState.scrapperDetails.isScrapping = false;
+    if (
+      AppState.scrapperDetails.scrappingStage == "initiated" &&
+      !AppState.scrapperDetails.locked // Avoids pre-mature celebration. i.e, before the refresh. Refresh resets the value to false.
+    ) {
+      showCelebration(
+        "tier",
+        "🔥 Scraping in progress — sit back and watch the magic!"
+      );
+      AppState.scrapperDetails.scrappingStage = "ongoing";
+      AppState.ui.isScrapperBoxOpen = true;
       localStorage.setItem(
         STORAGE_KEYS.SCRAPPER_DETAILS,
         JSON.stringify(AppState.scrapperDetails)
       );
-      const listToScrape = getTabSpans()[AppState.scrapperDetails.selectedTab];
+      let listToScrape;
+      if (AppState.scrapperDetails.selectedTab != "collection") {
+        listToScrape = (await getTabSpans(30 * 1000))[
+          AppState.scrapperDetails.selectedTab
+        ];
+      }
+
       // Reset posts and links
-      AppState.postItems = {}
-      AppState.allDirectLinks = []
+      AppState.allDirectLinks = [];
+      AppState.allItemsEverSeen = {};
+      AppState.displayedState.itemsHash = "";
+      AppState.displayedState.path = "";
       listToScrape?.click();
-      if (!listToScrape){
-        alert(
-          "Something bad happened tab not found " +
-            AppState.scrapperDetails.selectedTab
+      if (
+        !listToScrape &&
+        AppState.scrapperDetails.selectedTab != "collection"
+      ) {
+        showAlertModal(
+          "Something unexpected happened tab not found: " +
+            toTitleCase(AppState.scrapperDetails.selectedTab || "ew")
         );
-        }
+      }
       AppState.downloadPreferences.autoScrollMode = "always";
     }
 
@@ -217,51 +233,54 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
     }, 1000);
 
     // Schedule next swipe
-    AppState.ui.autoSwipeConfigurations.nextClickTimeout = setTimeout(() => {
-      if (AppState.debug.active)
-        console.log("SWIPE UP ", canClickNextButton(), canScrollTheList());
-      clearInterval(AppState.ui.autoSwipeConfigurations.countdownInterval);
-      if (
-        canClickNextButton() &&
-        AppState.downloadPreferences.autoScrollMode == "always"
-      ) {
-        clickNextButton();
-      } else if (
-        canScrollTheList() &&
-        AppState.downloadPreferences.autoScrollMode == "always"
-      ) {
-        scrollToLastUserPost();
-        detectScrollEnd(() => {
-          alert("End of the scroll, download")
-          console.warn("🔥 We reached the bottom — stop auto-scrolling.");
-          AppState.downloadPreferences.autoScrollMode = "off";
-          const downloadAllBtn = document.getElementById(
-            DOM_IDS.DOWNLOAD_ALL_BUTTON
+    AppState.ui.autoSwipeConfigurations.nextClickTimeout = setTimeout(
+      async () => {
+        if (AppState.debug.active)
+          console.log(
+            "SWIPE UP ",
+            canClickNextButton(),
+            "all visible? ",
+            listScrollingCompleted()
           );
-          if (!downloadAllBtn) {
-            alert("Please click Download All now!");
-          } else {
-            downloadAllBtn.click();
-          }
+        clearInterval(AppState.ui.autoSwipeConfigurations.countdownInterval);
+        if (
+          canClickNextButton() &&
+          AppState.downloadPreferences.autoScrollMode == "always"
+        ) {
+          clickNextButton();
+        } else if (AppState.downloadPreferences.autoScrollMode == "always") {
+          scrollToLastUserPost();
+          detectScrollEnd(() => {
+            if (AppState.scrapperDetails.scrappingStage != "ongoing") return;
+            console.warn("🔥 We reached the bottom — stop auto-scrolling.");
+            AppState.downloadPreferences.autoScrollMode = "off";
+            const downloadAllBtn = document.getElementById(
+              DOM_IDS.DOWNLOAD_ALL_BUTTON
+            );
 
-          AppState.scrapperDetails.isScrapping = false;
-          // You can also trigger any post-scroll UI updates here
-        });
-      } else if (canScrollTheList() && AppState.downloadPreferences.autoScrollMode == "always") {
-        alert("Never Scrolled or something, download");
-        AppState.downloadPreferences.autoScrollMode = "off";
-        const downloadAllBtn = document.getElementById(
-          DOM_IDS.DOWNLOAD_ALL_BUTTON
-        );
-        if (!downloadAllBtn) {
-          alert("Please click Download All now!");
-        } else {
-          downloadAllBtn.click();
+            if (!downloadAllBtn) {
+              if (AppState.allDirectLinks.length) {
+                showAlertModal(
+                  "⚠️ Couldn't start automatically — click 'Download All' to try again."
+                );
+              } else {
+                AppState.scrapperDetails.scrappingStage = "completed";
+
+                showAlertModal(
+                  "😕 No posts found — try another tab or account."
+                );
+              }
+            } else {
+              AppState.scrapperDetails.scrappingStage = "downloading";
+              downloadAllBtn.click();
+            }
+            // You can also trigger any post-scroll UI updates here
+          });
         }
-        AppState.scrapperDetails.isScrapping = false;
-      }
         loop(); // Repeat
-    }, interval);
+      },
+      interval
+    );
   }
 
   loop();
@@ -271,7 +290,6 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
  * Starts polling logic and optional auto-swipe.
  */
 export function startPolling() {
-  pollInitialData(); // First run
   setInterval(pollUI, 1 * 1000); // Refresh UI
   setTimeout(() => {
     startAutoSwipeLoop();

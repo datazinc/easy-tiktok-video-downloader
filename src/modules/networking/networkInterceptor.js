@@ -1,6 +1,5 @@
 // networkInterceptor.js
 import { handleFoundItems } from "../downloader/handlers.js";
-import AppState from "../state/state.js";
 
 export class NetworkInterceptor {
   constructor() {
@@ -18,12 +17,8 @@ export class NetworkInterceptor {
   }
 
   _init() {
-      if (AppState.debug.active)
-        console.log("NetworkInterceptor: installing hooks…");
     this._overrideXHR();
     this._overrideFetch();
-      if (AppState.debug.active)
-        console.log("NetworkInterceptor: all hooks installed ✅");
   }
 
   handleResponse(data) {
@@ -41,8 +36,7 @@ export class NetworkInterceptor {
         handleFoundItems([data.itemInfo.itemStruct]);
       }
     } catch (err) {
-        if (AppState.debug.active)
-          console.warn("NetworkInterceptor: response handler error", err);
+      console.warn("NetworkInterceptor: response handler error", err);
     }
   }
 
@@ -52,20 +46,18 @@ export class NetworkInterceptor {
     XMLHttpRequest.prototype.open = function (method, url, ...rest) {
       this._ni_method = method;
       this._ni_url = url;
-        if (AppState.debug.active)
-          console.log("NetworkInterceptor ● XHR open", method, url);
+      console.log("NetworkInterceptor ● XHR open", method, url);
       return self._origXHROpen.call(this, method, url, ...rest);
     };
 
     XMLHttpRequest.prototype.send = function (body) {
       this.addEventListener("loadend", () => {
-          if (AppState.debug.active)
-            console.log(
-              "NetworkInterceptor ● XHR done",
-              this._ni_method,
-              this._ni_url,
-              this.status
-            );
+        console.log(
+          "NetworkInterceptor ● XHR done",
+          this._ni_method,
+          this._ni_url,
+          this.status
+        );
         let data;
         // inside your loadend listener…
         try {
@@ -81,17 +73,11 @@ export class NetworkInterceptor {
             }
           }
           if (data !== undefined) {
-              if (AppState.debug.active)
-                console.log(
-                  "NetworkInterceptor ● XHR JSON",
-                  this._ni_url,
-                  data
-                );
+            console.log("NetworkInterceptor ● XHR JSON", this._ni_url, data);
             self.handleResponse(data);
           }
         } catch (err) {
-            if (AppState.debug.active)
-              console.warn("NetworkInterceptor ● XHR parse error", err);
+          console.warn("NetworkInterceptor ● XHR parse error", err);
         }
       });
       return self._origXHRSend.call(this, body);
@@ -105,45 +91,35 @@ export class NetworkInterceptor {
       const isReq = input instanceof self._OrigRequest;
       const url = isReq ? input.url : input;
       const method = (init && init.method) || (isReq && input.method) || "GET";
-      if (AppState.debug.active)
-        console.log("NetworkInterceptor ● fetch", method, url);
+      console.log("NetworkInterceptor ● fetch", method, url);
 
       try {
         const response = await self._origFetch(input, init);
-        if (AppState.debug.active)
-          console.log(
-            "NetworkInterceptor ● fetch response",
-            response.status,
-            response.url
-          );
+        console.log(
+          "NetworkInterceptor ● fetch response",
+          response.status,
+          response.url
+        );
 
         // fire-and-forget JSON parsing
         response
           .clone()
           .json()
           .then((data) => {
-            if (AppState.debug.active)
-              console.log(
-                "NetworkInterceptor ● fetch JSON",
-                response.url,
-                data
-              );
+            console.log("NetworkInterceptor ● fetch JSON", response.url, data);
             self.handleResponse(data);
           })
           .catch(() => {
-            if (AppState.debug.active)
-              console.warn("NetworkInterceptor ● fetch non-JSON", response.url);
+            console.warn("NetworkInterceptor ● fetch non-JSON", response.url);
           });
 
         return response;
       } catch (err) {
         if (err.name === "AbortError") {
           // this is usually a deliberate cancel; log at debug/info level
-          if (AppState.debug.active)
-            console.info("NetworkInterceptor ● fetch aborted", method, url);
+          console.info("NetworkInterceptor ● fetch aborted", method, url);
         } else {
-          if (AppState.debug.active)
-            console.warn("NetworkInterceptor ● fetch failed", err);
+          console.warn("NetworkInterceptor ● fetch failed", err);
         }
         // re-throw so calling code still sees the same behavior
         throw err;
@@ -152,17 +128,12 @@ export class NetworkInterceptor {
     // also patch Request ctor so future new Request() usages get logged
     window.Request = function (input, init) {
       const req = new self._OrigRequest(input, init);
-      if (AppState.debug.active)
-        console.log("NetworkInterceptor ● Request ctor", req.method, req.url);
+      console.log("NetworkInterceptor ● Request ctor", req.method, req.url);
       return req;
     };
     window.Request.prototype = this._OrigRequest.prototype;
     window.Request.prototype.constructor = window.Request;
   }
-
- 
-
 }
 
-// Usage: import and instantiate once, as early as possible.
 new NetworkInterceptor();

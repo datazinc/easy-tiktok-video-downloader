@@ -1,4 +1,4 @@
-// Cleaned-up imports
+// Utils.js
 import AppState from "../state/state.js";
 import {
   STORAGE_KEYS,
@@ -11,6 +11,8 @@ import {
   DOWNLOAD_TIER_THRESHOLDS,
   RECOMMENDATION_TIER_THRESHOLDS,
   DOWNLOAD_SUCCESS_MESSAGES,
+  SCRAPER_DONE_MESSAGES,
+  HYPE_TEMPLATES,
 } from "../state/constants.js";
 import {
   updateDownloaderList,
@@ -20,6 +22,7 @@ import {
   updateDownloadButtonLabel,
   showStatsSpan,
   createDownloaderWrapper,
+  createModal,
 } from "../downloader/ui.js";
 
 // Extract username from URL path
@@ -58,7 +61,7 @@ export function getPostInfoFrom(startElement, options) {
 
     // Strategy 1: <a href="/@username">
     if (el.tagName === "A" && el.href?.includes("/@")) {
-      const match = el.getAttribute("href")?.match(/^\/@([\w.-]+)/);
+      const match = el.getAttribute("href")?.match(/\/@([\w._-]+)/)[1];
       if (match) {
         logStrategy("1-a-tag-href", match[1]);
         return match[1];
@@ -232,10 +235,12 @@ export function getDownloadFilePath(
   media,
   { imageIndex = 0, options = {} } = {}
 ) {
-  const template = AppState.downloadPreferences.fullPathTemplate?.template;
+  const template =
+    AppState.downloadPreferences.fullPathTemplate?.template ||
+    getDefaultPresetTemplate();
   function getFieldMaxLength(template, fieldName) {
     const regex = new RegExp(`\\{${fieldName}:(\\d+)`);
-    const match = template.match(regex);
+    const match = template?.match(regex);
     return match ? Number(match[1]) : undefined;
   }
 
@@ -249,10 +254,10 @@ export function getDownloadFilePath(
   const sequenceNumber = imageIndex + 1;
   const isMultiImage = media?.imagePostImages?.length > 1;
   const descMaxLen = getFieldMaxLength(template, "desc");
-  const isDescMaxLenDefined = getFieldMaxLength(template, "desc") !== undefined;
+  const isDescMaxLenDefined = descMaxLen !== undefined;
   const fieldValues = {
     videoId: sanitize(media.videoId || media.id),
-    authorUsername: sanitize(media.authorId),
+    authorUsername: media.authorId,
     authorNickname: sanitize(media.authorNickname),
     desc: sanitize(media.desc?.slice(0, isDescMaxLenDefined ? descMaxLen : 40)),
     createTime: sanitize(media.createTime),
@@ -265,40 +270,62 @@ export function getDownloadFilePath(
       .join("-"),
   };
 
-  const applyTemplate = (tpl) =>
-    tpl.replace(
+  const applyTemplate = (tpl) => {
+    const tplHasTabName = /\{tabName(?:[:|}])/.test(tpl);
+
+    return tpl.replace(
       /\{(\w+)(?::(\d+))?(?:\|([^}]+))?\}/g,
       (_, key, maxLenRaw, fallbackRaw) => {
         const maxLen = Number(maxLenRaw) || undefined;
-        const fallback = fallbackRaw;
         const isRequiredSequence =
-          key === "sequenceNumber" && fallback === "required";
+          key === "sequenceNumber" && fallbackRaw === "required";
 
         if (key === "sequenceNumber") {
-          if (isRequiredSequence || (media.isImage && isMultiImage)) {
+          if (isRequiredSequence || (media.isImage && isMultiImage))
             return sequenceNumber;
-          }
           return "";
         }
 
         if (key === "ad") return media.isAd ? "ad" : "";
         if (key === "mediaType") return media.isImage ? "image" : "video";
 
+        if (key === "tabName") {
+          const val =
+            toTitleCase(AppState.scrapperDetails.selectedTab || "") ||
+            fallbackRaw ||
+            "";
+          if (AppState.scrapperDetails.selectedTab == "collection") {
+            return `${val}s/${sanitize(
+              AppState.scrapperDetails.selectedCollectionName || "collection"
+            )}`;
+          } else {
+            return val;
+          }
+        }
+
+        // Normal value lookup
         let val = fieldValues[key];
 
+        // Special fallback for authorUsername when tpl has {tabName} and fallback is :profile:
+        if (
+          key === "authorUsername" &&
+          fallbackRaw === ":profile:" &&
+          tplHasTabName &&
+          AppState.scrapperDetails.scrappingStage == "downloading"
+        ) {
+          val = getCurrentPageUsername() || val;
+        }
+
         if (val == null || val === "") {
-          val = fallback ?? `missing-${key}`;
+          val = fallbackRaw ?? `missing-${key}`;
         }
 
         val = sanitize(val);
-
-        if (maxLen) {
-          val = val.slice(0, maxLen);
-        }
-
+        if (maxLen) val = val.slice(0, maxLen);
         return val;
       }
     );
+  };
 
   const fullTemplate = template?.trim();
   const cleanupPath = (path) =>
@@ -328,25 +355,25 @@ export function getDownloadFilePath(
           ? `${DOWNLOAD_FOLDER_DEFAULT}${fullTemplate.slice(1)}`
           : fullTemplate
       )
-    : `${DOWNLOAD_FOLDER_DEFAULT}@${fieldValues.authorId || "unknown"}/${
-        fieldValues.authorId || "user"
+    : `${DOWNLOAD_FOLDER_DEFAULT}@${fieldValues.authorUsername || "unknown"}/${
+        fieldValues.authorUsername || "user"
       }-${fieldValues.videoId}`;
 
-  return `${cleanupPath(resolvedPath)}${extension}`;
+  return `${cleanupPath(resolvedPath) || "download"}${extension}`;
 }
 
 export function getSrcById(id) {
   try {
-    for (const key in AppState.postItems) {
-      const item = AppState.postItems[key].find((item) => item.id == id);
-      if (
-        item &&
-        item.video &&
-        item.video.playAddr &&
-        item.video.playAddr.startsWith("http")
-      ) {
-        return item.video.playAddr;
-      }
+    const item = Object.values(AppState.allItemsEverSeen)
+      .flat()
+      .find((item) => item.id == id);
+    if (
+      item &&
+      item.video &&
+      item.video.playAddr &&
+      item.video.playAddr.startsWith("http")
+    ) {
+      return item.video.playAddr;
     }
   } catch (error) {
     if (AppState.debug.active)
@@ -502,27 +529,89 @@ function getPostListContext(options) {
     }
   }
 
+  // Strategy D: reposts-item-list
+  list = document.querySelector('[data-e2e="user-repost-item-list"]');
+  if (list) {
+    const items = list.querySelectorAll('[data-e2e="user-repost-item"]');
+    if (items.length > 0) {
+      console.log(`ETTVD_INFO_DEBUG-${options?.origin} user-repost-item`);
+      return { list, items, strategy: "repost-list" };
+    }
+  }
+
+  // Strategy E: liked-item-list
+  list = document.querySelector('[data-e2e="user-liked-item-list"]');
+  if (list) {
+    const items = list.querySelectorAll('[data-e2e="user-liked-item"]');
+    if (items.length > 0) {
+      console.log(`ETTVD_INFO_DEBUG-${options?.origin} user-liked-item`);
+      return { list, items, strategy: "liked-list" };
+    }
+  }
+
+  // Strategy F: favorites-item-list
+  list = document.querySelector('[data-e2e="favorites-item-list"]');
+  if (list) {
+    const items = list.querySelectorAll('[data-e2e="favorites-item"]');
+    if (items.length > 0) {
+      console.log(`ETTVD_INFO_DEBUG-${options?.origin} favorites-item`);
+      return { list, items, strategy: "favorites-list" };
+    }
+  }
+
+  // Strategy G: collection-item-list
+  list = document.querySelector('[data-e2e="collection-item-list"]');
+  if (list) {
+    const items = list.querySelectorAll('[data-e2e="collection-item"]');
+    if (items.length > 0) {
+      console.log(`ETTVD_INFO_DEBUG-${options?.origin} collection-item`);
+      return { list, items, strategy: "collection-list" };
+    }
+  }
+
   return { list: null, items: [], strategy: null };
 }
 
-export function canScrollTheList() {
+export function listScrollingCompleted() {
   const { list, items } = getPostListContext();
-  if (!list || items.length === 0) return false;
+  if (!list || items.length === 0) return true;
 
   const lastItem = items[items.length - 1];
   const rect = lastItem.getBoundingClientRect();
-  const withinViewport =
+
+  const isInViewport =
     rect.top >= 0 &&
     rect.bottom <=
       (window.innerHeight || document.documentElement.clientHeight);
 
-  return !withinViewport; // scroll if not fully visible
+  const fullyLoaded =
+    list.scrollHeight - list.scrollTop <= list.clientHeight + 5;
+
+  return isInViewport && fullyLoaded && !isSpinnerInPostListParentVisible();
+}
+
+function computeScrollDone() {
+  const { list, items } = getPostListContext();
+  if (!list || !items?.length) return false;
+
+  const lastItem = items[items.length - 1];
+  const rect = lastItem.getBoundingClientRect();
+
+  const isInViewport =
+    rect.top >= 0 &&
+    rect.bottom <=
+      (window.innerHeight || document.documentElement.clientHeight);
+
+  const fullyLoaded =
+    list.scrollHeight - list.scrollTop <= list.clientHeight + 5;
+
+  return isInViewport && fullyLoaded && !isSpinnerInPostListParentVisible();
 }
 
 export function scrollToLastUserPost() {
   if (
     AppState.downloadPreferences.autoScrollMode != "always" ||
-    !canScrollTheList()
+    listScrollingCompleted()
   ) {
     if (AppState.debug.active)
       console.warn("❌ Cannot scroll the list — not available or disabled.");
@@ -531,9 +620,8 @@ export function scrollToLastUserPost() {
 
   const { items } = getPostListContext();
   const lastItem = items[items.length - 1];
-  lastItem.scrollIntoView({ behavior: "smooth", block: "center" });
+  lastItem?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
-
 
 /**
  * Finds the spinner <svg> inside the parent of the user post list
@@ -543,11 +631,18 @@ function isSpinnerInPostListParentVisible() {
   const postList = document.querySelector('[data-e2e="user-post-item-list"]');
   if (!postList || !postList.parentElement) return false;
 
-  const spinner = postList.parentElement.querySelector('svg[class*="SvgContainer"]');
+  const spinner = postList.parentElement.querySelector(
+    'svg[class*="SvgContainer"]'
+  );
   return spinner ? isElementInViewport(spinner) : false;
 }
 
-export function detectScrollEnd(onEnd, wait = 1000) {
+function isElementInViewport(el) {
+  const rect = el.getBoundingClientRect();
+  return rect.top < window.innerHeight && rect.bottom > 0;
+}
+
+export function detectScrollEnd(onEnd, wait = 10 * 1000) {
   const { items: initialItems } = getPostListContext();
   const initialCount = initialItems.length;
 
@@ -556,8 +651,8 @@ export function detectScrollEnd(onEnd, wait = 1000) {
     const newCount = currentItems.length;
 
     const spinnerVisible = isSpinnerInPostListParentVisible();
-
-    if (newCount === initialCount && !spinnerVisible) {
+    const scrollEnded = listScrollingCompleted();
+    if (newCount === initialCount && !spinnerVisible && scrollEnded) {
       console.log("✅ Scroll ended — no new items and no parent spinner.");
       onEnd?.();
     } else {
@@ -569,8 +664,6 @@ export function detectScrollEnd(onEnd, wait = 1000) {
     }
   }, wait);
 }
-
-
 
 export function isVideoAd(videoEl) {
   if (!videoEl) return false;
@@ -791,10 +884,17 @@ export function buildVideoLinkMeta(media, index) {
     videoId: media?.id,
     url:
       media?.video?.playAddr ||
+      AppState.allItemsEverSeen[media?.id]?.video?.playAddr ||
       media?.video?.originCover ||
       media?.video?.cover,
-    authorId: media?.author?.uniqueId,
-    authorNickname: media?.author?.nickname,
+    authorId:
+      typeof media?.author == "string"
+        ? media?.author
+        : media?.author?.uniqueId,
+    authorNickname:
+      typeof media?.author == "string"
+        ? media?.author
+        : media?.author?.nickname,
     desc: media?.desc,
     isImage: Boolean(media.imagePost),
     // Extras
@@ -984,7 +1084,7 @@ export function downloadURLToDisk(url, filename, options = {}) {
             showFolderPicker: AppState.downloadPreferences.showFolderPicker,
           });
         })
-        .catch((err) => {
+        .catch(async (err) => {
           AppState.downloading.isActive = false;
           displayFoundUrls({ forced: true });
 
@@ -1008,10 +1108,14 @@ export function downloadURLToDisk(url, filename, options = {}) {
                 );
               return reject(err);
             }
-
-            alert(
-              "This will attempt to save the video to your device's download folder or open it in a new tab."
+            await showAlertModal(
+              `⚠️ <b>Something went wrong.</b><br><br>
+  We'll try saving the video to your device's Downloads folder, or opening it in a new tab.<br><br>
+  If it opens in a new tab, please right-click and choose “Save As” to download it manually.<br><br>
+  This issue often happens if the post's privacy is set to <b>Only Me</b> or similar — in those cases, the downloader can't access it directly, but “Save As” in your browser may still work.<br><br>
+  <b>File:</b> ${filename.split("/").pop() || "Unknown"}`
             );
+
             const a = document.createElement("a");
             a.href = url;
             a.download = filename;
@@ -1021,6 +1125,7 @@ export function downloadURLToDisk(url, filename, options = {}) {
             document.body?.removeChild(a);
 
             // Do NOT resolve or reject — just let the user handle it manually
+            reject(true);
           }
         });
     }
@@ -1035,9 +1140,21 @@ export function displayFoundUrls({ forced } = {}) {
       console.log("ettvdebugger: displayFoundUrls called", { forced });
     }
 
-    // Update the button regardless.
-    // TODO: If this causes some bugs, remove it
-    if (forced) updateDownloadButtonLabelSimple();
+    // Anti flickering
+    if (
+      !forced &&
+      document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER) &&
+      !document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER).querySelector("ol")
+        ?.innerHTML &&
+      !AppState.allDirectLinks.length &&
+      !Object.keys(AppState.allItemsEverSeen).length
+    ) {
+      return;
+    }
+    if (forced)
+      // Update the button regardless.
+      // TODO: If this causes some bugs, remove it
+      updateDownloadButtonLabelSimple();
     console.log("UI CLOSED: ", AppState.ui);
     if (AppState.ui.isDownloaderClosed) return hideDownloader();
     // Think about cases the user moves to another page while downloading
@@ -1062,11 +1179,15 @@ export function displayFoundUrls({ forced } = {}) {
 
     let items = [];
     if (AppState.filters.currentProfile && getCurrentPageUsername() != "😃") {
-      items = AppState.postItems[getCurrentPageUsername()] || [];
-    } else if (AppState.filters.likedVideos) {
-      items = AppState.likedVideos[getCurrentPageUsername()] || [];
+      items = Object.values(AppState.allItemsEverSeen)
+        .flat()
+        .filter(
+          (it) =>
+            it.author === getCurrentPageUsername() ||
+            it.author?.uniqueId === getCurrentPageUsername()
+        );
     } else {
-      items = Object.values(AppState.postItems).flat();
+      items = Object.values(AppState.allItemsEverSeen).flat();
     }
     if (getCurrentPageUsername() === "😃") {
       AppState.filters.currentProfile = false;
@@ -1135,7 +1256,10 @@ export function displayFoundUrls({ forced } = {}) {
       const metas = items
         .filter((it) => !(AppState.downloadPreferences.skipAds && it.isAd))
         .map((media, idx) => {
+          console.log("Build meta for ", media);
           const meta = buildVideoLinkMeta(media, idx);
+          console.log("Build meta for result ", meta);
+
           AppState.allDirectLinks.push(meta);
 
           return meta;
@@ -1153,7 +1277,6 @@ export function displayFoundUrls({ forced } = {}) {
         );
       }
     } else {
-      alert("Body missing....");
       console.warn(
         "Something very unexpected happened(Document Body Not Available). If downloader fails, refresh this page!",
         document?.body
@@ -1181,6 +1304,7 @@ export async function downloadAllLinks(mainBtn) {
 
   AppState.downloading.isActive = true;
   AppState.downloading.isDownloadingAll = true;
+  AppState.downloadPreferences.autoScrollMode = "off"; // Turn off scroll for now.
 
   const links = AppState.allDirectLinks || [];
   let newVideoDownloadedCount = 0;
@@ -1188,6 +1312,8 @@ export async function downloadAllLinks(mainBtn) {
   try {
     console.log("DEBUG_DL_ALLA before loop ", links.length);
     for (let i = 0; i < links.length; i++) {
+      while (AppState.scrapperDetails.paused) await sleep(800);
+
       const media = links[i];
       if (AppState.downloadedURLs.includes(media.url)) {
         console.log(
@@ -1254,19 +1380,37 @@ export async function downloadAllLinks(mainBtn) {
       saveCSVFile(AppState.allDirectLinks);
     }
     updateAllTimeDownloadsAndLeaderBoard(AppState.displayedState.itemsHash);
-    showCelebration(
-      "downloads",
-      getRandomDownloadSuccessMessage(
-        !hasImage ? "video" : "post",
+    if (AppState.scrapperDetails.scrappingStage != "downloading") {
+      showCelebration(
+        "downloads",
+        getRandomDownloadSuccessMessage(
+          !hasImage ? "video" : "post",
+          newVideoDownloadedCount
+        ),
         newVideoDownloadedCount
-      ),
-      newVideoDownloadedCount
-    );
+      );
+    }
   }
   AppState.downloading.isDownloadingAll = false;
   AppState.downloading.isActive = false;
-  if (shouldShowRateDonatePopup()) showMorpheusRateUsPage();
+  const showRateDonateOn = shouldShowRateDonatePopup();
+  if (showRateDonateOn) {
+    setTimeout(() => {
+      showMorpheusRateUsPage();
+    }, 10_000);
+  }
   showStatsSpan();
+
+  if (AppState.scrapperDetails.scrappingStage == "downloading") {
+    AppState.scrapperDetails.scrappingStage = "completed";
+    AppState.scrapperDetails.selectedTab = null;
+    localStorage.setItem(
+      STORAGE_KEYS.SCRAPPER_DETAILS,
+      JSON.stringify(AppState.scrapperDetails)
+    );
+    if (!showRateDonateOn)
+      showCelebration("downloads", showRandomScraperDone());
+  }
 }
 
 export function getSavedTemplates() {
@@ -1283,6 +1427,12 @@ export function getPresetTemplates() {
   return FILE_STORAGE_LOCATION_TEMPLATE_PRESETS;
 }
 
+export function getDefaultPresetTemplate() {
+  return FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault);
+}
+export function getRecommendedPresetTemplate() {
+  return FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isRecommended);
+}
 export function saveTemplates(templates) {
   localStorage.setItem(
     STORAGE_KEYS.FULL_PATH_TEMPLATES,
@@ -1445,6 +1595,31 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
       JSON.stringify(weeklyMap)
     );
 
+    // Did this user get into another all time tier?
+    const currentProgressLevel = AppState.currentTierProgress.downloads || 0;
+    const newTier = getUserDownloadsCurrentTier(
+      AppState.leaderboard.allTimeDownloadsCount
+    );
+    const newTierLevel = newTier.min;
+    if (newTierLevel > currentProgressLevel) {
+      // Save state
+      try {
+        AppState.currentTierProgress.downloads = newTierLevel;
+        localStorage.setItem(
+          STORAGE_KEYS.CURRENT_TIER_PROGRESS,
+          JSON.stringify(AppState.currentTierProgress)
+        );
+
+        showCelebration(
+          "tier",
+          getTierHypeMessageDownloads(newTier),
+          newTier.min
+        );
+      } catch (err) {
+        console.log("Error displaying confetti", err);
+      }
+    }
+
     if (AppState.debug.active) {
       console.log("LEADERBOARD ✅ Update complete", {
         allTime: allTimeMap,
@@ -1522,7 +1697,6 @@ export function updateAllTimeRecommendationsLeaderBoard(dataHash) {
     }
 
     weekData.count += newCount;
-
     AppState.recommendationsLeaderboard.allTimeRecommendationsCount =
       updatedAllTime;
     AppState.recommendationsLeaderboard.weekRecommendationsData = weekData;
@@ -1620,11 +1794,12 @@ export function updateAllTimeRecommendationsLeaderBoard(dataHash) {
     );
 
     // Did this user get into another all time tier?
-    console.log("STATEUS ", AppState.currentTierProgress, AppState);
     const currentProgressLevel =
       AppState.currentTierProgress.recommendations || 0;
-    const newTierLevel =
-      getUserRecommendationsCurrentTier(currentProgressLevel).min;
+    const newTier = getUserRecommendationsCurrentTier(
+      AppState.recommendationsLeaderboard.allTimeRecommendationsCount
+    );
+    const newTierLevel = newTier.min;
     if (newTierLevel > currentProgressLevel) {
       // Save state
       try {
@@ -1633,9 +1808,13 @@ export function updateAllTimeRecommendationsLeaderBoard(dataHash) {
           STORAGE_KEYS.CURRENT_TIER_PROGRESS,
           JSON.stringify(AppState.currentTierProgress)
         );
-        showProgressConfetti(newTier);
+        showCelebration(
+          "tier",
+          getTierHypeMessageRecommendations(newTier),
+          newTier.min
+        );
       } catch (err) {
-        console.log("Error displaying confetti");
+        console.log("Error displaying confetti", err);
       }
     }
 
@@ -1791,10 +1970,13 @@ export function getUserRecommendationsCurrentTier(totalCount) {
 
 export function showCelebration(type = "tier", message, count = 10) {
   //tier or downloads
+  const globalSettings = { useWorker: false };
+
   if (type === "tier") {
     const duration = 5000;
     const animationEnd = Date.now() + duration;
     const defaults = {
+      ...globalSettings,
       startVelocity: 30,
       spread: 360,
       ticks: 60,
@@ -1803,7 +1985,7 @@ export function showCelebration(type = "tier", message, count = 10) {
 
     const overlay = document.createElement("div");
     overlay.className = "ettpd-celebration-overlay";
-    overlay.textContent = message || "🎉 You've unlocked a new tier!";
+    overlay.innerHTML = message || "🎉 You've unlocked a new tier!";
     document.body.appendChild(overlay);
 
     const interval = setInterval(() => {
@@ -1828,6 +2010,7 @@ export function showCelebration(type = "tier", message, count = 10) {
     }, 250);
   } else if (type === "downloads") {
     const defaults = {
+      ...globalSettings,
       spread: 360,
       ticks: 50,
       gravity: 0,
@@ -1859,7 +2042,7 @@ export function showCelebration(type = "tier", message, count = 10) {
     if (message) {
       const overlay = document.createElement("div");
       overlay.className = "ettpd-celebration-overlay";
-      overlay.textContent = message;
+      overlay.innerHTML = message;
       document.body.appendChild(overlay);
       setTimeout(() => overlay.remove(), 10000);
     }
@@ -1868,6 +2051,7 @@ export function showCelebration(type = "tier", message, count = 10) {
     const animationEnd = Date.now() + duration;
 
     const defaults = {
+      ...globalSettings,
       spread: 720,
       startVelocity: 60,
       ticks: 80,
@@ -1904,6 +2088,7 @@ export function showCelebration(type = "tier", message, count = 10) {
   }
 }
 
+window.rerender = displayFoundUrls;
 export function getRandomDownloadSuccessMessage(mediaType = "file", count = 1) {
   const messages = [...DOWNLOAD_SUCCESS_MESSAGES];
   const template = messages[Math.floor(Math.random() * messages.length)];
@@ -1919,7 +2104,16 @@ export function getRandomDownloadSuccessMessage(mediaType = "file", count = 1) {
     : template(); // for static ones
 }
 
+export function showRandomScraperDone() {
+  const msg =
+    SCRAPER_DONE_MESSAGES[
+      Math.floor(Math.random() * SCRAPER_DONE_MESSAGES.length)
+    ];
+  return msg;
+}
+
 function shouldShowRateDonatePopup() {
+  if (AppState.ui.isRatePopupOpen) return false;
   // If nothing was downloaded this week. The downloader must be broken, no, don't even try suggesting they rate us.
   if (!AppState.leaderboard.newlyConfirmedUrls.length) return false;
   const now = Date.now();
@@ -1955,62 +2149,680 @@ function shouldShowRateDonatePopup() {
   return now - lastShownAt >= cooldownMs;
 }
 
+export async function getTabSpans(timeoutMs = 5000, intervalMs = 100) {
+  const start = Date.now();
+  const path = window.location.pathname;
 
-export function getTabSpans() {
-  const tabs = document.querySelectorAll('[role="tab"]');
-  const result = {
-    videos: null,
-    reposts: null,
-    liked: null,
-    favorites: null,
+  const isProfile = /^\/@[^/]+\/?$/.test(path);
+
+  let isCurrentUserPageOwner = false;
+  let collection = "";
+
+  try {
+    const currentUserName = getCurrentPageUsername();
+    const user = JSON.parse(window.__UNIVERSAL_DATA_FOR_REHYDRATION__.innerHTML)
+      .__DEFAULT_SCOPE__["webapp.app-context"].user;
+
+    const loggedInUsername = user ? user.uniqueId : null;
+    isCurrentUserPageOwner = currentUserName === loggedInUsername;
+
+    const m = path.match(/\/@[^/]+\/collection\/([^/]+)/);
+    if (m) {
+      const raw = decodeURIComponent(m[1]);
+      collection = raw.replace(/-\d+$/, "");
+    }
+  } catch (e) {
+    console.warn(e);
+  }
+
+  // 🚪 Not a profile? Return immediately
+  if (!isProfile) {
+    return {
+      videos: null,
+      reposts: null,
+      liked: null,
+      favorites: null,
+      collection,
+    };
+  }
+
+  const sig = {
+    videos: "M11 8",
+    reposts: "6.26 6.66",
+    liked: "14.23-14.12",
+    favorites: "l9.67-5",
+    likedPrivateA: "M8.71 10.56",
+    likedPrivateB: "L24 36.89",
   };
 
-  tabs.forEach((tab) => {
-    const span = tab.querySelector("span");
-    const svgPath = tab.querySelector("svg path")?.getAttribute("d") || "";
+  const hasAny = (r) =>
+    r.videos || r.reposts || r.liked || r.favorites || r.collection;
 
-    if (!span) return;
+  const immediateScan = () => {
+    const result = {
+      videos: null,
+      reposts: null,
+      liked: null,
+      favorites: null,
+      collection,
+    };
 
-    // SVG-based detection (primary)
-    if (
-      svgPath.includes("M11 8") &&
-      // svgPath.includes("V27") &&
-      !result.videos
-    ) {
-      result.videos = span;
-    } else if (
-      svgPath.includes("6.26 6.66") &&
-      // svgPath.includes("l3.48-3.7") &&
-      !result.reposts
-    ) {
-      result.reposts = span;
-    } else if (
-      svgPath.includes("14.23-14.12") &&
-      // svgPath.includes("M24 12.19") &&
-      !result.liked
-    ) {
-      result.liked = span;
-    } else if (
-      svgPath.includes("l9.67-5") &&
-      // svgPath.includes("M30.5 7.15") &&
-      !result.favorites
-    ) {
-      result.favorites = span;
+    if (result.collection) {
+      return result;
     }
 
-    // Fallback: text-based matching (locale-agnostic heuristics)
-    const label = span.textContent.trim().toLowerCase();
+    // svg-path scan
+    const tabs = document.querySelectorAll('[role="tab"]');
+    tabs.forEach((tab) => {
+      const style = window.getComputedStyle(tab);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        tab.getAttribute("aria-disabled") === "true"
+      )
+        return;
 
-    if (!result.videos && /video/.test(label)) {
-      result.videos = span;
-    } else if (!result.reposts && /repost/.test(label)) {
-      result.reposts = span;
-    } else if (!result.liked && /like/.test(label)) {
-      result.liked = span;
-    } else if (!result.favorites && /favorite/.test(label)) {
-      result.favorites = span;
+      const span = tab.querySelector("span");
+      if (!span) return;
+
+      const d = tab.querySelector("svg path")?.getAttribute("d") || "";
+      if (!result.videos && d.includes(sig.videos)) result.videos = span;
+      else if (!result.reposts && d.includes(sig.reposts))
+        result.reposts = span;
+      else if (!result.favorites && d.includes(sig.favorites))
+        result.favorites = span;
+
+      // Public liked tab (visible to anyone if account exposes it)
+      if (!result.liked && d.includes(sig.liked)) {
+        result.liked = span;
+      }
+      // Private liked tab (only valid if you're the owner)
+      if (d.includes(sig.likedPrivateA) || d.includes(sig.likedPrivateB)) {
+        result.liked = isCurrentUserPageOwner ? span : null;
+      }
+    });
+
+    return result;
+  };
+
+  // 1) Try immediate
+  let first = immediateScan();
+  if (hasAny(first)) return first;
+
+  // 2) Two frames wait
+  await new Promise((r) =>
+    requestAnimationFrame(() => requestAnimationFrame(r))
+  );
+  first = immediateScan();
+  if (hasAny(first)) return first;
+
+  // 3) Observer quick try
+  const foundViaObserver = await new Promise((resolve) => {
+    let done = false;
+    const obs = new MutationObserver(() => {
+      const res = immediateScan();
+      if (hasAny(res)) {
+        done = true;
+        obs.disconnect();
+        resolve(res);
+      }
+    });
+    if (document.body)
+      obs.observe(document.body, { childList: true, subtree: true });
+    setTimeout(() => {
+      if (!done) {
+        obs.disconnect();
+        resolve(null);
+      }
+    }, Math.min(800, timeoutMs));
+  });
+  if (foundViaObserver) return foundViaObserver;
+
+  // 4) Timed polling
+  return new Promise((resolve) => {
+    const tick = () => {
+      const res = immediateScan();
+      if (hasAny(res)) {
+        resolve(res);
+      } else if (Date.now() - start >= timeoutMs) {
+        resolve(res);
+      } else {
+        setTimeout(tick, intervalMs);
+      }
+    };
+    setTimeout(tick, intervalMs);
+  });
+}
+
+export function getRenderedPostsMetadata() {
+  const getUsernameNear = (el) => {
+    const a = el.closest('a[href*="/@"]') || el.querySelector('a[href*="/@"]');
+    return a?.getAttribute("href")?.match(/\/@([\w._-]+)/)?.[1] || null;
+  };
+
+  const getFiber = (el) => {
+    for (const k in el) if (k.startsWith("__reactFiber$")) return el[k];
+    return null;
+  };
+
+  const containers = Array.from(
+    document.querySelectorAll('[class*="DivPlayerContainer"]')
+  );
+
+  const pickBestItemFromChildren = (children) => {
+    if (!Array.isArray(children)) return null;
+
+    // 1) Strong heuristics: explicitly check the known “good” slots
+    const candidates = [];
+    [6, 5].forEach((idx) => {
+      const c = children[idx];
+      if (c?.props?.item) candidates.push(c.props.item);
+    });
+
+    // 2) Generic scan: any child.props.item or child.item that looks like media
+    for (const c of children) {
+      if (c?.props?.item) candidates.push(c.props.item);
+      else if (c?.item) candidates.push(c.item);
+      else if (c?.props && typeof c.props === "object")
+        candidates.push(c.props);
     }
+
+    // Score candidates: prefer objects with AIGCDescription/music/stats etc
+    const score = (obj) => {
+      if (!obj || typeof obj !== "object") return -1;
+      let s = 0;
+      if (typeof obj.id === "string" && obj.id.length) s += 10;
+      if ("AIGCDescription" in obj) s += 5;
+      if ("music" in obj) s += 3;
+      if ("stats" in obj || "statsV2" in obj) s += 3;
+      if ("video" in obj) s += 2;
+      if ("desc" in obj) s += 1;
+      return s;
+    };
+
+    let best = null,
+      bestScore = -1;
+    for (const cand of candidates) {
+      const sc = score(cand);
+      if (sc > bestScore) {
+        best = cand;
+        bestScore = sc;
+      }
+    }
+    return best;
+  };
+
+  const posts = containers
+    .map((el) => {
+      const fiber = getFiber(el);
+      if (!fiber) return null;
+
+      // Try pendingProps first, then memoizedProps
+      const propsSources = [fiber?.pendingProps, fiber?.memoizedProps].filter(
+        Boolean
+      );
+
+      // Try to extract the rich media object
+      let media = null;
+      for (const p of propsSources) {
+        media = pickBestItemFromChildren(p?.children);
+        if (media?.id) break;
+      }
+
+      // Last‑ditch fallback: walk shallowly for any object with a string id
+      if (!media || !media.id) {
+        const tryObj = (o) => (o && typeof o.id === "string" ? o : null);
+        for (const p of propsSources) {
+          if (tryObj(p)) {
+            media = p;
+            break;
+          }
+          if (tryObj(p?.props)) {
+            media = p.props;
+            break;
+          }
+          if (tryObj(p?.props?.item)) {
+            media = p.props.item;
+            break;
+          }
+        }
+      }
+
+      if (!media || typeof media.id !== "string") return null;
+
+      // Username fallback
+      if (!media.authorId) {
+        const u = getUsernameNear(el);
+        if (u) media.authorId = u;
+      }
+      return media;
+    })
+    .filter(Boolean);
+
+  return posts;
+}
+
+export function toTitleCase(str) {
+  return str
+    .toLowerCase()
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+export function showAlertModal(message) {
+  return new Promise((resolve, _) => {
+    const alertDiv = Object.assign(document.createElement("div"), {
+      className: "alert",
+      innerHTML: message,
+    });
+    createModal({ children: [alertDiv], onClose: () => resolve(true) });
+  });
+}
+
+/**
+ * Find a React fiber object attached to a DOM element.
+ */
+function getReactFiber(el) {
+  if (!el) return null;
+  for (const k in el) {
+    if (k.startsWith("__reactFiber$")) return el[k];
+  }
+  return null;
+}
+
+/**
+ * Normalize a children value into an array.
+ */
+function toArray(children) {
+  if (!children) return [];
+  return Array.isArray(children) ? children : [children];
+}
+
+/**
+ * Score object "media-ish-ness" like your pickBestItemFromChildren
+ */
+function scoreMediaObj(obj) {
+  if (!obj || typeof obj !== "object") return -1;
+  let s = 0;
+  if (typeof obj.id === "string" && obj.id.length) s += 10;
+  if ("AIGCDescription" in obj) s += 5;
+  if ("music" in obj) s += 3;
+  if ("stats" in obj || "statsV2" in obj) s += 3;
+  if ("video" in obj) s += 2;
+  if ("desc" in obj) s += 1;
+  return s;
+}
+
+/**
+ * Given a "children" array-ish, produce an ordered list of candidates to explore.
+ * 1) Prefer slots 6 and 5 if they look promising (your known good paths)
+ * 2) Then everything else, sorted by media score
+ */
+function rankChildren(children) {
+  const arr = toArray(children);
+
+  const picks = [];
+  [6, 5].forEach((idx) => {
+    const c = arr[idx];
+    if (c) picks.push({ c, idx, bonus: 100 }); // huge bonus to force priority
   });
 
-  return result;
+  // Add the rest with their score
+  arr.forEach((c, idx) => {
+    // Skip duplicates if we already queued 6 or 5
+    if (idx === 6 || idx === 5) return;
+    // Try to score the most "item-ish" view of c
+    const maybe = (c && (c.props?.item || c.item || (c.props && c.props))) || c;
+    picks.push({ c, idx, bonus: scoreMediaObj(maybe) });
+  });
+
+  picks.sort((a, b) => b.bonus - a.bonus);
+  return picks.map((p) => ({ node: p.c, idx: p.idx }));
+}
+
+/**
+ * Extract a list of "child containers" we should traverse from a node-like object.
+ * We look at common React places: pendingProps, memoizedProps, props, children, etc.
+ */
+function enumerateTraversalTargets(node) {
+  const targets = [];
+
+  // Most useful containers first
+  if (node?.pendingProps)
+    targets.push({ obj: node.pendingProps, path: ".pendingProps" });
+  if (node?.memoizedProps)
+    targets.push({ obj: node.memoizedProps, path: ".memoizedProps" });
+  if (node?.props) targets.push({ obj: node.props, path: ".props" });
+  if (node?.children) targets.push({ obj: node.children, path: ".children" });
+
+  // Also consider node directly (some fibers stash data at top-level)
+  targets.push({ obj: node, path: "" });
+
+  return targets;
+}
+
+/**
+ * Try to read an item and its id from a container-like object
+ */
+function extractItemCandidate(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  return obj.props?.item || obj.item || null;
+}
+
+/**
+ * Get children array and how to display path fragments
+ */
+function getChildrenAndPath(obj) {
+  if (!obj || typeof obj !== "object") return { children: [], basePath: "" };
+
+  let children =
+    obj.props?.children ?? obj.children ?? obj.pendingProps?.children ?? null;
+
+  // Also treat the object itself as a child container if it looks "component-like"
+  if (!children && obj.props) children = obj.props.children ?? null;
+
+  return { children: toArray(children), basePath: "" };
+}
+
+/**
+ * Depth-first limited traversal for a matching props.item (by id)
+ * Returns { item, path } or null
+ */
+function searchFiberForItem(fiber, itemId, maxVisits = 20) {
+  if (!fiber) return null;
+
+  // Stack of { node, path }
+  const stack = [];
+  let visits = 0;
+
+  // Seed with fiber containers likely to hold children/props
+  enumerateTraversalTargets(fiber).forEach(({ obj, path }) => {
+    if (obj) stack.push({ node: obj, path });
+  });
+
+  while (stack.length && visits < maxVisits) {
+    const { node, path } = stack.pop();
+    visits++;
+
+    // Direct item on this node?
+    const directItem = extractItemCandidate(node);
+    if (directItem?.id === itemId) {
+      return { item: directItem, path: `${path}.props.item` };
+    }
+
+    // If node.props.item exists but id doesn't match, still consider it as a candidate
+    // but keep traversing children to find the exact id
+    // Rank children using the "good slots" + media score
+    const { children } = getChildrenAndPath(node);
+    const ranked = rankChildren(children);
+
+    for (const { node: child, idx } of ranked) {
+      if (!child || typeof child !== "object") continue;
+
+      // Fast path: if this child directly has a useful item, check it first
+      const quick = extractItemCandidate(child);
+      if (quick?.id === itemId) {
+        return { item: quick, path: `${path}.children[${idx}].props.item` };
+      }
+
+      // Otherwise, push deeper traversal targets for this child
+      enumerateTraversalTargets(child).forEach(({ obj, path: p2 }) => {
+        if (obj)
+          stack.push({ node: obj, path: `${path}.children[${idx}]${p2}` });
+      });
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Main entry:
+ * 1) Search downward from the element's fiber
+ * 2) If not found, walk upward (fiber.return or DOM parent) and retry, still bounded by maxVisits
+ */
+export function findFiberItemById(startEl, itemId, maxVisits = 20) {
+  let el = startEl;
+  let fiber = getReactFiber(el);
+
+  // Try descending from the starting element
+  let found = searchFiberForItem(fiber, itemId, maxVisits);
+  if (found) return found;
+
+  // Fallback upward: climb fiber.return chain first (cheap), then DOM parents
+  let guard = 0;
+  while (guard++ < 5) {
+    // 1) climb fiber.return if available
+    if (fiber?.return) {
+      fiber = fiber.return;
+      found = searchFiberForItem(fiber, itemId, maxVisits);
+      if (found) return found;
+      continue;
+    }
+
+    // 2) climb the DOM and switch to that element's fiber
+    el = el?.parentElement || null;
+    if (!el) break;
+    fiber = getReactFiber(el);
+    if (!fiber) continue;
+
+    found = searchFiberForItem(fiber, itemId, maxVisits);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+// Extract a TikTok video id from many common DOM shapes
+function extractIdFromEl(el) {
+  if (!el) return null;
+
+  // 1) xgwrapper-* pattern
+  const idAttr = el.getAttribute?.("id") || "";
+  let m = idAttr.match(/xgwrapper-\d+-(\d+)/);
+  if (m) return m[1];
+
+  // 2) anchor href like /video/7531841678139755832
+  const a = el.tagName === "A" ? el : el.querySelector?.("a[href*='/video/']");
+  const href = a?.getAttribute?.("href") || "";
+  m = href.match(/\/video\/(\d{10,})/);
+  if (m) return m[1];
+
+  // 3) data attributes occasionally stash ids
+  const ds = el.dataset || {};
+  for (const v of Object.values(ds)) {
+    if (typeof v === "string") {
+      m = v.match?.(/(\d{10,})/);
+      if (m) return m[1];
+    }
+  }
+  return null;
+}
+
+/**
+ * Given an <article>, find the closest video id nearby.
+ * Strategy:
+ *  - Check the article subtree
+ *  - Check siblings (± up to N)
+ *  - Check ancestor containers and their nearby children
+ * Hard cap on DOM probes to avoid burning CPU
+ */
+function getNearById(article, maxSiblingRadius = 4, maxVisits = 50) {
+  if (!article) return null;
+  let visits = 0;
+
+  const tryEl = (el) => {
+    if (!el || visits++ >= maxVisits) return null;
+    return extractIdFromEl(el);
+  };
+
+  // 1) Inside the article
+  const insideId =
+    tryEl(article) ||
+    tryEl(article.querySelector?.('[id^="xgwrapper-"]')) ||
+    (() => {
+      // Quick scan for any hint inside the article
+      const hits = article.querySelectorAll?.(
+        '[id^="xgwrapper-"], a[href*="/video/"], [data-e2e*="video"], [data-video-id]'
+      );
+      for (const h of hits) {
+        const id = tryEl(h);
+        if (id) return id;
+      }
+      return null;
+    })();
+  if (insideId) return insideId;
+
+  // 2) Check siblings around the article
+  const parent = article.parentElement;
+  if (parent) {
+    const kids = Array.from(parent.children);
+    const idx = kids.indexOf(article);
+    for (let r = 1; r <= maxSiblingRadius; r++) {
+      const left = kids[idx - r];
+      const right = kids[idx + r];
+      const idL =
+        tryEl(left) ||
+        (left?.querySelector &&
+          tryEl(left.querySelector('[id^="xgwrapper-"]'))) ||
+        null;
+      if (idL) return idL;
+
+      const idR =
+        tryEl(right) ||
+        (right?.querySelector &&
+          tryEl(right.querySelector('[id^="xgwrapper-"]'))) ||
+        null;
+      if (idR) return idR;
+    }
+  }
+
+  // 3) Walk up a few ancestors; in each, scan for nearby xgwrapper containers
+  let anc = article.parentElement;
+  let hops = 0;
+  while (anc && hops++ < 4 && visits < maxVisits) {
+    const idHere =
+      tryEl(anc) ||
+      (() => {
+        const wrappers = anc.querySelectorAll?.('[id^="xgwrapper-"]');
+        for (const w of wrappers) {
+          const id = tryEl(w);
+          if (id) return id;
+        }
+        return null;
+      })();
+    if (idHere) return idHere;
+    anc = anc.parentElement;
+  }
+
+  // 4) Last-ditch: scan a small neighborhood around the article in the document
+  const nearby = document.querySelectorAll?.('[id^="xgwrapper-"]');
+  let closest = null;
+  let closestDist = Infinity;
+
+  // Compute a simple vertical distance to the article
+  const artRect = article.getBoundingClientRect?.();
+  for (const el of nearby || []) {
+    if (visits++ >= maxVisits) break;
+    const id = extractIdFromEl(el);
+    if (!id) continue;
+    const r = el.getBoundingClientRect?.();
+    if (!r || !artRect) continue;
+    const dist = Math.abs(
+      (r.top + r.bottom) / 2 - (artRect.top + artRect.bottom) / 2
+    );
+    if (dist < closestDist) {
+      closestDist = dist;
+      closest = id;
+    }
+  }
+  return closest || null;
+}
+
+// Convenience: get current playing article and resolve nearest id
+export function getClosestPlayingVideoId() {
+  const article = getCurrentPlayingArticle();
+  if (!article) return null;
+  return getNearById(article);
+}
+
+export function shouldShowRatePopupLegacy() {
+  const { lastRatedAt, lastShownAt } = AppState.userMeta || {};
+  const { leaderboard } = AppState;
+
+  const daysSinceRated = getDaysSince(lastRatedAt);
+  const daysSinceShown = getDaysSince(lastShownAt);
+
+  // hard cooldown on last shown: every ~3 months max
+  if (daysSinceShown < 90) return false;
+
+  // only enforce 90-day "since rated" if they have *ever* rated
+  if (Number.isFinite(daysSinceRated) && daysSinceRated < 90) return false;
+
+  // milestone vibes: big week or nice round lifetime totals
+  const lifetime = leaderboard.allTimeDownloadsCount || 0;
+  const weekly = leaderboard.weekDownloadsData?.count || 0;
+
+  const lifetimeMilestones = [25, 50, 100, 200, 500, 1000, 2500, 5000];
+  const hitLifetime = lifetimeMilestones.includes(lifetime);
+  const hitWeekly = weekly >= 25 && weekly % 25 === 0; // gentle cadence
+
+  if (!(hitLifetime || hitWeekly)) return false;
+
+  // rarity: deterministic-ish ~20% per calendar week to avoid streaky RNG
+  const weekId =
+    leaderboard.weekDownloadsData?.weekId ||
+    new Date().toISOString().slice(0, 10);
+  const seed = `${weekId}:${lifetime}:${weekly}`;
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  const rarity = (h % 100) / 100;
+
+  return rarity < 0.2;
+}
+
+function getDaysSince(tsMs) {
+  if (!tsMs) return Infinity;
+  const now = Date.now();
+  if (tsMs > now) return 0; // future-safe
+  return (now - tsMs) / 86400000;
+}
+
+// 🧰 2) Tiny util: replace {{tokens}} via regex targeting
+export function renderHypeTemplate(template, vars = {}) {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+    const val = vars[key];
+    return val == null ? "" : String(val);
+  });
+}
+
+// 🎲 3) Helper to pick a random template
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// ✅ 4) Public APIs you asked for
+export function getTierHypeMessageRecommendations({ emoji, name, min }) {
+  const tpl = pick(HYPE_TEMPLATES.recommendations);
+  return renderHypeTemplate(tpl, {
+    emoji,
+    name,
+    min: Intl.NumberFormat("en", {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(min),
+  });
+}
+
+export function getTierHypeMessageDownloads({ emoji, name, min }) {
+  const tpl = pick(HYPE_TEMPLATES.downloads);
+  return renderHypeTemplate(tpl, {
+    emoji,
+    name,
+    min: Intl.NumberFormat("en", {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(min),
+  });
 }

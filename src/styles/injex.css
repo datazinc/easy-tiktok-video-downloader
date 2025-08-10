@@ -461,7 +461,7 @@ label[for="ettpd-current-profile"] {
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 9999;
+  z-index: 3000; /*Smallest before it goes above a tiktok modal, eg: playlist.*/
 }
 
 .ettpd-download-btn-holder {
@@ -594,6 +594,34 @@ label[for="ettpd-current-profile"] {
   align-items: center;
   gap: 12px;
   position: relative;
+}
+.layout{
+  /* Make it scrollable if content overflows */
+  overflow-y: auto;
+  max-height: 80vh; /* prevent it from going off-screen */
+
+  /* Optional padding so scroll bar isn't squished */
+  padding-right: 6px;
+}
+
+/* Magnificent scrollbar styles */
+.layout::-webkit-scrollbar {
+  width: 10px;
+}
+
+.layout::-webkit-scrollbar-track {
+  background: #1a1a1a;
+  border-radius: 10px;
+}
+
+.layout::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #fe2c55, #ff8a00);
+  border-radius: 10px;
+  border: 2px solid #1a1a1a;
+}
+
+.layout::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #ff4b6e, #ffa733);
 }
 
 .ettpd-modal-box {
@@ -987,19 +1015,32 @@ label[for="ettpd-current-profile"] {
 
 .ettpd-tab-btn {
   padding: 6px 12px;
-  background: #f1f1f1;
+  background: #f5f5f5; /* light default */
   border: none;
   border-radius: 5px;
   cursor: pointer;
   font-weight: 500;
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, color 0.2s ease;
   flex: 5;
+  color: #000;
 }
 
+/* Hover before selection */
+.ettpd-tab-btn:not(.active):hover {
+  background: #e2e2e2; /* darker grey on hover */
+}
+
+/* Selected (active) */
 .ettpd-tab-btn.active {
-  background: #222;
+  background: #333; /* dark grey when active */
   color: #fff;
 }
+
+/* Hover while active */
+.ettpd-tab-btn.active:hover {
+  background: #222; /* slightly darker than active */
+}
+
 
 .black-text {
   color: black;
@@ -1182,7 +1223,7 @@ label[for="ettpd-current-profile"] {
 .ettpd-scrapper-controls {
   margin: 0px 10px;
   padding: 16px;
-  background: #18181887;
+  background: #103e4587;
   border: 1px solid #444;
   border-radius: 8px;
   flex-direction: column;
@@ -1196,22 +1237,10 @@ label[for="ettpd-current-profile"] {
   margin-top: 12px;
 }
 
-.ettpd-tab-btn {
-  padding: 8px 12px;
-  background-color: #2d2d2d;
-  border: 1px solid #555;
-  color: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.ettpd-tab-btn:hover {
-  background-color: #444;
-}
 
 .ettpd-scrapper-active-ui {
   margin: 8px 10px;;
-  background: #111;
+  background-color: #103e4587;
   padding: 16px;
   border: 1px dashed #666;
   border-radius: 6px;
@@ -1224,15 +1253,68 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-scrapper-start,
-.ettpd-scrapper-pause {
+.ettpd-scrapper-pause, 
+.ettpd-scrapper-learn  {
   padding: 8px 14px;
   background-color: #fe2c55;
   color: white;
   border: none;
   border-radius: 4px;
   cursor: pointer;
+font-weight: bold;
+
 }
 
 .ettpd-scrapper-pause {
   background-color: #ffaa00;
 }
+
+.ettpd-scrapper-learn {
+  background-color: #11111178;
+border: 2px solid #ffff0066;
+}
+
+
+.ettpd-scrapper-start:active,
+.ettpd-scrapper-pause:active,
+.ettpd-scrapper-learn:active {
+  background-color: white;
+  color: #000;
+}
+.ettpd-scrapper-start:hover,
+.ettpd-scrapper-pause:hover,
+.ettpd-scrapper-learn:hover {
+background-color: #000;
+color: white;
+}
+.ettpd-scrapper-start:disabled,
+.ettpd-scrapper-pause:disabled,
+.ettpd-scrapper-learn:disabled {
+opacity: 0.5;
+}
+#ettpd-download-all-btn:disabled {
+  color: white;
+  font-weight: bolder;
+}
+
+#ttk-downloader-scrapper-container {
+  flex-direction: column;
+}
+
+
+.ettpd-configure-filepaths-btn {
+  background-color: #fe2c55;
+  color: #fff;
+  border: none;
+  padding: 8px 14px;
+  font-size: 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.ettpd-configure-filepaths-btn:hover {
+  background-color: #ff4c6a;
+}
+
+

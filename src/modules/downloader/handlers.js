@@ -1,154 +1,88 @@
 // handlers.js
 import AppState from "../state/state.js";
-import { displayFoundUrls, getCurrentPageUsername } from "../utils/utils.js";
+import { displayFoundUrls } from "../utils/utils.js";
+
+// ———————————————————————————————————————
+// Helpers
+// ———————————————————————————————————————
+const normId = (it) => String(it?.id ?? it?.videoId ?? "");
+const isFull = (it) => !!(it && !it.downloaderHasLowConfidence);
+const hasPlay = (it) => !!(it?.video?.playAddr || it?.url);
+
+/** Return true if `next` is a better copy than `curr` */
+function isBetterCopy(next, curr) {
+  if (!curr) return true; // brand new
+  if (isFull(next) && !isFull(curr)) return true; // full beats stub
+  if (!isFull(next) && isFull(curr)) return false;
+  // prefer one that actually has a playable URL
+  if (hasPlay(next) && !hasPlay(curr)) return true;
+  if (!hasPlay(next) && hasPlay(curr)) return false;
+  // otherwise keep existing (stable)
+  return false;
+}
+
+// Keep your existing name, but make it robust
+export function isVisitedItemBetterOrNew(it) {
+  console.log("CHECKING_NEW_ITEM", it.author, it.downloaderHasLowConfidence);
+  const id = normId(it);
+  if (!id) return false;
+  const curr = AppState.allItemsEverSeen[id];
+  return isBetterCopy(it, curr);
+}
+
+// ———————————————————————————————————————
+// Main: update allItemsEverSeen, then rebuild buckets from it
+// ———————————————————————————————————————
 export function handleFoundItems(newItems) {
-  window.allItemsEverSeen = window.allItemsEverSee || new Set();
-  newItems.forEach((it) => window.allItemsEverSeen.add(it));
   try {
-    if (!Array.isArray(newItems) || !newItems.length) return;
+    if (!Array.isArray(newItems) || newItems.length === 0) return;
 
-    // Handle video-detail struct
-    const defaultScope = window?.__$UNIVERSAL_DATA$__?.__DEFAULT_SCOPE__;
-    const struct = defaultScope?.["webapp.video-detail"]?.itemInfo?.itemStruct;
-    if (struct?.id) {
-      const aid = struct.author?.uniqueId;
-      if (aid) {
-        AppState.postItems[aid] = AppState.postItems[aid] || [];
-        if (!AppState.postItems[aid].some((i) => i.id === struct.id)) {
-          AppState.postItems[aid].push(struct);
-        }
-      }
-    }
+    let changed = false;
 
-    const updatedItems = defaultScope?.["webapp.updated-items"] || [];
-    if (updatedItems.length) {
-      updatedItems.forEach((item) => {
-        const aid = item.author?.uniqueId;
-        if (aid && item.id) {
-          AppState.postItems[aid] = AppState.postItems[aid] || [];
-          if (!AppState.postItems[aid].some((i) => i.id === item.id)) {
-            AppState.postItems[aid].push(item);
-          }
-        }
-      });
-    }
-
-    let forceRerender = false;
-
-    // ———————————————————————————————————————
-    // 1) (Optional) Build low-confidence stub map for debug/reference
-    // ———————————————————————————————————————
-    const lowMap = {};
-    for (const [authorKey, arr] of Object.entries(AppState.postItems)) {
-      arr.forEach((it) => {
-        if (it.downloaderHasLowConfidence) {
-          const vid = String(it.id ?? it.videoId);
-          if (!vid) return;
-          lowMap[vid] = lowMap[vid] || [];
-          lowMap[vid].push(authorKey);
-        }
-      });
-    }
-
-    // ———————————————————————————————————————
-    // 2) Process incoming items
-    // ———————————————————————————————————————
-    for (const item of newItems) {
-      const id = String(item.id ?? item.videoId);
+    // 1) Update source of truth with the best copy we’ve seen
+    for (const it of newItems) {
+      const id = normId(it);
       if (!id) continue;
-
-      const isFullItem = !item.downloaderHasLowConfidence;
-      const realAuthor = item.author?.uniqueId;
-      if (!realAuthor) continue;
-
-      // ———————— PHASE A ————————
-      // If this is a full item, remove all stubs from all authors
-      if (isFullItem) {
-        for (const [author, entries] of Object.entries(AppState.postItems)) {
-          const beforeLength = entries.length;
-          AppState.postItems[author] = entries.filter(
-            (entry) =>
-              !(
-                entry.downloaderHasLowConfidence &&
-                String(entry.id ?? entry.videoId) === id
-              )
-          );
-          if (AppState.postItems[author].length !== beforeLength) {
-            forceRerender = true;
-          }
-        }
-      }
-
-      // ———————— PHASE B ————————
-      // Add to correct author bucket if appropriate
-      AppState.postItems[realAuthor] = AppState.postItems[realAuthor] || [];
-      const bucket = AppState.postItems[realAuthor];
-
-      const hasFull = bucket.some(
-        (i) => String(i.id ?? i.videoId) === id && !i.downloaderHasLowConfidence
-      );
-      const hasStub = bucket.some(
-        (i) => String(i.id ?? i.videoId) === id && i.downloaderHasLowConfidence
-      );
-      const hasAny = hasFull || hasStub;
-
-      if (!item.downloaderHasLowConfidence) {
-        if (hasFull) {
-          // Already present — skip
-        } else if (hasStub) {
-          // Replace stub with full item
-          AppState.postItems[realAuthor] = bucket.map((i) =>
-            String(i.id ?? i.videoId) === id ? item : i
-          );
-          forceRerender = true;
-        } else {
-          // No existing entry — add full item
-          bucket.push(item);
-          forceRerender = true;
-        }
-      } else {
-        // Low-confidence stub
-        // Block if any full item exists globally
-        let fullExistsGlobally = false;
-        for (const entries of Object.values(AppState.postItems)) {
-          if (
-            entries.some(
-              (entry) =>
-                String(entry.id ?? entry.videoId) === id &&
-                !entry.downloaderHasLowConfidence
-            )
-          ) {
-            fullExistsGlobally = true;
-            break;
-          }
-        }
-
-        if (!hasAny && !fullExistsGlobally) {
-          bucket.push(item);
-          forceRerender = true;
-        }
-      }
-
-      // ———————— PHASE C ————————
-      // Add to likedVideos list (if active)
-      if (AppState.filters.likedVideos) {
-        const user = getCurrentPageUsername();
-        AppState.likedVideos[user] = AppState.likedVideos[user] || [];
-        if (
-          !AppState.likedVideos[user].some(
-            (i) => String(i.id ?? i.videoId) === id
-          )
-        ) {
-          AppState.likedVideos[user].push(item);
-        }
+      if (isVisitedItemBetterOrNew(it)) {
+        AppState.allItemsEverSeen[id] = it;
+        changed = true;
       }
     }
 
-    // ———————————————————————————————————————
-    // 3) Refresh the downloader UI
-    // ———————————————————————————————————————
-    displayFoundUrls({ forced: forceRerender });
+    // Opportunistically fold in video-detail + updated-items if present
+    const scope = window?.__$UNIVERSAL_DATA$__?.__DEFAULT_SCOPE__;
+    const struct = scope?.["webapp.video-detail"]?.itemInfo?.itemStruct;
+    if (normId(struct)) {
+      const id = normId(struct);
+      if (isBetterCopy(struct, AppState.allItemsEverSeen[id])) {
+        AppState.allItemsEverSeen[id] = struct;
+        changed = true;
+      }
+    }
+    const updatedItems = scope?.["webapp.updated-items"] || [];
+    for (const it of updatedItems) {
+      const id = normId(it);
+      if (!id) continue;
+      if (isBetterCopy(it, AppState.allItemsEverSeen[id])) {
+        AppState.allItemsEverSeen[id] = it;
+        changed = true;
+      }
+    }
+
+    if (!changed) {
+      // Nothing improved; still might need to show found URLs for first-time UI
+      displayFoundUrls({ forced: false });
+      return;
+    }
+    // 4) Refresh UI
+    displayFoundUrls({ forced: true });
   } catch (err) {
     if (AppState.debug.active) console.warn("handleFoundItems error", err);
   }
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  displayFoundUrls({ forced: true });
+});
+
+window.ettpd__handleFoundItems = handleFoundItems;

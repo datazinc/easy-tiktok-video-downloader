@@ -1,0 +1,41 @@
+{
+  "name": "easy-tiktok-video-downloader",
+  "version": "4.0.0",
+  "description": "Download liked videos or any TikTok videos easily without watermark. Download search results, likes, all user videos, and more.",
+  "manifest_version": 3,
+  "author": "Arsene I. Muhire",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build": "rm -rf dist && webpack --config webpack.config.js --watch && du -sh dist",
+    "build:prod": "rm -rf dist && webpack --mode production --config webpack.config.js && du -sh dist",
+    "analyze": "webpack --config webpack.config.js --env analyze",
+    "clean": "rm -rf dist",
+    "cc": "webpack --mode production"
+  },
+  "sideEffects": false,
+  "browserslist": {
+    "production": [
+      "chrome >= 120"
+    ]
+  },
+  "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/plugin-transform-runtime": "^7.28.0",
+    "@babel/preset-env": "^7.28.0",
+    "babel-loader": "^10.0.0",
+    "babel-plugin-transform-remove-console": "^6.9.4",
+    "copy-webpack-plugin": "^13.0.0",
+    "css-minimizer-webpack-plugin": "^7.0.2",
+    "cssnano": "^7.1.0",
+    "postcss": "^8.5.6",
+    "terser-webpack-plugin": "^5.3.14",
+    "webpack": "^5.101.0",
+    "webpack-bundle-analyzer": "^4.10.2",
+    "webpack-cli": "^6.0.1",
+    "webpack-merge": "^6.0.1"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.28.2"
+  }
+}

@@ -15,19 +15,21 @@ function safeParseJSON(jsonValue, fallback = {}) {
   }
 }
 
+function normalizeTs(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return null; // never happened
+  return n < 1e12 ? n * 1000 : n; // seconds → ms
+}
+
+
+
 function safeParseRateDonateDates(jsonValue, fallback = {}) {
   const parsed = safeParseJSON(jsonValue, fallback);
-
-  const fixDate = (val) => {
-    const n = Number(val);
-    return Number.isFinite(n) ? n : null;
-  };
-
   return {
-    lastDonatedAt: fixDate(parsed.lastDonatedAt),
-    lastRatedAt: fixDate(parsed.lastRatedAt),
-    lastShownAt: fixDate(parsed.lastShownAt),
-    shownCount: typeof parsed.shownCount === "number" ? parsed.shownCount : 0,
+    lastDonatedAt: normalizeTs(parsed.lastDonatedAt),
+    lastRatedAt: normalizeTs(parsed.lastRatedAt),
+    lastShownAt: normalizeTs(parsed.lastShownAt),
+    shownCount: Number.isFinite(parsed.shownCount) ? parsed.shownCount : 0,
   };
 }
 
@@ -40,10 +42,21 @@ function safeParseScrapperDetails(jsonValue, fallback = {}) {
   };
 
   return {
-    isScrapping: parsed.isScrapping,
+    locked: false,
+    // "initiated" "ongoing" "downloading" "complete". Only accept initiated as the only valid default.
+    // Otherwise partial states are reloaded (incomplete states, like: ongoing)
+    scrappingStage:
+      parsed.scrappingStage != "initiated"
+        ? "completed"
+        : parsed.scrappingStage,
+
+    paused: false,
     startedAt: fixDate(parsed.startedAt),
     lastSuccessfullScrollAt: fixDate(parsed.lastSuccessfullScrollAt),
-    selectedTab: parsed.selectedTab,
+    selectedTab:
+      parsed.scrappingStage == "initiated" ? parsed.selectedTab : null,
+    selectedCollectionName:
+      parsed.scrappingStage == "initiated" ? parsed.selectedCollectionName : null,
     scrappedPostsCount:
       typeof parsed.scrappedPostsCount === "number"
         ? parsed.scrappedPostsCount
@@ -74,8 +87,8 @@ const AppState = {
     active: true,
   },
   isLoggedIn: false,
-  postItems: {},
   allDirectLinks: [],
+  allItemsEverSeen: {},
   displayedState: {
     itemsHash: "",
     path: "",
@@ -127,7 +140,7 @@ const AppState = {
   ui: {
     downloaderPositionType: getStringOrNull(
       STORAGE_KEYS.DOWNLOADER_POSITION_TYPE
-    ),
+    )||"bottom-right",
     live_ETTPD_CUSTOM_POS: getStringOrNull(
       STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION
     ),
@@ -153,8 +166,8 @@ const AppState = {
     fullPathTemplate:
       safeParseJSON(
         localStorage.getItem(STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE),
-        {}
-      ) || FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault),
+       FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault)
+      ),
     showFolderPicker: getBooleanFromStorage(STORAGE_KEYS.SHOW_FOLDER_PICKER),
   },
   rateDonate: safeParseRateDonateDates(
@@ -169,11 +182,14 @@ const AppState = {
   scrapperDetails: safeParseScrapperDetails(
     localStorage.getItem(STORAGE_KEYS.SCRAPPER_DETAILS),
     {
+      locked: false,
+      paused: null,
       lastSuccessfullScrollAt: null,
       startedAt: null,
       selectedTab: null,
-      isScrapping: null,
-      scrappedPostsCount: null
+      selectedCollectionName: null,
+      scrappingStage: null,
+      scrappedPostsCount: null,
     }
   ),
 };
@@ -187,7 +203,6 @@ try {
 export function resetAppStateToDefaults() {
   // Reset localStorage-dependent values
   localStorage.removeItem(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE);
-  localStorage.removeItem("ETTPD_CUSTOM_POS");
   localStorage.removeItem(STORAGE_KEYS.IS_DOWNLOADER_CLOSED);
   localStorage.removeItem(STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE);
   localStorage.removeItem(STORAGE_KEYS.FULL_PATH_TEMPLATES);
@@ -196,7 +211,7 @@ export function resetAppStateToDefaults() {
   // Reset AppState
   AppState.debug.active = false;
   AppState.isLoggedIn = false;
-  AppState.postItems = {};
+  AppState.allItemsEverSeen = {};
   AppState.allDirectLinks = [];
   AppState.displayedState = {
     itemsHash: "",
