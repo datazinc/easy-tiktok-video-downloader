@@ -260,7 +260,7 @@ function explainerModal(tab) {
 
   // Open the custom template modal
   const configBtn = document.createElement("button");
-  configBtn.className = "ettpd-configure-filepaths-btn";
+  configBtn.className = "ettpd-action-btn";
   configBtn.textContent = "⚙️ Configure file paths";
   configBtn.style.marginTop = "10px";
   configBtn.onclick = () => {
@@ -269,7 +269,7 @@ function explainerModal(tab) {
 
   // NEW: one-click apply recommended template
   const applyBtn = document.createElement("button");
-  applyBtn.className = "ettpd-configure-filepaths-btn";
+  applyBtn.className = "ettpd-action-btn";
   applyBtn.textContent = "✨ Apply Recommended File Path Template";
   applyBtn.style.marginTop = "10px";
   applyBtn.style.backgroundColor = "#0a84d6";
@@ -301,7 +301,7 @@ function explainerModal(tab) {
 function showScrapperStateUI(tabKey) {
   // Remove any previous active UI
   document.querySelector(".ettpd-scrapper-active-ui")?.remove();
-      
+
   const container = document.createElement("div");
   container.className = "ettpd-scrapper-active-ui";
 
@@ -421,7 +421,7 @@ function createDownloadAllButton(enabled = true) {
     btn.disabled = true;
   } else if (AppState.downloading.isDownloadingAll) {
     if (done < total) {
-      btn.textContent = `⏳ Downloading ${done + 1} of ${total} post${
+      btn.textContent = `⏳ Downloading ${done} of ${total} post${
         total !== 1 ? "s" : ""
       }…`;
       btn.disabled = true;
@@ -470,7 +470,7 @@ export function updateDownloadButtonLabelSimple() {
   } else if (isDownloading) {
     if (done < total) {
       downloadAllBtn.textContent = `⏳ Downloading ${
-        done + 1
+        done
       } of ${total} Post${total !== 1 ? "s" : ""}…`;
       downloadAllBtn.disabled = true;
     } else {
@@ -1020,9 +1020,8 @@ function makeElementDraggable(wrapper, handle) {
   //Dragging in motion
   document.addEventListener("mousemove", (e) => {
     if (
-      AppState.ui.isDragging &&
       localStorage.getItem(STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION) !==
-        AppState.ui.live_ETTPD_CUSTOM_POS
+      AppState.ui.live_ETTPD_CUSTOM_POS
     ) {
       // Persist location:
       AppState.ui.downloaderPositionType = "custom";

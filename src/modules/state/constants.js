@@ -40,6 +40,7 @@ export const DOM_IDS = {
   DOWNLOAD_ALL_BUTTON: "ettpd-download-all-btn",
   NEXT_DATA: "__NEXT_DATA__",
   MODAL_CONTAINER: "modal-overlay-container",
+  ALERT_ACTION_BUTTON: "alert-action-btn",
 };
 
 export const UI_ELEMENTS = {

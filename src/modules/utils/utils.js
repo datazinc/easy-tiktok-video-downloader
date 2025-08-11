@@ -289,7 +289,10 @@ export function getDownloadFilePath(
         if (key === "ad") return media.isAd ? "ad" : "";
         if (key === "mediaType") return media.isImage ? "image" : "video";
 
-        if (key === "tabName") {
+        if (
+          key === "tabName" &&
+          AppState.scrapperDetails.scrappingStage == "downloading"
+        ) {
           const val =
             toTitleCase(AppState.scrapperDetails.selectedTab || "") ||
             fallbackRaw ||
@@ -301,6 +304,8 @@ export function getDownloadFilePath(
           } else {
             return val;
           }
+        } else if (key === "tabName") {
+          return "";
         }
 
         // Normal value lookup
@@ -958,17 +963,13 @@ export async function downloadAllPostImagesHandler(e, media) {
         );
         try {
           if (downloadAllBtn)
-            downloadAllBtn.textContent = `⏳ Downloading ${i + 1}/${
-              media.imagePostImages.length
-            }...`;
+            downloadAllBtn.textContent = `⏳ Downloading ${i}/${media.imagePostImages.length}...`;
           await downloadSingleMedia(media, { imageIndex: i });
           successfulDownloads += 1;
         } catch (err) {
-          console.error(`Download failed for image ${i + 1}`, err);
+          console.error(`Download failed for image ${i}`, err);
           if (downloadAllBtn)
-            downloadAllBtn.textContent = `⏳ Failed at ${i + 1}/${
-              media.imagePostImages.length
-            }...`;
+            downloadAllBtn.textContent = `⏳ Failed at ${i}/${media.imagePostImages.length}...`;
           await sleep(2000);
         }
       }
@@ -1029,109 +1030,287 @@ export async function downloadSingleMedia(
   }
 }
 
-export function downloadURLToDisk(url, filename, options = {}) {
-  return new Promise((resolve, reject) => {
-    const maxRetries = 3;
-    let attempt = options.retryCount || 1;
+// export function downloadURLToDisk(url, filename, options = {}) {
+//   return new Promise((resolve, reject) => {
+//     const maxRetries = 3;
+//     let attempt = options.retryCount || 1;
 
-    function attemptDownload(omitCookies) {
-      AppState.downloading.isActive = true;
-      displayFoundUrls({ forced: true });
+//     function attemptDownload(omitCookies) {
+//       AppState.downloading.isActive = true;
+//       displayFoundUrls({ forced: true });
 
-      fetch(url, { credentials: omitCookies ? "omit" : "include" })
-        .then((resp) => {
-          AppState.downloading.isActive = false;
-          displayFoundUrls({ forced: true });
+//       fetch(url, { credentials: omitCookies ? "omit" : "include" })
+//         .then((resp) => {
+//           AppState.downloading.isActive = false;
+//           displayFoundUrls({ forced: true });
 
-          if (!resp.ok) throw new Error(resp.statusText);
-          return resp.blob();
-        })
-        .then((blob) => {
-          if (blob.size === 0) throw new Error("Empty file");
+//           if (!resp.ok) throw new Error(resp.statusText);
+//           return resp.blob();
+//         })
+//         .then((blob) => {
+//           if (blob.size === 0) throw new Error("Empty file");
 
-          const blobUrl = URL.createObjectURL(blob);
+//           const blobUrl = URL.createObjectURL(blob);
 
-          function handleResponse(event) {
-            if (
-              event.source !== window ||
-              !event.data ||
-              event.data.type !== "BLOB_DOWNLOAD_RESPONSE"
-            )
-              return;
+//           function handleResponse(event) {
+//             if (
+//               event.source !== window ||
+//               !event.data ||
+//               event.data.type !== "BLOB_DOWNLOAD_RESPONSE"
+//             )
+//               return;
 
-            window.removeEventListener("message", handleResponse);
+//             window.removeEventListener("message", handleResponse);
 
-            try {
-              URL.revokeObjectURL(blobUrl);
-            } catch (e) {
-              if (AppState.debug.active)
-                console.warn("⚠️ Failed to revoke blob URL:", e);
-            }
+//             try {
+//               URL.revokeObjectURL(blobUrl);
+//             } catch (e) {
+//               if (AppState.debug.active)
+//                 console.warn("⚠️ Failed to revoke blob URL:", e);
+//             }
 
-            if (event.data.success) {
-              resolve(true);
-              AppState.sessionHasConfirmedDownloads = true;
-            } else {
-              reject(new Error(event.data.error || "Unknown download error"));
-            }
-          }
+//             if (event.data.success) {
+//               resolve(true);
+//               AppState.sessionHasConfirmedDownloads = true;
+//             } else {
+//               reject(new Error(event.data.error || "Unknown download error"));
+//             }
+//           }
 
-          window.addEventListener("message", handleResponse);
+//           window.addEventListener("message", handleResponse);
 
-          sendBasicBlobDownloadRequest({
-            blobUrl,
-            filename,
-            showFolderPicker: AppState.downloadPreferences.showFolderPicker,
-          });
-        })
-        .catch(async (err) => {
-          AppState.downloading.isActive = false;
-          displayFoundUrls({ forced: true });
+//           sendBasicBlobDownloadRequest({
+//             blobUrl,
+//             filename,
+//             showFolderPicker: AppState.downloadPreferences.showFolderPicker,
+//           });
+//         })
+//         .catch(async (err) => {
+//           AppState.downloading.isActive = false;
+//           displayFoundUrls({ forced: true });
 
-          if (AppState.debug.active)
-            console.warn(`❌ Download error [attempt ${attempt}]:`, err);
+//           if (AppState.debug.active)
+//             console.warn(`❌ Download error [attempt ${attempt}]:`, err);
 
-          if (attempt < maxRetries) {
-            attempt++;
-            const nextOmit = attempt === 2;
-            if (AppState.debug.active)
-              console.warn("⚠️ Retrying download attempt", attempt);
-            attemptDownload(nextOmit);
-          } else {
-            if (AppState.debug.active)
-              console.warn("⚠️ All attempts failed. Falling back...");
+//           if (attempt < maxRetries) {
+//             attempt++;
+//             const nextOmit = attempt === 2;
+//             if (AppState.debug.active)
+//               console.warn("⚠️ Retrying download attempt", attempt);
+//             attemptDownload(nextOmit);
+//           } else {
+//             if (AppState.debug.active)
+//               console.warn("⚠️ All attempts failed. Falling back...");
 
-            if (AppState.downloadPreferences.skipFailedDownloads) {
-              if (AppState.debug.active)
-                console.warn(
-                  "⚠️ All attempts failed. Skipped as failed download."
-                );
-              return reject(err);
-            }
-            await showAlertModal(
-              `⚠️ <b>Something went wrong.</b><br><br>
-  We'll try saving the video to your device's Downloads folder, or opening it in a new tab.<br><br>
-  If it opens in a new tab, please right-click and choose “Save As” to download it manually.<br><br>
-  This issue often happens if the post's privacy is set to <b>Only Me</b> or similar — in those cases, the downloader can't access it directly, but “Save As” in your browser may still work.<br><br>
-  <b>File:</b> ${filename.split("/").pop() || "Unknown"}`
-            );
+//             if (AppState.downloadPreferences.skipFailedDownloads) {
+//               if (AppState.debug.active)
+//                 console.warn(
+//                   "⚠️ All attempts failed. Skipped as failed download."
+//                 );
+//               return reject(err);
+//             }
+//             await showAlertModal(
+//               `⚠️ <b>Something went wrong.</b><br><br>
+//   We'll try saving the video to your device's Downloads folder, or opening it in a new tab.<br><br>
+//   If it opens in a new tab, please right-click and choose “Save As” to download it manually.<br><br>
+//   This issue often happens if the post's privacy is set to <b>Only Me</b> or similar — in those cases, the downloader can't access it directly, but “Save As” in your browser may still work.<br><br>
+//   <b>File:</b> ${filename.split("/").pop() || "Unknown"}`
+//             );
 
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = filename;
-            a.target = "_blank";
-            document.body?.appendChild(a);
-            a.click();
-            document.body?.removeChild(a);
+//             const a = document.createElement("a");
+//             a.href = url;
+//             a.download = filename;
+//             a.target = "_blank";
+//             document.body?.appendChild(a);
+//             a.click();
+//             document.body?.removeChild(a);
 
-            // Do NOT resolve or reject — just let the user handle it manually
-            reject(true);
-          }
-        });
+//             // Do NOT resolve or reject — just let the user handle it manually
+//             reject(true);
+//           }
+//         });
+//     }
+
+//     attemptDownload(options.omitCookies || false);
+//   });
+// }
+
+// page script
+function uuid() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function postBlobDownloadRequest({ id, blobUrl, filename, showFolderPicker }) {
+  window.postMessage(
+    {
+      type: "BLOB_DOWNLOAD_REQUEST",
+      id,
+      payload: { blobUrl, filename, showFolderPicker: !!showFolderPicker },
+    },
+    "*"
+  );
+}
+
+function waitForBlobDownloadResponse(id, timeoutMs = 25000) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (val) => {
+      if (done) return;
+      done = true;
+      window.removeEventListener("message", onMsg);
+      clearTimeout(timer);
+      resolve(val);
+    };
+
+    function onMsg(ev) {
+      const d = ev?.data;
+      if (
+        ev.source !== window ||
+        !d ||
+        d.type !== "BLOB_DOWNLOAD_RESPONSE" ||
+        d.id !== id
+      )
+        return;
+      finish(d);
     }
 
-    attemptDownload(options.omitCookies || false);
+    const timer = setTimeout(() => {
+      finish({
+        success: false,
+        code: "ERR_PAGE_TIMEOUT",
+        error: "No content-script response within 25s",
+      });
+    }, timeoutMs);
+
+    window.addEventListener("message", onMsg);
   });
+}
+
+export async function downloadURLToDisk(url, filename, options = {}) {
+  const maxRetries = 3;
+  let attempt = options.retryCount || 1;
+
+  const setActive = (val) => {
+    try {
+      AppState.downloading.isActive = !!val;
+      displayFoundUrls({ forced: true });
+    } catch {}
+  };
+
+  while (attempt <= maxRetries) {
+    const omitCookies = options.omitCookies ?? attempt === 2; // 2nd try: omit cookies
+    try {
+      setActive(true);
+      const resp = await fetch(url, {
+        credentials: omitCookies ? "omit" : "include",
+      });
+      setActive(false);
+
+      if (!resp.ok) {
+        const err = new Error(
+          `HTTP ${resp.status} ${resp.statusText || ""}`.trim()
+        );
+        err.code = "ERR_HTTP";
+        throw err;
+      }
+
+      const blob = await resp.blob();
+      if (!blob || blob.size === 0) {
+        const err = new Error("Empty file");
+        err.code = "ERR_EMPTY_BLOB";
+        throw err;
+      }
+
+      const blobUrl = URL.createObjectURL(blob);
+      const id = uuid();
+
+      try {
+        // ask background to save to disk
+        postBlobDownloadRequest({
+          id,
+          blobUrl,
+          filename,
+          showFolderPicker: AppState?.downloadPreferences?.showFolderPicker,
+        });
+
+        const res = await waitForBlobDownloadResponse(id, 25000);
+
+        // always revoke, regardless of result
+        try {
+          URL.revokeObjectURL(blobUrl);
+        } catch (e) {
+          if (AppState?.debug?.active)
+            console.warn("⚠️ Failed to revoke blob URL:", e);
+        }
+
+        if (res?.success) {
+          AppState.sessionHasConfirmedDownloads = true;
+          return true;
+        }
+
+        const err = new Error(res?.error || "Unknown download error");
+        err.code = res?.code || "ERR_UNKNOWN";
+        throw err;
+      } catch (e) {
+        // ensure blobUrl is revoked if inner try failed before revoke
+        try {
+          URL.revokeObjectURL(blobUrl);
+        } catch {}
+        throw e;
+      }
+    } catch (err) {
+      setActive(false);
+      if (AppState?.debug?.active)
+        console.warn(
+          `❌ Download error [attempt ${attempt}/${maxRetries}]`,
+          err
+        );
+
+      if (attempt < maxRetries) {
+        attempt += 1;
+        continue; // retry
+      }
+
+      // final failure path -> optional fallback
+      if (AppState?.downloadPreferences?.skipFailedDownloads) {
+        // propagate the real error up
+        throw err;
+      }
+
+      // user-visible fallback + propagate a structured error
+      const shouldContinue = await showAlertModal(
+        `⚠️ <b>Download failed.</b><br><br>
+We couldn't save this file automatically, but we'll open it in a new tab so you can use <b>Right-click → Save As</b>.<br><br>
+This often happens with <b>private</b> or <b>Only Me</b> posts.<br><br>
+<b>File:</b> ${filename.split("/").pop() || "Unknown"}<br><br>
+Tip: You can skip failed downloads automatically for the rest of this session.`,
+        "Skip Failed Downloads",
+        () => {
+          AppState.downloadPreferences.skipFailedDownloads = true;
+          showAlertModal(
+            "✅ Failed downloads will now be skipped for this session."
+          );
+        }
+      );
+      if (!shouldContinue) throw new Error("Couldn't save this one file!");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.target = "_blank";
+      document.body?.appendChild(a);
+      a.click();
+      document.body?.removeChild(a);
+
+      const fallErr = new Error("Fell back to manual save");
+      fallErr.code = "ERR_FALLBACK_MANUAL";
+      throw fallErr;
+    }
+  }
+
+  // should be unreachable
+  const unreachable = new Error("Unreachable state");
+  unreachable.code = "ERR_UNREACHABLE";
+  throw unreachable;
 }
 
 export function displayFoundUrls({ forced } = {}) {
@@ -1331,7 +1510,7 @@ export async function downloadAllLinks(mainBtn) {
           ? downloadSingleMedia(media)
           : downloadAllPostImagesHandler(null, media));
         // Load confirmed downloaded urls
-        AppState.leaderboard.newlyConfirmedUrls.push(media);
+        AppState.leaderboard.newlyConfirmedMedia.push(media);
         console.log(
           "DEBUG_DL_ALLA inside loop strategy: ",
           media.isImage,
@@ -1380,7 +1559,11 @@ export async function downloadAllLinks(mainBtn) {
       saveCSVFile(AppState.allDirectLinks);
     }
     updateAllTimeDownloadsAndLeaderBoard(AppState.displayedState.itemsHash);
-    if (AppState.scrapperDetails.scrappingStage != "downloading") {
+    if (
+      AppState.scrapperDetails.scrappingStage != "downloading" &&
+      newVideoDownloadedCount &&
+      AppState.sessionHasConfirmedDownloads
+    ) {
       showCelebration(
         "downloads",
         getRandomDownloadSuccessMessage(
@@ -1480,7 +1663,7 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
 
   try {
     const weekId = getCurrentWeekId();
-    const newlyConfirmed = AppState.leaderboard.newlyConfirmedUrls || [];
+    const newlyConfirmed = AppState.leaderboard.newlyConfirmedMedia || [];
     const newCount = newlyConfirmed.length;
 
     // All-time count
@@ -1524,33 +1707,34 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
       localStorage.getItem(STORAGE_KEYS.DOWNLOADS_LEADERBOARD_WEEKLY) || "{}"
     );
 
-    newlyConfirmed.forEach((media) => {
-      if (media.isTrackedAsDownloaded) return;
-      media.isTrackedAsDownloaded = true;
+    newlyConfirmed
+      .filter((it) => !it.isTrackedAsDownloaded)
+      .forEach((media) => {
+        media.isTrackedAsDownloaded = true;
 
-      const authorId = media.authorId || "--unknown--";
-      const username = authorId;
+        const authorId = media.authorId || "--unknown--";
+        const username = authorId;
 
-      // All-time leaderboard
-      if (allTimeMap[authorId]) {
-        allTimeMap[authorId].count += 1;
-        allTimeMap[authorId].lastUpdatedAt = weekId;
-      } else {
-        allTimeMap[authorId] = {
-          count: 1,
-          username,
-          lastUpdatedAt: weekId,
-        };
-      }
+        // All-time leaderboard
+        if (allTimeMap[authorId]) {
+          allTimeMap[authorId].count += 1;
+          allTimeMap[authorId].lastUpdatedAt = weekId;
+        } else {
+          allTimeMap[authorId] = {
+            count: 1,
+            username,
+            lastUpdatedAt: weekId,
+          };
+        }
 
-      // Weekly leaderboard
-      if (!weeklyMap[weekId]) weeklyMap[weekId] = {};
-      if (weeklyMap[weekId][authorId]) {
-        weeklyMap[weekId][authorId].count += 1;
-      } else {
-        weeklyMap[weekId][authorId] = { count: 1, username };
-      }
-    });
+        // Weekly leaderboard
+        if (!weeklyMap[weekId]) weeklyMap[weekId] = {};
+        if (weeklyMap[weekId][authorId]) {
+          weeklyMap[weekId][authorId].count += 1;
+        } else {
+          weeklyMap[weekId][authorId] = { count: 1, username };
+        }
+      });
 
     // === Trim old weeks
     const sortedWeekIds = Object.keys(weeklyMap).sort();
@@ -2115,7 +2299,7 @@ export function showRandomScraperDone() {
 function shouldShowRateDonatePopup() {
   if (AppState.ui.isRatePopupOpen) return false;
   // If nothing was downloaded this week. The downloader must be broken, no, don't even try suggesting they rate us.
-  if (!AppState.leaderboard.newlyConfirmedUrls.length) return false;
+  if (!AppState.leaderboard.newlyConfirmedMedia.length) return false;
   const now = Date.now();
   const { lastRatedAt, lastDonatedAt, lastShownAt, shownCount } =
     AppState.rateDonate;
@@ -2410,13 +2594,37 @@ export function toTitleCase(str) {
     .join(" ");
 }
 
-export function showAlertModal(message) {
+export function showAlertModal(message, actionText = "OK", onAction = null) {
   return new Promise((resolve, _) => {
     const alertDiv = Object.assign(document.createElement("div"), {
       className: "alert",
       innerHTML: message,
     });
-    createModal({ children: [alertDiv], onClose: () => resolve(true) });
+
+    const actionBtn = Object.assign(document.createElement("button"), {
+      className: "ettpd-action-btn",
+      textContent: actionText,
+    });
+
+    actionBtn.addEventListener("click", () => {
+      if (typeof onAction === "function") {
+        try {
+          onAction();
+          return resolve(false);
+        } catch (e) {
+          console.warn("Action callback failed:", e);
+        }
+      }
+      resolve(true);
+    });
+
+    createModal({
+      children: [
+        alertDiv,
+        onAction ? actionBtn : document.createElement("span"),
+      ],
+      onClose: () => resolve(false), // resolve false if closed without clicking button
+    });
   });
 }
 

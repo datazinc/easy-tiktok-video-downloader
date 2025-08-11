@@ -1,44 +1,97 @@
-window.addEventListener("message", (event) => {
-  if (!event.data) return;
+// content.js
+(function () {
+  const DEBUG = () => globalThis?.AppStateETTVD?.debug?.active ?? false;
 
-  if (event.data.type === "BLOB_DOWNLOAD_REQUEST") {
-    try {
-      chrome.runtime.sendMessage(
-        {
-          action: "downloadBlobUrl",
-          payload: event.data.payload,
-        },
-        (response) => {
-          // Send result back to page
+  function respondOnce(id) {
+    let sent = false;
+    return (payload) => {
+      if (sent) return;
+      sent = true;
+      try {
+        window.postMessage(
+          { type: "BLOB_DOWNLOAD_RESPONSE", id, ...payload },
+          "*"
+        );
+      } catch (e) {
+        // last-ditch best effort
+        try {
           window.postMessage(
             {
               type: "BLOB_DOWNLOAD_RESPONSE",
-              success: response?.success || false,
-              error: response?.error || null,
+              id,
+              success: false,
+              code: "ERR_POSTMESSAGE",
+              error: String(e?.message || e),
             },
             "*"
           );
+        } catch {}
+      }
+    };
+  }
+
+  window.addEventListener("message", (event) => {
+    // Only accept messages from the page itself
+    if (event.source !== window) return;
+
+    const data = event.data;
+    if (!data || data.type !== "BLOB_DOWNLOAD_REQUEST") return;
+
+    const { id, payload } = data;
+    const reply = respondOnce(id);
+
+    // 25s watchdog to avoid hangs if bg never answers
+    const watchdog = setTimeout(() => {
+      reply({
+        success: false,
+        code: "ERR_CONTENT_TIMEOUT",
+        error: "Timed out waiting for background response (25s)",
+      });
+    }, 25000);
+
+    try {
+      chrome.runtime.sendMessage(
+        { action: "downloadBlobUrl", payload },
+        (response) => {
+          clearTimeout(watchdog);
+          const lastErr = chrome.runtime.lastError;
+
+          if (lastErr) {
+            if (DEBUG())
+              console.warn("sendMessage lastError:", lastErr.message);
+            return reply({
+              success: false,
+              code: "ERR_RUNTIME_SENDMESSAGE",
+              error: lastErr.message,
+            });
+          }
+
+          if (!response || typeof response.success !== "boolean") {
+            return reply({
+              success: false,
+              code: "ERR_NO_RESPONSE",
+              error: "Background returned no/invalid response",
+            });
+          }
+
+          reply({
+            success: response.success,
+            code: response.code || (response.success ? "OK" : "ERR_BACKGROUND"),
+            error: response.error || null,
+            downloadId: response.downloadId,
+          });
         }
       );
-    } catch (error) {
-      console.warn("SOME MAJOR LEAGUE ERROR:  ", error);
-      try {
-        const response = { success: false, error: error };
-        window.postMessage(
-            {
-              type: "BLOB_DOWNLOAD_RESPONSE",
-              success: response?.success || false,
-              error: response?.error || null,
-            },
-            "*"
-          );
-      } catch (err) {
-      console.warn("SOME MAJOR LEAGUE ERROR sending back:  ", error);
-        
-      }
+    } catch (e) {
+      clearTimeout(watchdog);
+      reply({
+        success: false,
+        code: "ERR_CONTENT_THROW",
+        error: e?.message || String(e),
+      });
     }
-  }
-});
+  });
+})();
 
 (function injectResources() {
   const resources = [

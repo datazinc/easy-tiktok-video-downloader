@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Easy TikTok Video Downloader (Remove Watermark)",
-  "version": "4.0.2",
+  "version": "4.0.1",
   "description": "Download any TikTok — yours, liked, reposts, favorites, collections, feeds & more — no watermark. If you see it, you can save it!",
   "host_permissions": [
     "*://*.tiktok.com/*"

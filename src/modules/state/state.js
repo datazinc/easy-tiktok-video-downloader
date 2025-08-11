@@ -21,8 +21,6 @@ function normalizeTs(ts) {
   return n < 1e12 ? n * 1000 : n; // seconds → ms
 }
 
-
-
 function safeParseRateDonateDates(jsonValue, fallback = {}) {
   const parsed = safeParseJSON(jsonValue, fallback);
   return {
@@ -56,7 +54,9 @@ function safeParseScrapperDetails(jsonValue, fallback = {}) {
     selectedTab:
       parsed.scrappingStage == "initiated" ? parsed.selectedTab : null,
     selectedCollectionName:
-      parsed.scrappingStage == "initiated" ? parsed.selectedCollectionName : null,
+      parsed.scrappingStage == "initiated"
+        ? parsed.selectedCollectionName
+        : null,
     scrappedPostsCount:
       typeof parsed.scrappedPostsCount === "number"
         ? parsed.scrappedPostsCount
@@ -106,7 +106,7 @@ const AppState = {
     { downloads: 0, recommendations: 0 }
   ),
   leaderboard: {
-    newlyConfirmedUrls: [],
+    newlyConfirmedMedia: [],
     currentlyUpdating: false,
     lastUpdateHash: "",
     allTimeDownloadsCount: Number(
@@ -138,9 +138,8 @@ const AppState = {
     isDownloadingAll: false,
   },
   ui: {
-    downloaderPositionType: getStringOrNull(
-      STORAGE_KEYS.DOWNLOADER_POSITION_TYPE
-    )||"bottom-right",
+    downloaderPositionType:
+      getStringOrNull(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE) || "bottom-right",
     live_ETTPD_CUSTOM_POS: getStringOrNull(
       STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION
     ),
@@ -163,11 +162,10 @@ const AppState = {
     autoScrollMode: "off",
     autoScrollModePrev: "",
     includeCSV: false,
-    fullPathTemplate:
-      safeParseJSON(
-        localStorage.getItem(STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE),
-       FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault)
-      ),
+    fullPathTemplate: safeParseJSON(
+      localStorage.getItem(STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE),
+      FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault)
+    ),
     showFolderPicker: getBooleanFromStorage(STORAGE_KEYS.SHOW_FOLDER_PICKER),
   },
   rateDonate: safeParseRateDonateDates(

@@ -64,7 +64,7 @@ module.exports = (_env, argv) => {
             new TerserPlugin({
               extractComments: false,
               terserOptions: {
-                mangle: false, // no obfuscation
+                mangle: true, // no obfuscation
                 format: {
                   beautify: false, // pretty output
                   comments: false,

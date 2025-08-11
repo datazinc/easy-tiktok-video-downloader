@@ -39,7 +39,7 @@ export function handleFoundItems(newItems) {
 
     let changed = false;
 
-    // 1) Update source of truth with the best copy we’ve seen
+    // 1) Update source of truth with the best copy we've seen
     for (const it of newItems) {
       const id = normId(it);
       if (!id) continue;

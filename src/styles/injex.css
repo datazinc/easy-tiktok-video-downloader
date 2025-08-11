@@ -474,10 +474,10 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-download-btns-container {
-      display: flex;
-    width: 100%;
-    justify-content: flex-end;
-    padding-right: 30px;
+  display: flex;
+  width: 100%;
+  justify-content: flex-end;
+  padding-right: 30px;
 }
 .ettpd-label {
   color: black;
@@ -577,7 +577,8 @@ label[for="ettpd-current-profile"] {
 
 .ettpd-modal-overlay {
   position: fixed;
-  top: 0; left: 0;
+  top: 0;
+  left: 0;
   width: 100vw;
   height: 100vh;
   background: rgba(0, 0, 0, 0.5);
@@ -595,7 +596,7 @@ label[for="ettpd-current-profile"] {
   gap: 12px;
   position: relative;
 }
-.layout{
+.layout {
   /* Make it scrollable if content overflows */
   overflow-y: auto;
   max-height: 80vh; /* prevent it from going off-screen */
@@ -1041,7 +1042,6 @@ label[for="ettpd-current-profile"] {
   background: #222; /* slightly darker than active */
 }
 
-
 .black-text {
   color: black;
 }
@@ -1217,7 +1217,6 @@ label[for="ettpd-current-profile"] {
   bottom: 48px;
 }
 
-
 /* Scrapper code */
 
 .ettpd-scrapper-controls {
@@ -1237,9 +1236,8 @@ label[for="ettpd-current-profile"] {
   margin-top: 12px;
 }
 
-
 .ettpd-scrapper-active-ui {
-  margin: 8px 10px;;
+  margin: 8px 10px;
   background-color: #103e4587;
   padding: 16px;
   border: 1px dashed #666;
@@ -1253,16 +1251,15 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-scrapper-start,
-.ettpd-scrapper-pause, 
-.ettpd-scrapper-learn  {
+.ettpd-scrapper-pause,
+.ettpd-scrapper-learn {
   padding: 8px 14px;
   background-color: #fe2c55;
   color: white;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-font-weight: bold;
-
+  font-weight: bold;
 }
 
 .ettpd-scrapper-pause {
@@ -1271,9 +1268,8 @@ font-weight: bold;
 
 .ettpd-scrapper-learn {
   background-color: #11111178;
-border: 2px solid #ffff0066;
+  border: 2px solid #ffff0066;
 }
-
 
 .ettpd-scrapper-start:active,
 .ettpd-scrapper-pause:active,
@@ -1284,13 +1280,13 @@ border: 2px solid #ffff0066;
 .ettpd-scrapper-start:hover,
 .ettpd-scrapper-pause:hover,
 .ettpd-scrapper-learn:hover {
-background-color: #000;
-color: white;
+  background-color: #000;
+  color: white;
 }
 .ettpd-scrapper-start:disabled,
 .ettpd-scrapper-pause:disabled,
 .ettpd-scrapper-learn:disabled {
-opacity: 0.5;
+  opacity: 0.5;
 }
 #ettpd-download-all-btn:disabled {
   color: white;
@@ -1301,8 +1297,7 @@ opacity: 0.5;
   flex-direction: column;
 }
 
-
-.ettpd-configure-filepaths-btn {
+.ettpd-action-btn {
   background-color: #fe2c55;
   color: #fff;
   border: none;
@@ -1313,8 +1308,6 @@ opacity: 0.5;
   transition: background-color 0.2s ease;
 }
 
-.ettpd-configure-filepaths-btn:hover {
+.ettpd-action-btn:hover {
   background-color: #ff4c6a;
 }
-
-
