@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Easy TikTok Video Downloader (Remove Watermark)",
+  "version": "4.0.1",
+  "description": "Download any TikTok — yours, liked, reposts, favorites, collections, feeds & more — no watermark. If you see it, you can save it!",
+  "host_permissions": [
+    "*://*.tiktok.com/*"
+  ],
+  "permissions": [
+    "downloads"
+  ],
+  "background": {
+    "scripts": ["js/background.bundle.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.tiktok.com/*"],
+      "js": ["js/content.bundle.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "js/confetti.browser.min.js",
+        "js/content.bundle.js",
+        "js/injex.js",
+        "styles/*",
+        "icons/*"
+      ],
+      "matches": ["*://*.tiktok.com/*"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "19": "icons/icon19.png",
+    "32": "icons/icon32.png",
+    "38": "icons/icon38.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "easy-tiktok-downloader@example.com",
+      "strict_min_version": "109.0"
+    }
+  }
+}

@@ -8,7 +8,9 @@
   "private": true,
   "scripts": {
     "build": "rm -rf dist && webpack --config webpack.config.js --watch && du -sh dist",
+    "buildff": "rm -rf distff && webpack --config webpack.firefox.config.js --watch && du -sh distff", 
     "build:prod": "rm -rf dist && webpack --mode production --config webpack.config.js && du -sh dist",
+    "buildff:prod": "rm -rf distff && webpack --mode production --config webpack.firefox.config.js && du -sh distff",
     "analyze": "webpack --config webpack.config.js --env analyze",
     "clean": "rm -rf dist",
     "cc": "webpack --mode production"
