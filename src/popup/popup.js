@@ -6,11 +6,23 @@ document.getElementById("startBtn").addEventListener("click", (e) => {
   const tiktokHostUrl = "https://tiktok.com/";
 
   if (username.startsWith("@")) username = username.slice(1);
+  if (
+    username.startsWith("https://tiktok.com") ||
+    username.startsWith("https://www.tiktok.com")
+  ) {
+    window.open(username);
+    return;
+  }
+  if (
+    username.startsWith("tiktok.com") ||
+    username.startsWith("www.tiktok.com")
+  ) {
+    window.open("https://" + username);
+    return;
+  }
 
   if (!username) {
-    if (confirm("No username provided. Continue to tiktok.com anyway?")) {
-      window.open(tiktokHostUrl, "_blank");
-    }
+    window.open(tiktokHostUrl, "_blank");
     return;
   }
 

@@ -658,7 +658,7 @@ export function detectScrollEnd(onEnd, wait = 10 * 1000) {
     const spinnerVisible = isSpinnerInPostListParentVisible();
     const scrollEnded = listScrollingCompleted();
     if (newCount === initialCount && !spinnerVisible && scrollEnded) {
-      console.log("✅ Scroll ended — no new items and no parent spinner.");
+      console.log("✅ Scroll ended — no new posts and no parent spinner.");
       onEnd?.();
     } else {
       if (spinnerVisible) {
@@ -2152,41 +2152,97 @@ export function getUserRecommendationsCurrentTier(totalCount) {
   );
 }
 
+// ---- confetti singleton (no workers) ----
+let _etvdConfetti = null;
+let _etvdCanvas = null;
+
+function getConfetti() {
+  // ensure canvas
+  _etvdCanvas =
+    _etvdCanvas && _etvdCanvas.isConnected
+      ? _etvdCanvas
+      : document.getElementById("etvd-confetti") ||
+        Object.assign(document.createElement("canvas"), {
+          id: "etvd-confetti",
+        });
+
+  if (!_etvdCanvas.isConnected) {
+    Object.assign(_etvdCanvas.style, {
+      position: "fixed",
+      inset: 0,
+      width: "100%",
+      height: "100%",
+      pointerEvents: "none",
+      zIndex: 2147483647, // sit on top of everything
+    });
+    document.documentElement.appendChild(_etvdCanvas);
+  }
+
+  // kill any pooled worker from previous libs (defensive)
+  try {
+    window.confetti?.reset?.();
+  } catch {}
+
+  // create instance that NEVER uses a worker
+  _etvdConfetti =
+    _etvdConfetti ||
+    window.confetti?.create(_etvdCanvas, { resize: true, useWorker: false });
+  return _etvdConfetti;
+}
+
+function makeOverlay(message) {
+  if (!message) return null;
+  const overlay = document.createElement("div");
+  overlay.className = "ettpd-celebration-overlay";
+  // If you don't need HTML, prefer textContent to avoid accidental markup:
+  // overlay.textContent = message;
+  overlay.innerHTML = message;
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+// ---- your API ----
 export function showCelebration(type = "tier", message, count = 10) {
-  //tier or downloads
-  const globalSettings = { useWorker: false };
+  const conf = getConfetti();
+  if (!conf) return; // library not loaded
+
+  // Respect reduced motion (optional)
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    const o = makeOverlay(message || "🎉");
+    setTimeout(() => o?.remove(), 2500);
+    return;
+  }
 
   if (type === "tier") {
     const duration = 5000;
     const animationEnd = Date.now() + duration;
     const defaults = {
-      ...globalSettings,
       startVelocity: 30,
       spread: 360,
       ticks: 60,
-      zIndex: 99999, // 🔥 HIGH z-index here
+      zIndex: 99999,
     };
 
-    const overlay = document.createElement("div");
-    overlay.className = "ettpd-celebration-overlay";
-    overlay.innerHTML = message || "🎉 You've unlocked a new tier!";
-    document.body.appendChild(overlay);
-
+    const overlay = makeOverlay(message || "🎉 You’ve unlocked a new tier!");
     const interval = setInterval(() => {
       const timeLeft = animationEnd - Date.now();
       if (timeLeft <= 0) {
         clearInterval(interval);
-        overlay.remove();
+        overlay?.remove();
         return;
       }
+      const particleBase = Math.min(1000, 10 * count);
+      const particleCount = Math.max(
+        1,
+        Math.round(particleBase * (timeLeft / duration))
+      );
 
-      const particleCount = Math.min(1000, 10 * count) * (timeLeft / duration);
-      confetti({
+      conf({
         ...defaults,
         particleCount,
         origin: { x: Math.random() * 0.2, y: Math.random() * 0.4 },
       });
-      confetti({
+      conf({
         ...defaults,
         particleCount,
         origin: { x: 0.8 + Math.random() * 0.2, y: Math.random() * 0.4 },
@@ -2194,48 +2250,39 @@ export function showCelebration(type = "tier", message, count = 10) {
     }, 250);
   } else if (type === "downloads") {
     const defaults = {
-      ...globalSettings,
       spread: 360,
       ticks: 50,
       gravity: 0,
       decay: 0.94,
       startVelocity: 30,
       colors: ["#FFE400", "#FFBD00", "#E89400", "#FFCA6C", "#FDFFB8"],
-      zIndex: 99999, // 🔥 HIGH z-index here
+      zIndex: 99999,
     };
 
-    function shoot() {
-      confetti({
+    const overlay = makeOverlay(message);
+    const shoot = () => {
+      conf({
         ...defaults,
         particleCount: Math.min(5 * count, 1000),
         scalar: 1.2,
         shapes: ["star"],
       });
-      confetti({
+      conf({
         ...defaults,
         particleCount: Math.min(2 * count, 4000),
         scalar: 0.75,
         shapes: ["circle"],
       });
-    }
+    };
 
     setTimeout(shoot, 0);
     setTimeout(shoot, 100);
     setTimeout(shoot, 200);
-
-    if (message) {
-      const overlay = document.createElement("div");
-      overlay.className = "ettpd-celebration-overlay";
-      overlay.innerHTML = message;
-      document.body.appendChild(overlay);
-      setTimeout(() => overlay.remove(), 10000);
-    }
+    if (overlay) setTimeout(() => overlay.remove(), 10000);
   } else if (type === "mindblown") {
     const duration = 4000;
     const animationEnd = Date.now() + duration;
-
     const defaults = {
-      ...globalSettings,
       spread: 720,
       startVelocity: 60,
       ticks: 80,
@@ -2262,8 +2309,7 @@ export function showCelebration(type = "tier", message, count = 10) {
         clearInterval(interval);
         return;
       }
-
-      confetti({
+      conf({
         ...defaults,
         particleCount: 150,
         origin: { x: Math.random(), y: Math.random() * 0.5 },
@@ -3033,4 +3079,190 @@ export function getTierHypeMessageDownloads({ emoji, name, min }) {
       maximumFractionDigits: 1,
     }).format(min),
   });
+}
+
+// share.js
+// Simple Share button + modal (no inline styles; icons via CSS classes)
+
+// ---- public API -------------------------------------------------------------
+
+export function showShareOptions(options = {}) {
+  const data = {
+    url:  "https://chromewebstore.google.com/detail/fclobfmgolhdcfcmpbjahiiifilhamcg?utm_source=tiktok-ext",
+    title: "Dude, you have to check out this TikTok downloader...",
+    text: "Simply beautiful!"
+  }
+
+  const contentWrapper = document.createElement("div");
+  contentWrapper.className = "ettpd-share-content";
+
+  const heading = document.createElement("div");
+  heading.className = "ettpd-share-heading";
+  heading.textContent = "Share";
+  contentWrapper.appendChild(heading);
+
+  const list = document.createElement("ul");
+  list.className = "ettpd-share-list";
+  contentWrapper.appendChild(list);
+
+  getShareTargets(data, options.platforms).forEach((t) => {
+    const li = document.createElement("li");
+
+    const a = document.createElement("a");
+    a.className = "ettpd-share-item";
+    a.href = t.href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.setAttribute("aria-label", t.label);
+
+    const icon = document.createElement("span");
+    // IMPORTANT: icon image comes from CSS (no JS blob here)
+    icon.className = `ettpd-share-icon icon-${t.key}`;
+
+    const text = document.createElement("span");
+    text.className = "ettpd-share-text";
+    text.textContent = t.label;
+
+    a.appendChild(icon);
+    a.appendChild(text);
+    li.appendChild(a);
+    list.appendChild(li);
+  });
+
+  // Actions
+  const actionBtnContainer = document.createElement("div");
+  actionBtnContainer.className = "ettpd-share-actions";
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "ettpd-share-action ettpd-tab-btn";
+  copyBtn.textContent = "Copy link";
+  copyBtn.addEventListener("click", async () => {
+    await copyToClipboard(data.url);
+    copyBtn.textContent = "Copied!";
+    setTimeout(() => (copyBtn.textContent = "Copy link"), 1200);
+  });
+  actionBtnContainer.appendChild(copyBtn);
+
+  if (navigator.share) {
+    const systemBtn = document.createElement("button");
+    systemBtn.type = "button";
+    systemBtn.className = "ettpd-share-action ettpd-tab-btn";
+    systemBtn.textContent = "System share…";
+    systemBtn.addEventListener("click", async () => {
+      try {
+        await navigator.share({
+          url: data.url,
+          title: data.title,
+          text: data.text,
+        });
+      } catch {
+        /* canceled */
+      }
+    });
+    actionBtnContainer.appendChild(systemBtn);
+  }
+
+  createModal({
+    children: [contentWrapper, actionBtnContainer],
+    onClose: () => {},
+  });
+}
+
+// You can control order with `platforms` option (array of keys). Defaults below.
+function getShareTargets({ url, title, text, mediaUrl }, platforms) {
+  const e = encodeURIComponent;
+  const msg = text || title || "";
+  const mailBody = `${msg ? e(msg) + "%0A%0A" : ""}${e(url)}`;
+
+  const map = {
+    telegram: {
+      key: "telegram",
+      label: "Share on Telegram",
+      href: `https://t.me/share/url?url=${e(url)}&text=${e(msg || title)}`,
+    },
+
+    linkedin: {
+      key: "linkedin",
+      label: "Share on LinkedIn",
+      href: `https://www.linkedin.com/sharing/share-offsite/?url=${e(url)}`,
+    },
+    reddit: {
+      key: "reddit",
+      label: "Share on Reddit",
+      href: `https://www.reddit.com/submit?url=${e(url)}&title=${e(title)}`,
+    },
+    pinterest: {
+      key: "pinterest",
+      label: "Share on Pinterest",
+      href: `https://www.pinterest.com/pin/create/button/?url=${e(url)}${
+        mediaUrl ? `&media=${e(mediaUrl)}` : ""
+      }&description=${e(msg || title)}`,
+    },
+    line: {
+      key: "line",
+      label: "Share on Line",
+      href: `https://social-plugins.line.me/lineit/share?url=${e(url)}`,
+    },
+    email: {
+      key: "email",
+      label: "Share on Email",
+      href: `mailto:?subject=${e(title)}&body=${mailBody}`,
+    },
+    whatsapp: {
+      key: "whatsapp",
+      label: "Share on WhatsApp",
+      href: `https://api.whatsapp.com/send?text=${e(
+        msg ? msg + " " + url : url
+      )}`,
+    },
+    facebook: {
+      key: "facebook",
+      label: "Share on Facebook",
+      href: `https://www.facebook.com/sharer/sharer.php?u=${e(url)}`,
+    },
+    x: {
+      key: "x",
+      label: "Share on X",
+      href: `https://twitter.com/intent/tweet?url=${e(url)}&text=${e(
+        msg || title
+      )}`,
+    },
+    messenger: {
+      key: "messenger",
+      label: "Share on Messenger",
+      href: `https://www.facebook.com/dialog/send?link=${e(
+        url
+      )}&redirect_uri=${e(url)}`,
+    },
+  };
+
+  const defaultOrder = [
+    "telegram",
+    "linkedin",
+    "reddit",
+    "pinterest",
+    "line",
+    "email",
+  ];
+  const order =
+    Array.isArray(platforms) && platforms.length ? platforms : defaultOrder;
+
+  return order.filter((k) => map[k]).map((k) => map[k]);
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
 }

@@ -2,5 +2,5 @@
 .history
 *.zip
 .vscode
-dist/
+dist*
 node_modules

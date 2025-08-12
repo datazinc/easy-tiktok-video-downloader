@@ -10,14 +10,20 @@ module.exports = (_env, argv) => {
     mode: isProd ? "production" : "development",
     entry: {
       background: "./src/background/background.js",
-      popup: "./src/popup/main.js",
+      popup: "./src/popup/popup.js",
       index: "./src/index.js", // -> js/injex.js
       content: "./src/content/content.js",
     },
     output: {
       path: path.resolve(__dirname, "dist"),
-      filename: (pathData) =>
-        pathData.chunk.name === "index" ? "js/injex.js" : "js/[name].bundle.js",
+      filename: (pathData) => {
+        
+        if (pathData.chunk.name === "index")
+          return "js/injex.js"
+        if (pathData.chunk.name === "popup")
+          return "popup/popup.js";
+          return "js/[name].bundle.js";
+      },
       clean: true,
     },
     devtool: false,
