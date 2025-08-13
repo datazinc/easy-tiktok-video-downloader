@@ -235,137 +235,174 @@ export function getDownloadFilePath(
   media,
   { imageIndex = 0, options = {} } = {}
 ) {
-  const template =
-    AppState.downloadPreferences.fullPathTemplate?.template ||
-    getDefaultPresetTemplate();
-  function getFieldMaxLength(template, fieldName) {
-    const regex = new RegExp(`\\{${fieldName}:(\\d+)`);
-    const match = template?.match(regex);
-    return match ? Number(match[1]) : undefined;
-  }
+  try {
+    const template =
+      AppState.downloadPreferences.fullPathTemplate?.template ||
+      getDefaultPresetTemplate();
+    function getFieldMaxLength(template, fieldName) {
+      const regex = new RegExp(`\\{${fieldName}:(\\d+)`);
+      const match = template?.match(regex);
+      return match ? Number(match[1]) : undefined;
+    }
 
-  const sanitize = (val) =>
-    (val ?? "")
-      .toString()
-      .replace(/[^\p{L}\p{N}_\-.]+/gu, "-")
-      .slice(0, 100);
+    const sanitize = (val) =>
+      (val ?? "")
+        .toString()
+        .replace(/[^\p{L}\p{N}_\-.]+/gu, "-")
+        .slice(0, 100);
 
-  const extension = media?.isImage ? ".jpeg" : ".mp4";
-  const sequenceNumber = imageIndex + 1;
-  const isMultiImage = media?.imagePostImages?.length > 1;
-  const descMaxLen = getFieldMaxLength(template, "desc");
-  const isDescMaxLenDefined = descMaxLen !== undefined;
-  const fieldValues = {
-    videoId: sanitize(media.videoId || media.id),
-    authorUsername: media.authorId,
-    authorNickname: sanitize(media.authorNickname),
-    desc: sanitize(media.desc?.slice(0, isDescMaxLenDefined ? descMaxLen : 40)),
-    createTime: sanitize(media.createTime),
-    musicTitle: sanitize(media.musicTitle),
-    musicAuthor: sanitize(media.musicAuthor),
-    views: sanitize(media.views),
-    duration: sanitize(media.duration),
-    hashtags: (media?.hashtags || [])
-      .map((tag) => sanitize(tag.name || tag))
-      .join("-"),
-  };
+    const formattedDate = (date) => {
+      if (!date || typeof date != "object") return;
+      return (
+        date.getFullYear() +
+        "-" +
+        String(date.getMonth() + 1).padStart(2, "0") +
+        "-" +
+        String(date.getDate()).padStart(2, "0") +
+        "_" +
+        String(date.getHours()).padStart(2, "0") +
+        String(date.getMinutes()).padStart(2, "0")
+      );
+    };
 
-  const applyTemplate = (tpl) => {
-    const tplHasTabName = /\{tabName(?:[:|}])/.test(tpl);
+    const extension = media?.isImage ? ".jpeg" : ".mp4";
+    const sequenceNumber = imageIndex + 1;
+    const isMultiImage = media?.imagePostImages?.length > 1;
+    const descMaxLen = getFieldMaxLength(template, "desc");
+    const isDescMaxLenDefined = descMaxLen !== undefined;
+    const fieldValues = {
+      videoId: sanitize(media.videoId || media.id),
+      authorUsername: media.authorId,
+      authorNickname: sanitize(media.authorNickname),
+      desc: sanitize(
+        media.desc?.slice(0, isDescMaxLenDefined ? descMaxLen : 40)
+      ),
+      musicTitle: sanitize(media.musicTitle),
+      musicAuthor: sanitize(media.musicAuthor),
+      views: sanitize(media.views),
+      duration: sanitize(media.duration),
+      hashtags: (media?.hashtags || [])
+        .map((tag) => sanitize(tag.name || tag))
+        .join("-"),
+      createTime: sanitize(
+        media.createTime
+          ? formattedDate(media.createTime)
+          : "missing-createTime"
+      ),
+      downloadTime: formattedDate(new Date()),
+      isImage: media.isImage,
+      isAd: media.isAd,
+    };
 
-    return tpl.replace(
-      /\{(\w+)(?::(\d+))?(?:\|([^}]+))?\}/g,
-      (_, key, maxLenRaw, fallbackRaw) => {
-        const maxLen = Number(maxLenRaw) || undefined;
-        const isRequiredSequence =
-          key === "sequenceNumber" && fallbackRaw === "required";
+    const fullTemplate = template?.trim();
 
-        if (key === "sequenceNumber") {
-          if (isRequiredSequence || (media.isImage && isMultiImage))
-            return sequenceNumber;
-          return "";
-        }
-
-        if (key === "ad") return media.isAd ? "ad" : "";
-        if (key === "mediaType") return media.isImage ? "image" : "video";
-
-        if (
-          key === "tabName" &&
-          AppState.scrapperDetails.scrappingStage == "downloading"
-        ) {
-          const val =
-            toTitleCase(AppState.scrapperDetails.selectedTab || "") ||
-            fallbackRaw ||
-            "";
-          if (AppState.scrapperDetails.selectedTab == "collection") {
-            return `${val}s/${sanitize(
+    const resolvedPath = fullTemplate
+      ? applyTemplate(
+          fullTemplate.startsWith("@/")
+            ? `${DOWNLOAD_FOLDER_DEFAULT}${fullTemplate.slice(1)}`
+            : fullTemplate,
+          fieldValues,
+          {
+            sequenceNumber,
+            isMultiImage,
+            collectionName: sanitize(
               AppState.scrapperDetails.selectedCollectionName || "collection"
-            )}`;
-          } else {
-            return val;
+            ),
           }
-        } else if (key === "tabName") {
-          return "";
-        }
+        )
+      : `${DOWNLOAD_FOLDER_DEFAULT}@${
+          fieldValues.authorUsername || "unknown"
+        }/${fieldValues.authorUsername || "user"}-${fieldValues.videoId}`;
 
-        // Normal value lookup
-        let val = fieldValues[key];
-
-        // Special fallback for authorUsername when tpl has {tabName} and fallback is :profile:
-        if (
-          key === "authorUsername" &&
-          fallbackRaw === ":profile:" &&
-          tplHasTabName &&
-          AppState.scrapperDetails.scrappingStage == "downloading"
-        ) {
-          val = getCurrentPageUsername() || val;
-        }
-
-        if (val == null || val === "") {
-          val = fallbackRaw ?? `missing-${key}`;
-        }
-
-        val = sanitize(val);
-        if (maxLen) val = val.slice(0, maxLen);
-        return val;
-      }
-    );
-  };
-
-  const fullTemplate = template?.trim();
-  const cleanupPath = (path) =>
-    path
-      // Remove known extensions from last segment
-      .replace(
-        /\/?([^/]+)\.(jpeg|jpg|png|gif|webp|mp4|mov|avi|mkv|webm|tiff|bmp|svg)$/i,
-        "/$1"
-      )
-      // Collapse multiple slashes
-      .replace(/\/+/g, "/")
-      // Collapse multiple dashes or underscores
-      .replace(/--+/g, "-")
-      .replace(/__+/g, "_")
-      // Reduce mixed dash/underscore groups
-      .replace(/[-_]+/g, (m) => m[0])
-      // Trim -/_ at start of each segment
-      .replace(/(^|\/)[-_]+/g, "$1")
-      // Trim -/_ at end of each segment
-      .replace(/[-_]+($|\/)/g, "$1")
-      // Remove leading/trailing slashes
-      .replace(/^\/+|\/+$/g, "");
-
-  const resolvedPath = fullTemplate
-    ? applyTemplate(
-        fullTemplate.startsWith("@/")
-          ? `${DOWNLOAD_FOLDER_DEFAULT}${fullTemplate.slice(1)}`
-          : fullTemplate
-      )
-    : `${DOWNLOAD_FOLDER_DEFAULT}@${fieldValues.authorUsername || "unknown"}/${
-        fieldValues.authorUsername || "user"
-      }-${fieldValues.videoId}`;
-
-  return `${cleanupPath(resolvedPath) || "download"}${extension}`;
+    return `${cleanupPath(resolvedPath) || "download"}${extension}`;
+  } catch (err) {
+    console.error(err);
+    return `tiktok-${media?.isImage ? "image.jpeg" : "video.mp4"}`;
+  }
 }
+
+export const applyTemplate = (
+  tpl,
+  fieldValues,
+  { sequenceNumber, isMultiImage, collectionName }
+) => {
+  const tplHasTabName = /\{tabName(?:[:|}])/.test(tpl);
+
+  return tpl.replace(
+    /\{(\w+)(?::(\d+))?(?:\|([^}]+))?\}/g,
+    (_, key, maxLenRaw, fallbackRaw) => {
+      const maxLen = Number(maxLenRaw) || undefined;
+      const isRequiredSequence =
+        key === "sequenceNumber" && fallbackRaw === "required";
+
+      if (key === "sequenceNumber") {
+        if (isRequiredSequence || (fieldValues.isImage && isMultiImage))
+          return sequenceNumber;
+        return "";
+      }
+
+      if (key === "ad") return fieldValues.isAd ? "ad" : "";
+      if (key === "mediaType") return fieldValues.isImage ? "image" : "video";
+
+      if (
+        key === "tabName" &&
+        AppState.scrapperDetails.scrappingStage == "downloading"
+      ) {
+        const val =
+          toTitleCase(AppState.scrapperDetails.selectedTab || "") ||
+          fallbackRaw ||
+          "";
+        if (AppState.scrapperDetails.selectedTab == "collection") {
+          return `${val}s/${collectionName}`;
+        } else {
+          return val;
+        }
+      } else if (key === "tabName") {
+        return "";
+      }
+
+      // Normal value lookup
+      let val = fieldValues[key];
+
+      // Special fallback for authorUsername when tpl has {tabName} and fallback is :profile:
+      if (
+        key === "authorUsername" &&
+        fallbackRaw === ":profile:" &&
+        tplHasTabName &&
+        AppState.scrapperDetails.scrappingStage == "downloading"
+      ) {
+        val = getCurrentPageUsername() || val;
+      }
+
+      if (val == null || val === "") {
+        val = fallbackRaw ?? `missing-${key}`;
+      }
+      if (maxLen) val = val.slice(0, maxLen);
+      return val;
+    }
+  );
+};
+
+export const cleanupPath = (path) =>
+  path
+    // Remove known extensions from last segment
+    .replace(
+      /\/?([^/]+)\.(jpeg|jpg|png|gif|webp|mp4|mov|avi|mkv|webm|tiff|bmp|svg)$/i,
+      "/$1"
+    )
+    // Collapse multiple slashes
+    .replace(/\/+/g, "/")
+    // Collapse multiple dashes or underscores
+    .replace(/--+/g, "-")
+    .replace(/__+/g, "_")
+    // Reduce mixed dash/underscore groups
+    .replace(/[-_]+/g, (m) => m[0])
+    // Trim -/_ at start of each segment
+    .replace(/(^|\/)[-_]+/g, "$1")
+    // Trim -/_ at end of each segment
+    .replace(/[-_]+($|\/)/g, "$1")
+    // Remove leading/trailing slashes
+    .replace(/^\/+|\/+$/g, "");
 
 export function getSrcById(id) {
   try {
@@ -876,6 +913,7 @@ export function convertTikTokRawToMediaObject(tiktokRaw) {
 }
 
 export function buildVideoLinkMeta(media, index) {
+  if (!media) return;
   const hashtags =
     media?.textExtra?.map((tag) => tag?.hashtagName).filter(Boolean) || [];
   const subtitles =
@@ -905,7 +943,7 @@ export function buildVideoLinkMeta(media, index) {
     // Extras
     hashtags,
     createTime: media?.createTime
-      ? new Date(Number(media.createTime) * 1000).toISOString()
+      ? new Date(Number(media.createTime) * 1000)
       : "",
     imagePostImages: media?.imagePost?.images.map((it) =>
       it.imageURL.urlList?.at(0)
@@ -930,7 +968,7 @@ export function buildVideoLinkMeta(media, index) {
     shares: media?.stats?.shareCount,
     authorFollowers: media?.authorStats?.followerCount,
     authorLikesTotal: media?.authorStats?.heart,
-    downloadedAt: new Date().toISOString(),
+    downloadTime: null,
     isAd: media?.isAd, // High confidence when true, false can be misleading.
     downloaderHasLowConfidence: media?.downloaderHasLowConfidence ?? false,
   };
@@ -1141,11 +1179,16 @@ function uuid() {
 }
 
 function postBlobDownloadRequest({ id, blobUrl, filename, showFolderPicker }) {
+  console.error("File name", filename);
   window.postMessage(
     {
       type: "BLOB_DOWNLOAD_REQUEST",
       id,
-      payload: { blobUrl, filename, showFolderPicker: !!showFolderPicker },
+      payload: {
+        blobUrl,
+        filename: filename.replace(/[{}]/g, ""),
+        showFolderPicker: !!showFolderPicker,
+      },
     },
     "*"
   );
@@ -1259,6 +1302,7 @@ export async function downloadURLToDisk(url, filename, options = {}) {
         throw e;
       }
     } catch (err) {
+      console.error(err);
       setActive(false);
       if (AppState?.debug?.active)
         console.warn(
@@ -3088,10 +3132,10 @@ export function getTierHypeMessageDownloads({ emoji, name, min }) {
 
 export function showShareOptions(options = {}) {
   const data = {
-    url:  "https://chromewebstore.google.com/detail/fclobfmgolhdcfcmpbjahiiifilhamcg?utm_source=tiktok-ext",
+    url: "https://chromewebstore.google.com/detail/fclobfmgolhdcfcmpbjahiiifilhamcg?utm_source=tiktok-ext",
     title: "Dude, you have to check out this TikTok downloader...",
-    text: "Simply beautiful!"
-  }
+    text: "Simply beautiful!",
+  };
 
   const contentWrapper = document.createElement("div");
   contentWrapper.className = "ettpd-share-content";

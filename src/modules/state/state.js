@@ -75,7 +75,8 @@ function getBooleanFromStorage(key, fallback = false) {
 
 function getStringOrNull(key) {
   try {
-    return localStorage.getItem(key) || null;
+    const result = localStorage.getItem(key);
+    return result == "null" ? null : result;
   } catch (e) {
     console.warn(`Failed to read string from localStorage for key ${key}:`, e);
     return null;
@@ -139,7 +140,10 @@ const AppState = {
   },
   ui: {
     downloaderPositionType:
-      getStringOrNull(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE) || "bottom-right",
+      getStringOrNull(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE) == "custom" &&
+      getStringOrNull(STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION)
+        ? "custom"
+        : "bottom-right",
     live_ETTPD_CUSTOM_POS: getStringOrNull(
       STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION
     ),

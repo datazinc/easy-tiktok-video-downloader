@@ -56,9 +56,11 @@ export const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS = [
   {
     label: "🟢 Recommended (@folder, all core info)",
     template:
-      "@/@{authorUsername|:profile:}/{tabName}/{ad}-{authorUsername|no-author}-{videoId|no-id}-{sequenceNumber}-{desc:30|-}.mp4",
-    example: DOWNLOAD_FOLDER_DEFAULT + "/@coolguy/Liked/coolguy-739462775-1.mp4",
-    isRecommended: true
+      "@/@{authorUsername|:profile:}/{tabName}/{ad}-{authorUsername|no-author}-{createTime|-}-{sequenceNumber}-{desc:50|-}-{videoId|no-id}.mp4",
+    example:
+      DOWNLOAD_FOLDER_DEFAULT +
+      "/@coolguy/Liked/@coolguy-2025-08-14_0110-1-BEST-BELIEVE-me-this-dude-cooked-739462775.mp4",
+    isRecommended: true,
   },
   {
     label: "📁 Video Flat by Author",
@@ -74,8 +76,8 @@ export const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS = [
   {
     label: "🧠 Descriptive (limit desc)",
     template:
-      "desc_clips/{authorUsername|unknown}/{videoId|no-id}-{desc:30|no-desc}.mp4",
-    example: "desc_clips/coolguy/739462775-My-best-clip-ever.mp4",
+      "desc_clips/{authorUsername|unknown}/{desc:255|no-desc}-{videoId|no-id}.mp4",
+    example: "desc_clips/coolguy/My-best-clip-ever-739462775.mp4",
   },
   {
     label: "📢 Hashtags Folder (Weird ahh)",
@@ -85,21 +87,22 @@ export const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS = [
   {
     label: "🎶 Music by Artist",
     template:
-      "music/{musicAuthor|unknown}/{videoId|no-id}-{authorUsername|no-author}.mp4",
-    example: "music/DJFlow/739462775-coolguy.mp4",
+      "music/{musicAuthor|unknown}/{authorUsername|no-author}-{videoId|no-id}.mp4",
+    example: "music/DJFlow/coolguy-739462775.mp4",
   },
   {
     label: "🎛️ Creative Combo",
     template:
-      "mix/{musicTitle|untitled}/{authorUsername|unknown}-{videoId|no-id}-{desc:20|no-desc}-{sequenceNumber}.mp4",
-    example: "mix/Chill-Vibes/coolguy-739462775-Fun-tiktok-clip-1.mp4",
+      "mix/{musicTitle|untitled}/{authorUsername|unknown}-{desc:20|no-desc}-{sequenceNumber}-{videoId|no-id}.mp4",
+    example: "mix/Chill-Vibes/coolguy-Fun-tiktok-clip-1-739462775.mp4",
   },
   {
     isDefault: true,
     label: "📦 Legacy Flat Format",
     template:
-      "{ad}-@{authorUsername|user}-{tabName}-{videoId|no-id}-{desc}-{sequenceNumber|required}.mp4",
-    example: "ad-@coolguy-Videos-739462775-1.mp4",
+      "{ad}-@{authorUsername|user}-{tabName}-{createTime|-}-{desc|-}-{videoId|no-id}-{sequenceNumber}.mp4",
+    example:
+      "ad-@coolguy-Videos-2025-08-14_0110-You-cant-make-up-this-sht-739462775-1.mp4",
   },
 ];
 

@@ -39,6 +39,9 @@ import {
   shouldShowRatePopupLegacy,
   getRecommendedPresetTemplate,
   showShareOptions,
+  buildVideoLinkMeta,
+  cleanupPath,
+  applyTemplate,
 } from "../utils/utils.js";
 import { startAutoSwipeLoop } from "../polling/polling.js";
 
@@ -895,14 +898,30 @@ export function updateDownloaderList(items, hashToDisplay) {
 
         downloadBtnHolder.appendChild(imageList);
       } else {
-        // Fallback for single video or non-image content
-        const viewBtn = document.createElement("button");
-        viewBtn.textContent = "Open";
-        viewBtn.className = "ettpd-download-btn ettpd-view-btn";
+        // Single video or non-image content
+        const tiktokBtnContainer = document.createElement("div");
+        tiktokBtnContainer.className = "ettpd-download-btn ettpd-tiktok-btn";
+        tiktokBtnContainer.title = "Open on TikTok";
+        const tiktokBtn = document.createElement("span");
+
+        tiktokBtn.onclick = (e) => {
+          e.stopPropagation();
+          if (media?.videoId && media?.authorId)
+            window.open(
+              `https://tiktok.com/@${media.authorId}/video/${media.videoId}`,
+              "_blank"
+            );
+        };
+        tiktokBtnContainer.appendChild(tiktokBtn);
+        const viewBtnContainer = document.createElement("div");
+        viewBtnContainer.className = "ettpd-download-btn ettpd-view-btn";
+        viewBtnContainer.title = "Open Direct Link";
+        const viewBtn = document.createElement("span");
         viewBtn.onclick = (e) => {
           e.stopPropagation();
           if (media?.url) window.open(media.url, "_blank");
         };
+        viewBtnContainer.appendChild(viewBtn);
 
         const downloadBtn = document.createElement("button");
         downloadBtn.textContent = "Download";
@@ -947,7 +966,7 @@ export function updateDownloaderList(items, hashToDisplay) {
 
         const holderEl = document.createElement("div");
         holderEl.className = "ettpd-download-btns-container";
-        holderEl.append(viewBtn, downloadBtn);
+        holderEl.append(tiktokBtnContainer, viewBtnContainer, downloadBtn);
         downloadBtnHolder.append(holderEl);
       }
 
@@ -1573,6 +1592,7 @@ export function createFilenameTemplateModal() {
     "authorNickname",
     "desc",
     "createTime",
+    "downloadTime",
     "musicTitle",
     "musicAuthor",
     "views",
@@ -1744,7 +1764,8 @@ export function createFilenameTemplateModal() {
       authorUsername: "coolguy",
       authorNickname: "coolguy",
       desc: "My best post ever that should be trimmed",
-      createTime: "1690000000",
+      createTime: "2020-08-23_1201",
+      downloadTime: "2025-08-23_1201",
       musicTitle: "Chill Vibes",
       musicAuthor: "DJ Flow",
       views: "10234",
@@ -1780,7 +1801,7 @@ export function createFilenameTemplateModal() {
       desc: sanitize(
         sample.desc?.slice(0, isDescMaxLenDefined ? descMaxLen : 40)
       ),
-      createTime: sanitize(sample.createTime),
+      createTime: sample.createTime,
       musicTitle: sanitize(sample.musicTitle),
       musicAuthor: sanitize(sample.musicAuthor),
       views: sanitize(sample.views),
@@ -1788,49 +1809,16 @@ export function createFilenameTemplateModal() {
       hashtags: (sample.hashtags || [])
         .map((tag) => sanitize(tag.name || tag))
         .join("-"),
+      downloadTime: sample.downloadTime,
+      isAd: false,
+      isImage: false,
     };
 
-    const replaced = tpl.replace(
-      /\{(\w+)(?::(\d+))?(?:\|([^}]+))?\}/g,
-      (_, key, maxLenRaw, fallbackRaw) => {
-        const maxLen = Number(maxLenRaw) || undefined;
-        const fallback = fallbackRaw;
-        const isRequiredSequence =
-          key === "sequenceNumber" && fallback === "required";
-
-        if (key === "sequenceNumber") {
-          if (isRequiredSequence || (sample.isImage && isMultiImage)) {
-            return sequenceNumber;
-          }
-          return "";
-        }
-
-        if (key === "ad") return sample.isAd ? "ad" : "";
-        if (key === "mediaType") return sample.isImage ? "image" : "video";
-
-        let val = fieldValues[key];
-        if (val == null || val === "") {
-          val = fallback ?? `missing-${key}`;
-        }
-
-        val = sanitize(val);
-        if (maxLen) val = val.slice(0, maxLen);
-        return val;
-      }
-    );
-
-    let cleaned = replaced
-      .replace(
-        /\/?([^/]+)\.(jpeg|jpg|png|gif|webp|mp4|mov|avi|mkv|webm|tiff|bmp|svg)$/i,
-        "/$1"
-      )
-      .replace(/\/+/g, "/")
-      .replace(/--+/g, "-")
-      .replace(/__+/g, "_")
-      .replace(/[-_]+/g, (m) => m[0])
-      .replace(/(^|\/)[-_]+/g, "$1")
-      .replace(/[-_]+($|\/)/g, "$1")
-      .replace(/^\/+|\/+$/g, "");
+    const replaced = applyTemplate(tpl, fieldValues, {
+      sequenceNumber,
+      isMultiImage,
+    });
+    let cleaned = cleanupPath(replaced);
 
     if (cleaned.startsWith("@/")) {
       cleaned = cleaned.replace("@", DOWNLOAD_FOLDER_DEFAULT);
@@ -2423,7 +2411,12 @@ function createDownloadButton({
     e.preventDefault();
     e.stopPropagation();
 
-    const src = getVideoSrc();
+    const media = buildVideoLinkMeta(AppState.allItemsEverSeen[videoId]) ?? {
+      videoId,
+      authorId: author,
+    };
+    const src = media?.url ?? getVideoSrc();
+
     console.log("IMAGES_DL ⏬ Clicked, source:", src);
     if (!src?.startsWith("http")) {
       if (AppState.debug.active) console.warn("IMAGES_DL ❌ Invalid source");
@@ -2436,15 +2429,9 @@ function createDownloadButton({
     try {
       await downloadURLToDisk(
         src,
-        getDownloadFilePath(
-          {
-            videoId,
-            authorId: author,
-          },
-          {
-            imageIndex: photoIndex,
-          }
-        )
+        getDownloadFilePath(media, {
+          imageIndex: photoIndex,
+        })
       );
       btn.textContent = "✅ Downloaded!";
       showCelebration(
