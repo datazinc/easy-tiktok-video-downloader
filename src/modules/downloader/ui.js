@@ -38,6 +38,10 @@ import {
   showAlertModal,
   shouldShowRatePopupLegacy,
   getRecommendedPresetTemplate,
+  showShareOptions,
+  buildVideoLinkMeta,
+  cleanupPath,
+  applyTemplate,
 } from "../utils/utils.js";
 import { startAutoSwipeLoop } from "../polling/polling.js";
 
@@ -49,7 +53,7 @@ export function createDownloaderWrapper() {
   const dragHandle = document.createElement("div");
   dragHandle.className = "ettpd-drag-handle";
   dragHandle.title = "Drag to move";
-  dragHandle.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" fill="#000000" height="20px" width="20px" version="1.1" id="Layer_1" viewBox="0 0 492.001 492.001" xml:space="preserve">
+  dragHandle.innerHTML = `<svg style="display: flex;align-items: center; justify-content: center;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" fill="#000000" height="22px" width="22px" version="1.1" id="Layer_1" viewBox="0 0 492.001 492.001" xml:space="preserve">
                           <g>
                             <g>
                               <path d="M487.97,237.06l-58.82-58.82c-5.224-5.228-14.376-5.228-19.592,0l-7.436,7.432c-5.4,5.4-5.4,14.064,0,19.46l21.872,21.74    H265.206V68.396l21.808,22.132c5.224,5.22,14.216,5.22,19.428,0l7.36-7.432c5.404-5.404,5.356-14.196-0.044-19.596L254.846,4.444    c-2.6-2.592-6.088-4.184-9.804-4.184h-0.404c-3.712,0-7.188,1.588-9.784,4.184l-57.688,57.772    c-2.612,2.608-4.052,6.124-4.052,9.836c0,3.704,1.44,7.208,4.052,9.816l7.432,7.444c5.224,5.22,14.612,5.228,19.828,0.004    l22.368-22.132v159.688H67.814l22.14-22.008c2.608-2.608,4.048-6.028,4.048-9.732s-1.44-7.16-4.052-9.76l-7.436-7.42    c-5.22-5.216-14.372-5.2-19.584,0.008L4.034,236.856c-2.672,2.672-4.1,6.244-4.032,9.92c-0.068,3.816,1.356,7.388,4.028,10.056    l57.68,57.692c5.224,5.22,14.38,5.22,19.596,0l7.44-7.44c2.604-2.6,4.044-6.084,4.044-9.788c0-3.716-1.44-7.232-4.044-9.836    l-22.14-22.172H226.79V425.32l-23.336-23.088c-5.212-5.22-14.488-5.22-19.7,0l-7.5,7.44c-2.604,2.6-4.072,6.084-4.072,9.792    c0,3.704,1.424,7.184,4.028,9.792l58.448,58.456c2.596,2.592,6.068,4.028,9.9,4.028c0.024-0.016,0.24,0,0.272,0    c3.712,0,7.192-1.432,9.792-4.028l58.828-58.832c2.6-2.604,4.044-6.088,4.044-9.792c0-3.712-1.44-7.192-4.044-9.796l-7.44-7.44    c-5.216-5.22-14.044-5.22-19.264,0l-21.54,21.868V265.284H425.59l-23.096,23.132c-2.612,2.608-4.048,6.112-4.048,9.82    s1.432,7.192,4.048,9.8l7.44,7.444c5.212,5.224,14.372,5.224,19.584,0l58.452-58.452c2.672-2.664,4.096-6.244,4.028-9.916    C492.07,243.296,490.642,239.728,487.97,237.06z"/>
@@ -79,12 +83,19 @@ export function createDownloaderWrapper() {
   leaderboardBtn.title = "View Leaderboard";
   leaderboardBtn.textContent = "📊";
   leaderboardBtn.onclick = showStatsPopUp;
+  leaderboardBtn.style.fontSize = "24px";
+
+  const shareBtn = document.createElement("div");
+  shareBtn.className = "ettpd-share-btn icon-share";
+  shareBtn.title = "Share Extension!";
+  shareBtn.onclick = showShareOptions;
 
   // Append all UI elements
   const controlBar = document.createElement("div");
   controlBar.className = "ettpd-handle-controls";
   controlBar.appendChild(cornerSelector);
   controlBar.appendChild(leaderboardBtn);
+  controlBar.appendChild(shareBtn);
   controlBar.appendChild(dragHandle);
   wrapper.appendChild(controlBar);
   if (!wrapper || !wrapper.style) return;
@@ -248,7 +259,7 @@ function explainerModal(tab) {
   <strong>@${getCurrentPageUsername()} <em>${tab}</em></strong>.
 </p>
 <blockquote class="black-text" style="margin-bottom: 10px;">
-  If you can't <strong>see</strong> the posts, you can't <strong>download</strong> them. Duh. 😤
+  If you can't <strong>see</strong> the posts, you can't <strong>download</strong> them. Duh. 😤. <br/> If a tab(likes, reposts, etc) is missing, first click on it or refresh :)
 </blockquote>
 <p class="alert">
   You can <strong>Pause</strong> anytime or smash <strong>Download Now</strong> to dive in instantly.
@@ -469,9 +480,9 @@ export function updateDownloadButtonLabelSimple() {
     downloadAllBtn.disabled = true;
   } else if (isDownloading) {
     if (done < total) {
-      downloadAllBtn.textContent = `⏳ Downloading ${
-        done
-      } of ${total} Post${total !== 1 ? "s" : ""}…`;
+      downloadAllBtn.textContent = `⏳ Downloading ${done} of ${total} Post${
+        total !== 1 ? "s" : ""
+      }…`;
       downloadAllBtn.disabled = true;
     } else {
       downloadAllBtn.textContent = `✅ Downloaded all ${total} Post${
@@ -638,8 +649,8 @@ export function createControlButtons(preferencesBox) {
   // --- User Posts Button ---
   const userPostsBtn = document.createElement("button");
   userPostsBtn.className = "ettpd-settings-toggle";
-  userPostsBtn.textContent = "🥵 Scrapper";
-  userPostsBtn.title = "Download likes, reposts, and favorites";
+  userPostsBtn.textContent = "🥹 Scrapper";
+  userPostsBtn.title = "Download/Archive likes, reposts, favorites or collections";
   userPostsBtn.style.flex = "1";
 
   container.appendChild(settingsBtn);
@@ -748,7 +759,7 @@ export function updateDownloaderList(items, hashToDisplay) {
       if (currentVideoId && currentVideoId === media?.videoId) {
         const liveEmoji = document.createElement("span");
         liveEmoji.textContent = "▶️";
-        liveEmoji.title = "Currently viewed video";
+        liveEmoji.title = "Currently playing video";
         liveEmoji.className = "ettpd-emoji";
         authorWrapper.appendChild(liveEmoji);
       }
@@ -811,15 +822,33 @@ export function updateDownloaderList(items, hashToDisplay) {
       if (media.isImage && Array.isArray(media.imagePostImages)) {
         // Create the download-all button container
 
+        const downloadAllBtnContainer = document.createElement("div");
+        downloadAllBtnContainer.className =
+          "ettpd-images-download-all-container";
         const downloadAllBtn = document.createElement("button");
+        const tiktokBtnContainer = document.createElement("div");
+        tiktokBtnContainer.className =
+                  "ettpd-download-btn ettpd-tiktok-btn";
+        tiktokBtnContainer.title = "Open on TikTok";
+        tiktokBtnContainer.onclick = (e) => {
+            e.stopPropagation();
+            if (media?.videoId && media?.authorId)
+              window.open(
+                `https://tiktok.com/@${media.authorId}/photo/${media.videoId}`,
+                "_blank"
+              );
+          };
+        const tiktokBtn = document.createElement("span");
+        tiktokBtnContainer.appendChild(tiktokBtn);
+        downloadAllBtnContainer.appendChild(tiktokBtnContainer);
         downloadAllBtn.textContent = "⬇️ Download All Images";
         downloadAllBtn.className = "ettpd-download-btn";
         downloadAllBtn.style.marginBottom = "10px";
         downloadAllBtn.style.marginTop = "5px";
 
         downloadAllBtn.onclick = (e) => downloadAllPostImagesHandler(e, media);
-        downloadBtnHolder.appendChild(downloadAllBtn);
-
+        downloadAllBtnContainer.appendChild(downloadAllBtn);
+        downloadBtnHolder.appendChild(downloadAllBtnContainer);
         // Then render the image list after
         const imageList = document.createElement("ol");
         imageList.className = "ettpd-image-download-list";
@@ -830,12 +859,13 @@ export function updateDownloaderList(items, hashToDisplay) {
 
           // Open button
           const openBtn = document.createElement("button");
-          openBtn.textContent = "Open";
+          const openBtnSpan = document.createElement("span");
           openBtn.className = "ettpd-download-btn ettpd-view-btn";
           openBtn.onclick = (e) => {
             e.stopPropagation();
             if (url) window.open(url, "_blank");
           };
+          openBtn.appendChild(openBtnSpan);
 
           // Download button
           const downloadBtn = document.createElement("button");
@@ -887,14 +917,30 @@ export function updateDownloaderList(items, hashToDisplay) {
 
         downloadBtnHolder.appendChild(imageList);
       } else {
-        // Fallback for single video or non-image content
-        const viewBtn = document.createElement("button");
-        viewBtn.textContent = "Open";
-        viewBtn.className = "ettpd-download-btn ettpd-view-btn";
+        // Single video or non-image content
+        const tiktokBtnContainer = document.createElement("div");
+        tiktokBtnContainer.className = "ettpd-download-btn ettpd-tiktok-btn";
+        tiktokBtnContainer.title = "Open on TikTok";
+        const tiktokBtn = document.createElement("span");
+
+        tiktokBtn.onclick = (e) => {
+          e.stopPropagation();
+          if (media?.videoId && media?.authorId)
+            window.open(
+              `https://tiktok.com/@${media.authorId}/video/${media.videoId}`,
+              "_blank"
+            );
+        };
+        tiktokBtnContainer.appendChild(tiktokBtn);
+        const viewBtnContainer = document.createElement("div");
+        viewBtnContainer.className = "ettpd-download-btn ettpd-view-btn";
+        viewBtnContainer.title = "Open Direct Link";
+        const viewBtn = document.createElement("span");
         viewBtn.onclick = (e) => {
           e.stopPropagation();
           if (media?.url) window.open(media.url, "_blank");
         };
+        viewBtnContainer.appendChild(viewBtn);
 
         const downloadBtn = document.createElement("button");
         downloadBtn.textContent = "Download";
@@ -939,7 +985,7 @@ export function updateDownloaderList(items, hashToDisplay) {
 
         const holderEl = document.createElement("div");
         holderEl.className = "ettpd-download-btns-container";
-        holderEl.append(viewBtn, downloadBtn);
+        holderEl.append(tiktokBtnContainer, viewBtnContainer, downloadBtn);
         downloadBtnHolder.append(holderEl);
       }
 
@@ -1268,7 +1314,7 @@ export function showStatsPopUp() {
         tabKey === "downloads" ? "downloaded" : "been recommended"
       } <strong title="${totalCount.toLocaleString()}">${formatCompactNumberWithTooltip(
       totalCount
-    )}</strong> items. Level: ${tierLabel}
+    )}</strong> posts. Level: ${tierLabel}
     </div>
     ${
       sameCount
@@ -1565,6 +1611,7 @@ export function createFilenameTemplateModal() {
     "authorNickname",
     "desc",
     "createTime",
+    "downloadTime",
     "musicTitle",
     "musicAuthor",
     "views",
@@ -1736,7 +1783,8 @@ export function createFilenameTemplateModal() {
       authorUsername: "coolguy",
       authorNickname: "coolguy",
       desc: "My best post ever that should be trimmed",
-      createTime: "1690000000",
+      createTime: "2020-08-23_1201",
+      downloadTime: "2025-08-23_1201",
       musicTitle: "Chill Vibes",
       musicAuthor: "DJ Flow",
       views: "10234",
@@ -1772,7 +1820,7 @@ export function createFilenameTemplateModal() {
       desc: sanitize(
         sample.desc?.slice(0, isDescMaxLenDefined ? descMaxLen : 40)
       ),
-      createTime: sanitize(sample.createTime),
+      createTime: sample.createTime,
       musicTitle: sanitize(sample.musicTitle),
       musicAuthor: sanitize(sample.musicAuthor),
       views: sanitize(sample.views),
@@ -1780,49 +1828,16 @@ export function createFilenameTemplateModal() {
       hashtags: (sample.hashtags || [])
         .map((tag) => sanitize(tag.name || tag))
         .join("-"),
+      downloadTime: sample.downloadTime,
+      isAd: false,
+      isImage: false,
     };
 
-    const replaced = tpl.replace(
-      /\{(\w+)(?::(\d+))?(?:\|([^}]+))?\}/g,
-      (_, key, maxLenRaw, fallbackRaw) => {
-        const maxLen = Number(maxLenRaw) || undefined;
-        const fallback = fallbackRaw;
-        const isRequiredSequence =
-          key === "sequenceNumber" && fallback === "required";
-
-        if (key === "sequenceNumber") {
-          if (isRequiredSequence || (sample.isImage && isMultiImage)) {
-            return sequenceNumber;
-          }
-          return "";
-        }
-
-        if (key === "ad") return sample.isAd ? "ad" : "";
-        if (key === "mediaType") return sample.isImage ? "image" : "video";
-
-        let val = fieldValues[key];
-        if (val == null || val === "") {
-          val = fallback ?? `missing-${key}`;
-        }
-
-        val = sanitize(val);
-        if (maxLen) val = val.slice(0, maxLen);
-        return val;
-      }
-    );
-
-    let cleaned = replaced
-      .replace(
-        /\/?([^/]+)\.(jpeg|jpg|png|gif|webp|mp4|mov|avi|mkv|webm|tiff|bmp|svg)$/i,
-        "/$1"
-      )
-      .replace(/\/+/g, "/")
-      .replace(/--+/g, "-")
-      .replace(/__+/g, "_")
-      .replace(/[-_]+/g, (m) => m[0])
-      .replace(/(^|\/)[-_]+/g, "$1")
-      .replace(/[-_]+($|\/)/g, "$1")
-      .replace(/^\/+|\/+$/g, "");
+    const replaced = applyTemplate(tpl, fieldValues, {
+      sequenceNumber,
+      isMultiImage,
+    });
+    let cleaned = cleanupPath(replaced);
 
     if (cleaned.startsWith("@/")) {
       cleaned = cleaned.replace("@", DOWNLOAD_FOLDER_DEFAULT);
@@ -2122,7 +2137,8 @@ export function createPreferencesBox() {
       AppState.downloadPreferences.skipAds =
         !AppState.downloadPreferences.skipAds;
     },
-    AppState.downloadPreferences.skipAds
+    AppState.downloadPreferences.skipAds,
+    "Will not download ads, buy you will still see ads."
   );
   const includeCSVFile = createCheckbox(
     "Include CSV File",
@@ -2132,6 +2148,20 @@ export function createPreferencesBox() {
         !AppState.downloadPreferences.includeCSV;
     },
     AppState.downloadPreferences.includeCSV
+  );
+
+  const disableConfetti = createCheckbox(
+    "Hide Confetti 🎉",
+    "disableConfetti",
+    () => {
+      AppState.downloadPreferences.disableConfetti =
+        !AppState.downloadPreferences.disableConfetti;
+      localStorage.setItem(
+        STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI,
+        AppState.downloadPreferences.disableConfetti
+      );
+    },
+    AppState.downloadPreferences.disableConfetti
   );
 
   const autoScrollSettingUI = createScrollModeSelector();
@@ -2161,7 +2191,8 @@ export function createPreferencesBox() {
     label,
     stateKey,
     customHandler = null,
-    defaultValue = false
+    defaultValue = false,
+    title = ""
   ) {
     const container = document.createElement("label");
     container.className = "ettpd-checkbox-container";
@@ -2182,6 +2213,7 @@ export function createPreferencesBox() {
 
     const span = document.createElement("span");
     span.textContent = label;
+    span.title = title;
     container.appendChild(checkbox);
     container.appendChild(span);
     return container;
@@ -2243,6 +2275,7 @@ export function createPreferencesBox() {
     skipFailedCheckbox,
     skipAdsCheckbox,
     includeCSVFile,
+    disableConfetti,
     autoScrollSettingUI,
     prefLabel,
     templateEditorBtn,
@@ -2415,7 +2448,12 @@ function createDownloadButton({
     e.preventDefault();
     e.stopPropagation();
 
-    const src = getVideoSrc();
+    const media = buildVideoLinkMeta(AppState.allItemsEverSeen[videoId]) ?? {
+      videoId,
+      authorId: author,
+    };
+    const src = media?.url ?? getVideoSrc();
+
     console.log("IMAGES_DL ⏬ Clicked, source:", src);
     if (!src?.startsWith("http")) {
       if (AppState.debug.active) console.warn("IMAGES_DL ❌ Invalid source");
@@ -2428,15 +2466,9 @@ function createDownloadButton({
     try {
       await downloadURLToDisk(
         src,
-        getDownloadFilePath(
-          {
-            videoId,
-            authorId: author,
-          },
-          {
-            imageIndex: photoIndex,
-          }
-        )
+        getDownloadFilePath(media, {
+          imageIndex: photoIndex,
+        })
       );
       btn.textContent = "✅ Downloaded!";
       showCelebration(
