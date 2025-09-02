@@ -28,6 +28,7 @@ import {
   showAlertModal,
   findFiberItemById,
   getClosestPlayingVideoId,
+  makeOverlay,
 } from "../utils/utils.js";
 import { DOM_IDS, STORAGE_KEYS } from "../state/constants.js";
 (function patchHistory() {
@@ -172,10 +173,11 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
       AppState.scrapperDetails.scrappingStage == "initiated" &&
       !AppState.scrapperDetails.locked // Avoids pre-mature celebration. i.e, before the refresh. Refresh resets the value to false.
     ) {
-      showCelebration(
-        "tier",
-        "🔥 Scraping in progress — sit back and watch the magic!"
-      );
+      const message = "🔥 Scraping in progress — sit back and watch the magic!";
+
+      AppState.downloadPreferences.disableConfetti
+        ? makeOverlay(message)
+        : showCelebration("tier", message);
       AppState.scrapperDetails.scrappingStage = "ongoing";
       AppState.ui.isScrapperBoxOpen = true;
       localStorage.setItem(

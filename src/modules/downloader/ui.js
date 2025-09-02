@@ -259,7 +259,7 @@ function explainerModal(tab) {
   <strong>@${getCurrentPageUsername()} <em>${tab}</em></strong>.
 </p>
 <blockquote class="black-text" style="margin-bottom: 10px;">
-  If you can't <strong>see</strong> the posts, you can't <strong>download</strong> them. Duh. 😤
+  If you can't <strong>see</strong> the posts, you can't <strong>download</strong> them. Duh. 😤. <br/> If a tab(likes, reposts, etc) is missing, first click on it or refresh :)
 </blockquote>
 <p class="alert">
   You can <strong>Pause</strong> anytime or smash <strong>Download Now</strong> to dive in instantly.
@@ -649,8 +649,8 @@ export function createControlButtons(preferencesBox) {
   // --- User Posts Button ---
   const userPostsBtn = document.createElement("button");
   userPostsBtn.className = "ettpd-settings-toggle";
-  userPostsBtn.textContent = "🥵 Scrapper";
-  userPostsBtn.title = "Download likes, reposts, and favorites";
+  userPostsBtn.textContent = "🥹 Scrapper";
+  userPostsBtn.title = "Download/Archive likes, reposts, favorites or collections";
   userPostsBtn.style.flex = "1";
 
   container.appendChild(settingsBtn);
@@ -759,7 +759,7 @@ export function updateDownloaderList(items, hashToDisplay) {
       if (currentVideoId && currentVideoId === media?.videoId) {
         const liveEmoji = document.createElement("span");
         liveEmoji.textContent = "▶️";
-        liveEmoji.title = "Currently viewed video";
+        liveEmoji.title = "Currently playing video";
         liveEmoji.className = "ettpd-emoji";
         authorWrapper.appendChild(liveEmoji);
       }
@@ -822,15 +822,33 @@ export function updateDownloaderList(items, hashToDisplay) {
       if (media.isImage && Array.isArray(media.imagePostImages)) {
         // Create the download-all button container
 
+        const downloadAllBtnContainer = document.createElement("div");
+        downloadAllBtnContainer.className =
+          "ettpd-images-download-all-container";
         const downloadAllBtn = document.createElement("button");
+        const tiktokBtnContainer = document.createElement("div");
+        tiktokBtnContainer.className =
+                  "ettpd-download-btn ettpd-tiktok-btn";
+        tiktokBtnContainer.title = "Open on TikTok";
+        tiktokBtnContainer.onclick = (e) => {
+            e.stopPropagation();
+            if (media?.videoId && media?.authorId)
+              window.open(
+                `https://tiktok.com/@${media.authorId}/photo/${media.videoId}`,
+                "_blank"
+              );
+          };
+        const tiktokBtn = document.createElement("span");
+        tiktokBtnContainer.appendChild(tiktokBtn);
+        downloadAllBtnContainer.appendChild(tiktokBtnContainer);
         downloadAllBtn.textContent = "⬇️ Download All Images";
         downloadAllBtn.className = "ettpd-download-btn";
         downloadAllBtn.style.marginBottom = "10px";
         downloadAllBtn.style.marginTop = "5px";
 
         downloadAllBtn.onclick = (e) => downloadAllPostImagesHandler(e, media);
-        downloadBtnHolder.appendChild(downloadAllBtn);
-
+        downloadAllBtnContainer.appendChild(downloadAllBtn);
+        downloadBtnHolder.appendChild(downloadAllBtnContainer);
         // Then render the image list after
         const imageList = document.createElement("ol");
         imageList.className = "ettpd-image-download-list";
@@ -841,12 +859,13 @@ export function updateDownloaderList(items, hashToDisplay) {
 
           // Open button
           const openBtn = document.createElement("button");
-          openBtn.textContent = "Open";
+          const openBtnSpan = document.createElement("span");
           openBtn.className = "ettpd-download-btn ettpd-view-btn";
           openBtn.onclick = (e) => {
             e.stopPropagation();
             if (url) window.open(url, "_blank");
           };
+          openBtn.appendChild(openBtnSpan);
 
           // Download button
           const downloadBtn = document.createElement("button");
@@ -2118,7 +2137,8 @@ export function createPreferencesBox() {
       AppState.downloadPreferences.skipAds =
         !AppState.downloadPreferences.skipAds;
     },
-    AppState.downloadPreferences.skipAds
+    AppState.downloadPreferences.skipAds,
+    "Will not download ads, buy you will still see ads."
   );
   const includeCSVFile = createCheckbox(
     "Include CSV File",
@@ -2128,6 +2148,20 @@ export function createPreferencesBox() {
         !AppState.downloadPreferences.includeCSV;
     },
     AppState.downloadPreferences.includeCSV
+  );
+
+  const disableConfetti = createCheckbox(
+    "Hide Confetti 🎉",
+    "disableConfetti",
+    () => {
+      AppState.downloadPreferences.disableConfetti =
+        !AppState.downloadPreferences.disableConfetti;
+      localStorage.setItem(
+        STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI,
+        AppState.downloadPreferences.disableConfetti
+      );
+    },
+    AppState.downloadPreferences.disableConfetti
   );
 
   const autoScrollSettingUI = createScrollModeSelector();
@@ -2157,7 +2191,8 @@ export function createPreferencesBox() {
     label,
     stateKey,
     customHandler = null,
-    defaultValue = false
+    defaultValue = false,
+    title = ""
   ) {
     const container = document.createElement("label");
     container.className = "ettpd-checkbox-container";
@@ -2178,6 +2213,7 @@ export function createPreferencesBox() {
 
     const span = document.createElement("span");
     span.textContent = label;
+    span.title = title;
     container.appendChild(checkbox);
     container.appendChild(span);
     return container;
@@ -2239,6 +2275,7 @@ export function createPreferencesBox() {
     skipFailedCheckbox,
     skipAdsCheckbox,
     includeCSVFile,
+    disableConfetti,
     autoScrollSettingUI,
     prefLabel,
     templateEditorBtn,

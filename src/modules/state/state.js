@@ -171,6 +171,7 @@ const AppState = {
       FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault)
     ),
     showFolderPicker: getBooleanFromStorage(STORAGE_KEYS.SHOW_FOLDER_PICKER),
+    disableConfetti: getBooleanFromStorage(STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI),
   },
   rateDonate: safeParseRateDonateDates(
     localStorage.getItem(STORAGE_KEYS.RATE_DONATE_DATA),

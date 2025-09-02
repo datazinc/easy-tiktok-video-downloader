@@ -287,7 +287,7 @@ export function getDownloadFilePath(
       createTime: sanitize(
         media.createTime
           ? formattedDate(media.createTime)
-          : "missing-createTime"
+          : "-"
       ),
       downloadTime: formattedDate(new Date()),
       isImage: media.isImage,
@@ -1028,7 +1028,7 @@ export async function downloadAllPostImagesHandler(e, media) {
         setTimeout(() => {
           downloadAllBtn.textContent = originalText;
           downloadAllBtn.disabled = false;
-
+          displayFoundUrls({ forced: true });
           resolve();
         }, 3000);
       } else {
@@ -2177,8 +2177,8 @@ export function getUserDownloadsCurrentTier(totalCount) {
     [...DOWNLOAD_TIER_THRESHOLDS]
       .reverse()
       .find((t) => totalCount >= t.min) || {
-      name: "Noob 🫠",
-      emoji: "🍑",
+      name: "Novice 🫠",
+      emoji: "🌱",
       min: 0,
     }
   );
@@ -2189,8 +2189,8 @@ export function getUserRecommendationsCurrentTier(totalCount) {
     [...RECOMMENDATION_TIER_THRESHOLDS]
       .reverse()
       .find((t) => totalCount >= t.min) || {
-      name: "Noob 🫠",
-      emoji: "🍑",
+      name: "Apprentice 🫠",
+      emoji: "🐤",
       min: 0,
     }
   );
@@ -2234,7 +2234,7 @@ function getConfetti() {
   return _etvdConfetti;
 }
 
-function makeOverlay(message) {
+export function makeOverlay(message) {
   if (!message) return null;
   const overlay = document.createElement("div");
   overlay.className = "ettpd-celebration-overlay";
@@ -2247,6 +2247,7 @@ function makeOverlay(message) {
 
 // ---- your API ----
 export function showCelebration(type = "tier", message, count = 10) {
+  if (AppState.downloadPreferences.disableConfetti) return;
   const conf = getConfetti();
   if (!conf) return; // library not loaded
 
@@ -3142,7 +3143,7 @@ export function showShareOptions(options = {}) {
 
   const heading = document.createElement("div");
   heading.className = "ettpd-share-heading";
-  heading.textContent = "Share";
+  heading.textContent = "Share Extension 😃";
   contentWrapper.appendChild(heading);
 
   const list = document.createElement("ul");

@@ -3,6 +3,7 @@ export const STORAGE_KEYS = {
   // === 📦 User Preferences & UI State
   IS_DOWNLOADER_CLOSED: "tik.tok::isDownloaderClosed",
   SHOW_FOLDER_PICKER: "tik.tok::showFolderPicker",
+  DISABLE_CELEBRATION_CONFETTI: "tik.tok::disableCelebrationConfetti",
   DOWNLOAD_FOLDER: "tik.tok::downloadFolder",
   FULL_PATH_TEMPLATES: "tik.tok::fullPathTemplates",
   SELECTED_FULL_PATH_TEMPLATE: "tik.tok::selectedFullPathTemplate",

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Easy TikTok Video Downloader (Remove Watermark)",
-  "version": "4.0.3",
-  "description": "Download any TikTok — yours, liked, reposts, favorites, collections, feeds & more — no watermark. If you see it, you can save it!",
+  "version": "4.0.4",
+  "description": "Save TikToks in bulk — your videos, likes, reposts, favorites, collections & feeds — no watermark.",
   "host_permissions": [
     "*://*.tiktok.com/*"
   ],
@@ -18,7 +18,7 @@
       "matches": [
         "*://*.tiktok.com/*"
       ],
-      "js": [ 
+      "js": [
         "js/content.bundle.js"
       ],
       "run_at": "document_start"
@@ -26,7 +26,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": [ 
+      "resources": [
         "js/confetti.browser.min.js",
         "js/content.bundle.js",
         "js/injex.js",
