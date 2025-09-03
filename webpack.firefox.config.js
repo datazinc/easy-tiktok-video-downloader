@@ -10,7 +10,7 @@ module.exports = (_env, argv) => {
     mode: isProd ? "production" : "development",
     entry: {
       background: "./src/background/background.js",
-      popup: "./src/popup/main.js",
+      popup: "./src/popup/popup.js",
       index: "./src/index.js", // -> js/injex.js
       content: "./src/content/content.js",
     },

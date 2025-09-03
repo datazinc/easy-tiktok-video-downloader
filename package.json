@@ -8,9 +8,9 @@
   "private": true,
   "scripts": {
     "build": "rm -rf dist && webpack --config webpack.config.js --watch && du -sh dist",
-    "buildff": "rm -rf distff && webpack --config webpack.firefox.config.js --watch && du -sh distff", 
-    "build:prod": "rm -rf dist && webpack --mode production --config webpack.config.js && du -sh dist",
-    "buildff:prod": "rm -rf distff && webpack --mode production --config webpack.firefox.config.js && du -sh distff",
+    "buildff": "rm -rf distff && webpack --config webpack.firefox.config.js && du -sh distff && (cd distff && zip -r ../distff.zip . -x '__MACOSX/*' -x '.*') && mv distff.zip distff/",
+    "build:prod": "rm -rf dist && webpack --mode production --config webpack.config.js && du -sh dist && (cd dist && zip -r ../dist.zip . -x '__MACOSX/*' -x '.*') && mv dist.zip dist/",
+    "buildff:prod": "rm -rf distff && webpack --mode production --config webpack.firefox.config.js && du -sh distff && (cd distff && zip -r ../distff.zip . -x '__MACOSX/*' -x '.*') && mv distff.zip distff/",
     "analyze": "webpack --config webpack.config.js --env analyze",
     "clean": "rm -rf dist",
     "cc": "webpack --mode production"

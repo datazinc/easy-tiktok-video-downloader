@@ -1,7 +1,29 @@
 // content.js
-(function () {
+(() => {
   const DEBUG = () => globalThis?.AppStateETTVD?.debug?.active ?? false;
 
+  // -------- Browser detection (API-first, UA fallback) --------
+  function detectBrowserUA() {
+    const ua = navigator.userAgent || "";
+    if (/firefox/i.test(ua)) return "firefox";
+    if (/chrome|chromium|crios/i.test(ua) && !/edge|edg|opr|opera/i.test(ua))
+      return "chrome";
+    return "unknown";
+  }
+  function detectBrowser() {
+    // Prefer API presence in extension contexts
+    if (
+      typeof browser !== "undefined" &&
+      typeof browser.runtime !== "undefined"
+    )
+      return "firefox";
+    if (typeof chrome !== "undefined" && typeof chrome.runtime !== "undefined")
+      return "chrome";
+    // Fallback to UA (useful in page-like contexts)
+    return detectBrowserUA();
+  }
+
+  // -------- Utilities --------
   function respondOnce(id) {
     let sent = false;
     return (payload) => {
@@ -13,7 +35,6 @@
           "*"
         );
       } catch (e) {
-        // last-ditch best effort
         try {
           window.postMessage(
             {
@@ -30,6 +51,43 @@
     };
   }
 
+  function sendMessage(action, payload) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ action, payload }, (response) => {
+          const lastErr = chrome.runtime.lastError;
+          if (lastErr) {
+            resolve({ __transportError: lastErr.message });
+            return;
+          }
+          resolve(response);
+        });
+      } catch (e) {
+        resolve({ __transportError: e?.message || String(e) });
+      }
+    });
+  }
+
+  function fetchBlobAsArrayBuffer(blobUrl) {
+    return fetch(blobUrl).then((r) => {
+      if (!r.ok) throw new Error(`Fetch failed with status ${r.status}`);
+      return r.arrayBuffer();
+    });
+  }
+
+  function shouldFallbackFromBlobResp(resp) {
+    const msg = (resp?.error || resp?.__transportError || "").toLowerCase();
+    // Firefox error surface; also catch Chrome oddities
+    return (
+      /access denied/.test(msg) ||
+      /type error/.test(msg) ||
+      /blob:/.test(msg) ||
+      /invalid url/i.test(msg) ||
+      /error processing url/i.test(msg)
+    );
+  }
+
+  // -------- Main bridge: page -> content -> background --------
   window.addEventListener("message", (event) => {
     // Only accept messages from the page itself
     if (event.source !== window) return;
@@ -37,7 +95,7 @@
     const data = event.data;
     if (!data || data.type !== "BLOB_DOWNLOAD_REQUEST") return;
 
-    const { id, payload } = data;
+    const { id, payload } = data || {};
     const reply = respondOnce(id);
 
     // 25s watchdog to avoid hangs if bg never answers
@@ -49,42 +107,157 @@
       });
     }, 25000);
 
-    try {
-      chrome.runtime.sendMessage(
-        { action: "downloadBlobUrl", payload },
-        (response) => {
-          clearTimeout(watchdog);
-          const lastErr = chrome.runtime.lastError;
-
-          if (lastErr) {
-            if (DEBUG())
-              console.warn("sendMessage lastError:", lastErr.message);
-            return reply({
-              success: false,
-              code: "ERR_RUNTIME_SENDMESSAGE",
-              error: lastErr.message,
-            });
-          }
-
-          if (!response || typeof response.success !== "boolean") {
-            return reply({
-              success: false,
-              code: "ERR_NO_RESPONSE",
-              error: "Background returned no/invalid response",
-            });
-          }
-
-          reply({
-            success: response.success,
-            code: response.code || (response.success ? "OK" : "ERR_BACKGROUND"),
-            error: response.error || null,
-            downloadId: response.downloadId,
-          });
-        }
-      );
-    } catch (e) {
+    const finish = (out) => {
       clearTimeout(watchdog);
-      reply({
+      reply(out);
+    };
+
+    try {
+      const browserName = detectBrowser();
+      const { blobUrl, filename, showFolderPicker } = payload || {};
+
+      // Validate minimal payload (we tolerate missing blobUrl if future modes appear)
+      if (typeof filename !== "string" || !filename.trim()) {
+        finish({
+          success: false,
+          code: "ERR_INVALID_FILENAME",
+          error: "A non-empty filename string is required.",
+        });
+        return;
+      }
+
+      // --- FIREFOX: always go ArrayBuffer -> background ---
+      if (browserName === "firefox") {
+        if (typeof blobUrl !== "string" || !blobUrl.startsWith("blob:")) {
+          finish({
+            success: false,
+            code: "ERR_INVALID_BLOB_URL",
+            error: "Invalid blob URL. Expected a 'blob:' URL string.",
+          });
+          return;
+        }
+
+        fetchBlobAsArrayBuffer(blobUrl)
+          .then((buffer) =>
+            sendMessage("downloadArrayBuffer", {
+              buffer,
+              filename,
+              showFolderPicker,
+            })
+          )
+          .then((resp) => {
+            if (!resp || typeof resp.success !== "boolean") {
+              finish({
+                success: false,
+                code: "ERR_NO_RESPONSE",
+                error:
+                  resp?.__transportError ||
+                  "Background returned no/invalid response",
+              });
+              return;
+            }
+            finish({
+              success: resp.success,
+              code: resp.code || (resp.success ? "OK" : "ERR_BACKGROUND"),
+              error: resp.error || null,
+              downloadId: resp.downloadId,
+            });
+          })
+          .catch((e) => {
+            finish({
+              success: false,
+              code: "ERR_FETCH_BLOB",
+              error: e?.message || String(e),
+            });
+          });
+
+        return;
+      }
+
+      // --- CHROME (and others): try blob URL first, then fallback to ArrayBuffer on failure ---
+      if (typeof blobUrl === "string" && blobUrl.startsWith("blob:")) {
+        // Attempt direct blob URL path
+        sendMessage("downloadBlobUrl", {
+          blobUrl,
+          filename,
+          showFolderPicker,
+        }).then((resp) => {
+          // Successful background response
+          if (resp && resp.success === true) {
+            finish({
+              success: true,
+              code: resp.code || "OK",
+              error: null,
+              downloadId: resp.downloadId,
+            });
+            return;
+          }
+
+          // Decide if we should fallback to ArrayBuffer route
+          const shouldFallback =
+            browserName !== "firefox" && // already handled above
+            shouldFallbackFromBlobResp(resp);
+
+          if (!shouldFallback) {
+            // return the error we got
+            finish({
+              success: false,
+              code: resp?.code || "ERR_BACKGROUND",
+              error:
+                resp?.error ||
+                resp?.__transportError ||
+                "Background returned no/invalid response",
+            });
+            return;
+          }
+
+          // Fallback: fetch blob content and send ArrayBuffer
+          fetchBlobAsArrayBuffer(blobUrl)
+            .then((buffer) =>
+              sendMessage("downloadArrayBuffer", {
+                buffer,
+                filename,
+                showFolderPicker,
+              })
+            )
+            .then((resp2) => {
+              if (!resp2 || typeof resp2.success !== "boolean") {
+                finish({
+                  success: false,
+                  code: "ERR_NO_RESPONSE",
+                  error:
+                    resp2?.__transportError ||
+                    "Background returned no/invalid response",
+                });
+                return;
+              }
+              finish({
+                success: resp2.success,
+                code: resp2.code || (resp2.success ? "OK" : "ERR_BACKGROUND"),
+                error: resp2.error || null,
+                downloadId: resp2.downloadId,
+              });
+            })
+            .catch((e) => {
+              finish({
+                success: false,
+                code: "ERR_FETCH_BLOB",
+                error: e?.message || String(e),
+              });
+            });
+        });
+
+        return;
+      }
+
+      // If we reach here, we have no usable blobUrl
+      finish({
+        success: false,
+        code: "ERR_INVALID_BLOB_URL",
+        error: "Invalid or missing blob URL.",
+      });
+    } catch (e) {
+      finish({
         success: false,
         code: "ERR_CONTENT_THROW",
         error: e?.message || String(e),
@@ -93,18 +266,11 @@
   });
 })();
 
-(function injectResources() {
+// ----------------- Resource Injection (unchanged, just scoped tidy) -----------------
+(() => {
   const resources = [
-    {
-      type: "script",
-      src: "js/confetti.browser.min.js",
-      isModule: true,
-    },
-    {
-      type: "script",
-      src: "js/injex.js",
-      isModule: true,
-    },
+    { type: "script", src: "js/confetti.browser.min.js", isModule: true },
+    { type: "script", src: "js/injex.js", isModule: true },
     { type: "link", href: "styles/injex.css" },
   ];
 
@@ -115,34 +281,30 @@
           href && src ? ", " : ""
         }${src ? `${type}[src="${chrome.runtime.getURL(src)}"]` : ""}`
       );
-      if (existing) return; // Skip if already injected
+      if (existing) return;
 
-      const element = document.createElement(type);
-      element.setAttribute("data-injected", "true"); // Mark as injected
+      const el = document.createElement(type);
+      el.setAttribute("data-injected", "true");
 
       if (type === "link") {
-        element.rel = "stylesheet";
-        if (href) {
-          element.href = chrome.runtime.getURL(href);
-        }
+        el.rel = "stylesheet";
+        if (href) el.href = chrome.runtime.getURL(href);
       } else if (type === "script") {
         if (src) {
-          element.src = chrome.runtime.getURL(src);
-          element.type = isModule ? "module" : "text/javascript";
+          el.src = chrome.runtime.getURL(src);
+          el.type = isModule ? "module" : "text/javascript";
         }
       }
-
-      (document.head || document.documentElement).appendChild(element);
+      (document.head || document.documentElement).appendChild(el);
     });
   };
 
   inject();
 
-  // Observe DOM changes only for specific cases
   const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
+    for (const m of mutations) {
       if (
-        Array.from(mutation.addedNodes).some(
+        Array.from(m.addedNodes).some(
           (node) => node.nodeType === 1 && node.tagName === "HEAD"
         )
       ) {

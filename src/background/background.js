@@ -1,7 +1,8 @@
+// background.js
 const AppStateETTVD = globalThis?.AppStateETTVD || { debug: { active: false } };
 if (globalThis) globalThis.AppStateETTVD = AppStateETTVD;
 
-const DEBUG = () => AppStateETTVD?.debug?.active;
+const DEBUG = () => !!(AppStateETTVD?.debug?.active);
 
 function sendOnceFactory(sendResponse) {
   let sent = false;
@@ -11,144 +12,169 @@ function sendOnceFactory(sendResponse) {
     try {
       sendResponse(payload);
     } catch (e) {
-      // Last resort: nothing else we can do here
       console.warn("sendResponse failed:", e);
     }
   };
 }
 
 function makeError(code, message, extra = {}) {
-  return { success: false, code, message, ...extra };
+  // include both `error` and `message` for callers that expect either
+  return { success: false, code, error: message, message, ...extra };
+}
+
+// Optional: simple browser detector (useful for debug logs)
+function detectBrowser() {
+  if (typeof browser !== "undefined" && typeof browser.runtime !== "undefined") return "firefox";
+  if (typeof chrome !== "undefined" && typeof chrome.runtime !== "undefined") return "chrome";
+  return "unknown";
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.action !== "downloadBlobUrl") return; // not our message
-
+  const action = message?.action;
   const respond = sendOnceFactory(sendResponse);
-
-  // Keep the message channel open for async work
-  let cleanupTimerId = null;
   let watchdogId = null;
-  let blobUrlToRevoke = null;
 
-  const finish = (result) => {
-    // Revoke the blob URL shortly after responding (success or failure)
-    if (blobUrlToRevoke) {
-      cleanupTimerId = setTimeout(() => {
-        try {
-          if (typeof URL?.revokeObjectURL === "function") {
-            URL.revokeObjectURL(blobUrlToRevoke);
-          }
-        } catch (e) {
-          if (DEBUG()) console.warn("Failed to revoke blob URL:", e);
-        }
-      }, 1500);
-    }
+  if (DEBUG()) console.info("BACKGROUND onMessage:", action, "from", detectBrowser());
+
+  function finish(result) {
     if (watchdogId) clearTimeout(watchdogId);
     respond(result);
-  };
-
-  try {
-    const payload = message?.payload ?? {};
-    const { blobUrl, filename, showFolderPicker } = payload;
-
-    // Validate payload with explicit, user-readable errors
-    if (typeof blobUrl !== "string" || !blobUrl.startsWith("blob:")) {
-      return finish(
-        makeError(
-          "ERR_INVALID_BLOB_URL",
-          "Invalid blob URL. Expected a 'blob:' URL string.",
-          {
-            received:
-              typeof blobUrl === "string"
-                ? blobUrl.slice(0, 64)
-                : typeof blobUrl,
-          }
-        )
-      );
-    }
-    if (typeof filename !== "string" || !filename.trim()) {
-      return finish(
-        makeError(
-          "ERR_INVALID_FILENAME",
-          "A non-empty filename string is required."
-        )
-      );
-    }
-    if (showFolderPicker != null && typeof showFolderPicker !== "boolean") {
-      return finish(
-        makeError(
-          "ERR_INVALID_SAVEAS_FLAG",
-          "showFolderPicker must be a boolean when provided."
-        )
-      );
-    }
-
-    // Keep a reference for later cleanup
-    blobUrlToRevoke = blobUrl;
-
-    // Watchdog: ensure we respond even if Chrome never calls the callback
-    // (rare, but defensive). 20s is generous for big blobs / slow disks.
-    watchdogId = setTimeout(() => {
-      finish(
-        makeError(
-          "ERR_DOWNLOAD_TIMEOUT",
-          "Timed out waiting for Chrome.downloads.download callback (20s)."
-        )
-      );
-    }, 20000);
-    // Kick off the download
-    chrome.downloads.download(
-      {
-        url: blobUrl,
-        filename,
-        saveAs: !!showFolderPicker,
-        // You can add conflictAction if you want explicit behavior:
-        // conflictAction: "uniquify" | "overwrite" | "prompt"
-      },
-      (downloadId) => {
-        const lastErr = chrome.runtime.lastError;
-
-        if (DEBUG()) {
-          console.log("DOWNLOAD CALLBACK:", { downloadId, lastErr });
-        }
-
-        if (lastErr) {
-          return finish(
-            makeError(
-              "ERR_CHROME_DOWNLOADS",
-              lastErr.message || "Download failed"
-            )
-          );
-        }
-
-        if (typeof downloadId !== "number") {
-          return finish(
-            makeError(
-              "ERR_NO_DOWNLOAD_ID",
-              "Chrome did not return a downloadId."
-            )
-          );
-        }
-
-        // Success
-        finish({ success: true, downloadId });
-      }
-    );
-  } catch (e) {
-    // Catch any synchronous throw and propagate details
-    const message =
-      e && typeof e.message === "string" ? e.message : "Unknown error";
-    const stack = e && typeof e.stack === "string" ? e.stack : undefined;
-    finish(makeError("ERR_HANDLER_THROW", message, { stack }));
   }
 
-  return true; // keep sendResponse alive for async path
+  // Keep channel open for async branches
+  const KEEP_ALIVE = true;
+
+  // ---- download via ArrayBuffer (works in both Chrome and Firefox) ----
+  if (action === "downloadArrayBuffer") {
+    try {
+      const payload = message?.payload ?? {};
+      const { buffer, filename, showFolderPicker } = payload;
+
+      if (!(buffer instanceof ArrayBuffer) && !(buffer?.buffer instanceof ArrayBuffer)) {
+        return finish(makeError("ERR_INVALID_BUFFER", "payload.buffer must be an ArrayBuffer"));
+      }
+      if (typeof filename !== "string" || !filename.trim()) {
+        return finish(makeError("ERR_INVALID_FILENAME", "A non-empty filename string is required."));
+      }
+      if (showFolderPicker != null && typeof showFolderPicker !== "boolean") {
+        return finish(makeError("ERR_INVALID_SAVEAS_FLAG", "showFolderPicker must be a boolean when provided."));
+      }
+
+      const blob = new Blob([buffer instanceof ArrayBuffer ? buffer : buffer.buffer]);
+      const objUrl = URL.createObjectURL(blob);
+
+      // Watchdog in case the downloads callback never fires
+      watchdogId = setTimeout(() => {
+        try { URL.revokeObjectURL(objUrl); } catch {}
+        finish(makeError("ERR_DOWNLOAD_TIMEOUT", "Timed out waiting for chrome.downloads.download callback (20s)."));
+      }, 20000);
+
+      if (DEBUG()) console.info("DOWNLOAD (ArrayBuffer) →", filename);
+
+      chrome.downloads.download(
+        {
+          url: objUrl,
+          filename,
+          saveAs: showFolderPicker === undefined ? true : !!showFolderPicker,
+          // conflictAction: "uniquify", // or "overwrite" | "prompt"
+        },
+        (downloadId) => {
+          const lastErr = chrome.runtime.lastError;
+
+          if (lastErr) {
+            try { URL.revokeObjectURL(objUrl); } catch {}
+            return finish(makeError("ERR_CHROME_DOWNLOADS", lastErr.message || "Download failed"));
+          }
+
+          if (typeof downloadId !== "number") {
+            try { URL.revokeObjectURL(objUrl); } catch {}
+            return finish(makeError("ERR_NO_DOWNLOAD_ID", "chrome.downloads.download did not return a downloadId."));
+          }
+
+          // Revoke our background-owned blob URL shortly after success
+          setTimeout(() => {
+            try { URL.revokeObjectURL(objUrl); } catch (e) {
+              if (DEBUG()) console.warn("revokeObjectURL (ArrayBuffer) failed:", e);
+            }
+          }, 5000);
+
+          finish({ success: true, downloadId });
+        }
+      );
+    } catch (e) {
+      finish(makeError("ERR_HANDLER_THROW", e?.message || String(e)));
+    }
+
+    return KEEP_ALIVE;
+  }
+
+  // ---- download via page-provided blob: URL (Chrome-friendly; Firefox will reject) ----
+  if (action === "downloadBlobUrl") {
+    try {
+      const payload = message?.payload ?? {};
+      const { blobUrl, filename, showFolderPicker } = payload;
+
+      if (typeof blobUrl !== "string" || !blobUrl.startsWith("blob:")) {
+        return finish(
+          makeError("ERR_INVALID_BLOB_URL", "Invalid blob URL. Expected a 'blob:' URL string.", {
+            received: typeof blobUrl === "string" ? blobUrl.slice(0, 64) : typeof blobUrl,
+          })
+        );
+      }
+      if (typeof filename !== "string" || !filename.trim()) {
+        return finish(makeError("ERR_INVALID_FILENAME", "A non-empty filename string is required."));
+      }
+      if (showFolderPicker != null && typeof showFolderPicker !== "boolean") {
+        return finish(makeError("ERR_INVALID_SAVEAS_FLAG", "showFolderPicker must be a boolean when provided."));
+      }
+
+      // Note: This blob URL belongs to the page context; background CAN’T revoke it.
+      // We simply attempt the download; if Firefox or Chrome rejects, the caller can fallback.
+
+      watchdogId = setTimeout(() => {
+        finish(makeError("ERR_DOWNLOAD_TIMEOUT", "Timed out waiting for chrome.downloads.download callback (20s)."));
+      }, 20000);
+
+      if (DEBUG()) console.info("DOWNLOAD (blob URL) →", filename);
+
+      chrome.downloads.download(
+        {
+          url: blobUrl,
+          filename,
+          saveAs: showFolderPicker === undefined ? true : !!showFolderPicker,
+          // conflictAction: "uniquify",
+        },
+        (downloadId) => {
+          const lastErr = chrome.runtime.lastError;
+
+          if (DEBUG()) {
+            console.log("DOWNLOAD CALLBACK:", { downloadId, lastErr });
+          }
+
+          if (lastErr) {
+            // Surface precise error so the content script can decide to fallback
+            return finish(makeError("ERR_CHROME_DOWNLOADS", lastErr.message || "Download failed"));
+          }
+
+          if (typeof downloadId !== "number") {
+            return finish(makeError("ERR_NO_DOWNLOAD_ID", "chrome.downloads.download did not return a downloadId."));
+          }
+
+          finish({ success: true, downloadId });
+        }
+      );
+    } catch (e) {
+      finish(makeError("ERR_HANDLER_THROW", e?.message || String(e), { stack: e?.stack }));
+    }
+
+    return KEEP_ALIVE;
+  }
+
+  // Unknown action → ignore (do not keep the channel open)
+  return false;
 });
 
-if (DEBUG())
-  console.log("✅ Background loaded (robust error-propagation enabled)");
-
+if (DEBUG()) console.log("✅ Background loaded (cross-browser downloads enabled)");
 
 // background.js (MV3) — no chrome.storage, uses IndexedDB
 

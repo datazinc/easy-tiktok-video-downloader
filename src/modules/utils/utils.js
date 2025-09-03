@@ -1228,8 +1228,9 @@ function waitForBlobDownloadResponse(id, timeoutMs = 25000) {
     window.addEventListener("message", onMsg);
   });
 }
-
+window.__dl = downloadURLToDisk;
 export async function downloadURLToDisk(url, filename, options = {}) {
+  console.log("FFDEBUGG", {url, filename, options})
   const maxRetries = 3;
   let attempt = options.retryCount || 1;
 
