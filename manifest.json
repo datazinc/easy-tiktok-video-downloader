@@ -7,7 +7,8 @@
     "*://*.tiktok.com/*"
   ],
   "permissions": [
-    "downloads"
+    "downloads",
+    "tabs"
   ],
   "background": {
     "service_worker": "js/background.bundle.js",

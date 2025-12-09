@@ -11,6 +11,8 @@ export const STORAGE_KEYS = {
   RATE_DONATE_DATA: "tik.tok::rateDonateData",
   DOWNLOADER_CUSTOM_POSITION: "tik.tok::customDownloaderPosition",
   DOWNLOADER_POSITION_TYPE: "tik.tok::downloaderPositionType",
+  THEME_MODE: "tik.tok::themeMode",
+  SHOW_BUTTON_POSITION: "tik.tok::showButtonPosition",
 
   // Scrapper
   SCRAPPER_DETAILS: "tik.tok::scrapperDetails",

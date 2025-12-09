@@ -1,4 +1,18 @@
 /* main.js */
+// Initialize theme
+(function() {
+  const THEME_MODE_KEY = "tik.tok::themeMode";
+  const themeMode = localStorage.getItem(THEME_MODE_KEY) || "dark";
+  
+  if (themeMode === "dark") {
+    document.body.classList.add("theme-dark");
+    document.documentElement.classList.add("theme-dark");
+  } else {
+    document.body.classList.remove("theme-dark");
+    document.documentElement.classList.remove("theme-dark");
+  }
+})();
+
 document.getElementById("startBtn").addEventListener("click", (e) => {
   e.preventDefault();
   const input = document.getElementById("username");

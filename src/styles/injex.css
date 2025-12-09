@@ -1,10 +1,42 @@
+/* CSS Variables for theming */
+:root {
+  --ettpd-bg-primary: yellow;
+  --ettpd-bg-secondary: #f5f5dcc2;
+  --ettpd-bg-tertiary: #53f5ef;
+  --ettpd-text-primary: black;
+  --ettpd-text-secondary: #555;
+  --ettpd-text-link: #fe2c55;
+  --ettpd-button-primary: #fe2c55;
+  --ettpd-button-primary-hover: #f88aa0;
+  --ettpd-button-secondary: #53f5ef;
+  --ettpd-button-secondary-hover: #00b1ab;
+  --ettpd-border-color: #fe2c55;
+  --ettpd-shadow: rgba(0, 0, 0, 0.75);
+}
+
+.ettpd-theme-dark {
+  --ettpd-bg-primary: #1a1a1a;
+  --ettpd-bg-secondary: #2d2d2d;
+  --ettpd-bg-tertiary: #3a3a3a;
+  --ettpd-text-primary: #e0e0e0;
+  --ettpd-text-secondary: #b0b0b0;
+  --ettpd-text-link: #ff6b9d;
+  --ettpd-button-primary: #fe2c55;
+  --ettpd-button-primary-hover: #ff4b6e;
+  --ettpd-button-secondary: #4a9e9a;
+  --ettpd-button-secondary-hover: #5bb5b0;
+  --ettpd-border-color: #ff6b9d;
+  --ettpd-shadow: rgba(0, 0, 0, 0.9);
+  --ettpd-button-text: #e8e8e8;
+}
+
 .ettpd-wrapper {
   display: flex;
   flex-direction: column;
   position: fixed;
   height: 500px;
   width: 308px;
-  background-color: yellow;
+  background-color: var(--ettpd-bg-primary);
   bottom: 50px;
   left: auto;
   top: auto;
@@ -13,25 +45,29 @@
   overflow: visible;
   border-radius: 4px;
   padding-bottom: 35px;
-  -webkit-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
-  -moz-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
-  box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+  -webkit-box-shadow: 0px 3px 16px -2px var(--ettpd-shadow);
+  -moz-box-shadow: 0px 3px 16px -2px var(--ettpd-shadow);
+  box-shadow: 0px 3px 16px -2px var(--ettpd-shadow);
 }
 .ettpd-drag-handle {
   cursor: move;
-  background: yellow;
-  color: black;
+  background: var(--ettpd-bg-primary);
+  color: var(--ettpd-text-primary);
   text-align: center;
   font-family: monospace;
   user-select: none;
+}
+
+.ettpd-drag-handle-icon {
+  color: inherit;
 }
 
 .ettpd-handle-controls {
   display: flex;
   align-items: center;
   justify-content: space-around;
-  background: yellow;
-  color: white;
+  background: var(--ettpd-bg-primary);
+  color: var(--ettpd-text-primary);
   padding: 4px 8px;
   border-top-left-radius: 4px;
   border-top-right-radius: 4px;
@@ -41,10 +77,11 @@
 }
 .ettpd-corner-select:hover,
 .ettpd-corner-select:focus {
-  border-color: #fff;
+  border-color: var(--ettpd-text-primary);
 }
 .ettpd-drag-handle:hover {
-  color: #0ff;
+  color: var(--ettpd-text-link);
+  opacity: 0.8;
 }
 
 .ettpd-drag-handle {
@@ -58,13 +95,13 @@
   background: none;
   border: none;
   cursor: pointer;
-  color: white;
+  color: var(--ettpd-text-primary);
 }
 
 .ettpd-corner-select {
-  background: yellow;
-  color: black;
-  border: 1px solid #666;
+  background: var(--ettpd-bg-primary);
+  color: var(--ettpd-text-primary);
+  border: 1px solid var(--ettpd-text-secondary);
   border-radius: 3px;
   font-size: 12px;
   padding: 2px 6px;
@@ -158,17 +195,17 @@
 }
 
 .ettpd-a {
-  color: black;
+  color: var(--ettpd-text-primary);
 }
 .ettpd-a:hover {
-  color: black;
+  color: var(--ettpd-text-primary);
   text-decoration: underline;
 }
 .ettpd-a:visited {
-  color: black;
+  color: var(--ettpd-text-primary);
 }
 .ettpd-a:active {
-  color: white;
+  color: var(--ettpd-text-secondary);
 }
 
 .ettpd-ol {
@@ -184,9 +221,9 @@
 .ettpd-ol > li {
   position: relative;
   padding: 8px;
-  border-bottom: 1px solid #fe2c55;
+  border-bottom: 1px solid var(--ettpd-border-color);
   border-radius: 9px;
-  background: #f5f5dcc2;
+  background: var(--ettpd-bg-secondary);
   margin-top: 8px;
   margin-bottom: 5px;
   counter-increment: item-reverse -1;
@@ -252,13 +289,20 @@
   width: 100%;
   border: none;
   padding: 4px;
-  background-color: #fe2c55;
+  background-color: var(--ettpd-button-primary);
   cursor: pointer;
   transition: background-color ease-in-out 200ms;
+  color: #ffffff;
+}
+
+/* Softer white text in dark mode for buttons */
+.ettpd-theme-dark .ettpd-btn:not(.ettpd-current-video-btn),
+.ettpd-theme-dark .ettpd-span {
+  color: #e8e8e8;
 }
 
 .ettpd-btn:hover {
-  background-color: #f88aa0;
+  background-color: var(--ettpd-button-primary-hover);
 }
 .ettpd-btn {
   padding-right: 20px;
@@ -271,15 +315,15 @@
 }
 
 .ettpd-report-bug {
-  background-color: #53f5ef;
-  color: black;
+  background-color: var(--ettpd-button-secondary);
+  color: var(--ettpd-text-primary);
   position: absolute;
   font-size: x-small;
   bottom: 0;
 }
 
 .ettpd-report-bug:hover {
-  background-color: #00b1ab;
+  background-color: var(--ettpd-button-secondary-hover);
   transition: background-color ease-in-out 200ms;
 }
 .ettpd-copyright {
@@ -316,7 +360,7 @@
   top: 0px;
   position: absolute;
   width: 303px;
-  background-color: #00b1ab;
+  background-color: var(--ettpd-button-secondary-hover);
 }
 .ettpd-stat-line-bottom {
   position: absolute;
@@ -324,7 +368,7 @@
   width: 321px;
   bottom: 0;
   left: 0;
-  background-color: #fe2c55;
+  background-color: var(--ettpd-button-primary);
 }
 .ettpd-tier {
   font-weight: 500;
@@ -336,14 +380,19 @@
 #ettpd-liked-only {
   position: fixed;
   border: none;
-  background: yellow;
-  color: #fe2c55;
+  background: var(--ettpd-bg-primary);
+  color: var(--ettpd-text-link);
   font-weight: bold;
   cursor: pointer;
-  -webkit-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
-  -moz-box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
-  box-shadow: 0px 3px 16px -2px rgba(0, 0, 0, 0.75);
+  -webkit-box-shadow: 0px 3px 16px -2px var(--ettpd-shadow);
+  -moz-box-shadow: 0px 3px 16px -2px var(--ettpd-shadow);
+  box-shadow: 0px 3px 16px -2px var(--ettpd-shadow);
   z-index: 9999;
+}
+
+/* Override cursor for show button to use grab */
+#ettpd-show {
+  cursor: grab;
 }
 #ettpd-close,
 #ettpd-liked-only {
@@ -361,29 +410,81 @@
 #ettpd-liked-only {
   position: relative;
   width: 100%;
-  background: #53f5ef;
-  color: black;
+  background: var(--ettpd-button-secondary);
+  color: var(--ettpd-text-primary);
   margin: 5px 0;
 }
 
 #ettpd-liked-only:hover {
-  background: #00b1ab;
+  background: var(--ettpd-button-secondary-hover);
   transition: background-color ease-in-out 200ms;
 }
 #ettpd-liked-only:active {
-  background: #fe2c55;
+  background: var(--ettpd-button-primary);
 }
 
 #ettpd-show {
-  padding: 7px;
+  padding: 8px 12px;
   bottom: 50px;
   right: 20px;
   z-index: 99998;
-  border-radius: 7px;
+  border-radius: 20px;
+  cursor: grab;
+  white-space: nowrap;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  box-shadow: 0px 4px 20px -2px var(--ettpd-shadow);
+  -webkit-box-shadow: 0px 4px 20px -2px var(--ettpd-shadow);
+  -moz-box-shadow: 0px 4px 20px -2px var(--ettpd-shadow);
+  transition: box-shadow 0.2s ease;
+}
+
+#ettpd-show:hover {
+  box-shadow: 0px 6px 25px -2px var(--ettpd-shadow);
+  -webkit-box-shadow: 0px 6px 25px -2px var(--ettpd-shadow);
+  -moz-box-shadow: 0px 6px 25px -2px var(--ettpd-shadow);
+}
+
+#ettpd-show:active {
+  cursor: grabbing;
+}
+
+#ettpd-show.ettpd-show-dragging {
+  cursor: grabbing;
+  opacity: 0.9;
+  transition: none;
+}
+
+#ettpd-show svg {
+  flex-shrink: 0;
+}
+
+/* Dark theme support for show button */
+.ettpd-theme-dark #ettpd-show,
+#ettpd-show.ettpd-theme-dark {
+  background: var(--ettpd-bg-primary);
+  color: var(--ettpd-text-link);
+  border: 1px solid var(--ettpd-border-color);
+}
+
+.ettpd-theme-dark #ettpd-show:hover,
+#ettpd-show.ettpd-theme-dark:hover {
+  background: var(--ettpd-bg-secondary);
+  color: var(--ettpd-text-link);
 }
 
 .ettpd-current-video-btn {
   background-color: white;
+  color: var(--ettpd-text-primary);
+}
+
+/* Fix current video button in dark mode */
+.ettpd-theme-dark .ettpd-current-video-btn {
+  background-color: var(--ettpd-bg-secondary);
+  color: var(--ettpd-text-primary);
 }
 
 .ettpd-filter-container {
@@ -401,11 +502,11 @@
 }
 
 label[for="ettpd-liked-only"] {
-  color: black;
+  color: var(--ettpd-text-primary);
 }
 
 label[for="ettpd-current-profile"] {
-  color: black;
+  color: var(--ettpd-text-primary);
   max-width: 150px;
   padding-right: 4px;
   text-wrap-mode: nowrap;
@@ -415,7 +516,7 @@ label[for="ettpd-current-profile"] {
 .ettpd-current-profile-container {
   display: flex;
   align-items: center;
-  background-color: #53f5ef;
+  background-color: var(--ettpd-button-secondary);
   padding: 2px;
   border-radius: 4px;
   overflow: hidden;
@@ -427,37 +528,83 @@ label[for="ettpd-current-profile"] {
 }
 
 .download-btn {
-  position: absolute;
-  top: 0;
-  border: none;
-  border-bottom-right-radius: 40px;
-  border-bottom-left-radius: 40px;
-  border-bottom: 4px solid #ffffff8c;
-  padding: 5px 20px;
-  background-color: #fe2c55;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  padding: 6px 12px;
+  background-color: rgba(14, 14, 18, 0.78);
   color: #fff;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
+  opacity: 0.85;
+  transition: opacity 0.2s ease, transform 0.2s ease,
+    box-shadow 0.2s ease, background-color 0.2s ease;
+  pointer-events: auto;
 }
 
 .download-btn:hover {
-  background-color: #f88aa0;
-  transition: background-color ease-in-out 200ms;
+  opacity: 1;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  background-color: rgba(12, 12, 16, 0.88);
 }
+
 .download-btn:active {
-  background-color: white;
-  color: black;
-  transition: background-color ease-in-out 200ms;
+  opacity: 1;
+  transform: translateY(0);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+  background-color: rgba(10, 10, 14, 0.95);
+}
+
+.download-btn:disabled {
+  opacity: 0.55;
+  cursor: progress;
+  box-shadow: none;
+}
+
+.download-btn-icon {
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: inherit;
+}
+
+.download-btn-icon::before {
+  content: "\2193";
+  line-height: 1;
+}
+
+.download-btn-label {
+  display: inline-block;
+  white-space: nowrap;
+  font-size: 12px;
 }
 
 .download-btn-container {
   position: absolute;
   top: 0;
-  width: 100%;
-  height: 0;
+  left: 0;
+  right: 0;
   display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 3000; /*Smallest before it goes above a tiktok modal, eg: playlist.*/
+  justify-content: flex-end;
+  padding: 12px 16px 0;
+  z-index: 3000; /* Smallest before it goes above a tiktok modal, eg: playlist. */
+  pointer-events: none;
 }
 
 .ettpd-download-btn-holder {
@@ -476,7 +623,7 @@ label[for="ettpd-current-profile"] {
   padding-right: 30px;
 }
 .ettpd-label {
-  color: black;
+  color: var(--ettpd-text-primary);
 }
 
 .ettpd-download-btn {
@@ -509,7 +656,7 @@ label[for="ettpd-current-profile"] {
 
 .ettpd-author-link {
   font-weight: bold;
-  color: #fe2c55;
+  color: var(--ettpd-text-link);
   text-decoration: none;
   margin-right: 14px;
 }
@@ -541,46 +688,58 @@ label[for="ettpd-current-profile"] {
 
 .ettpd-images-download-all-container {
   display: flex;
-    justify-content: space-around;
-    align-items: center;
-    width: 100%;
+  justify-content: space-around;
+  align-items: center;
+  width: 100%;
 }
- 
-.ettpd-view-btn span{
+
+.ettpd-view-btn span {
   background-image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAADbElEQVR4AeyWz2sTQRTHk01a7Kkt0oq1TdNNECutSEFRtEgtnvSmFU+C3sSDHkQKgoIIBXtR6sH+AYIoeFELiqaCiIKKCBZKJGmTpq1oBRWpgfzy8zZZ2GR3s5taEKXhffNmd96b9503b2ZW8fzl3xqBfyMDgUCguauraxTEQA4U3KKzs3NOVdVrMoZVuTlmQBwVRXmG8zmgAgW4FnzbC4XCGZ/P9yIYDDZVOjoO5vf7h71e77Z8Pv8BvWNmZsYPvC7hx2cnBKYI3A2ZS+gysSRA2naTtghpXsb5vHgwgxPxePwN7RxwKzl8XkPipDjkcrkjoo0wESB4H0wjBB7AsAFowkDvtIbhj5RugeSQDQ5g6gUesvVWNOO2iTbCRACjixisA7fq6upa0LqYZs7MInTescFjVVUH6RPRfc3xpNcIZt5Xer4QjUaXSm07NULHXQOkWHksCmM1F1v2/yZGzGqTmJO2OdHVgM0YOCqgRk4TcH01e6s+EwGM9Hd52q4kFAq1ZjKZCOR7ZbfgVJYJnm1FD2Zr4NQRDodbqO4niqL0YDsNCSm+L7RdyR8RkODZbPYpQXuJNs0SDMzOzn6i7VpWTGA1ggvLFRGoXHPSv69i5s/Jyjx4L0GqoWYCHD5NknaC9kjBcVQPxmKxz8Yg7IoxDq52EDW+t2rXTIDt1lctuFWQau/cECiUBtCOVWY7ycz3k95+2mUzL9lZKc2XDn0smkVxJEBla6ch13J30cVTSCQSk6z5t9Kzo6Jgt4oRxOdFG+FIAOP7wMOMx7moNkq7FnR0dLRxToyLD8v3QLQRjgQoOLmcFln3vWCeIkxw+8mXkSPEliJNEXAPSEDkMrpMTARI00+xIMgG0alUSrbTLpbiHsiQiQDv5cvIESVbWf9HkO9n6RbxLRMTAQz1vTukW7Kdkqz5YZ4bQZCZhJxAusMQ1rYhREYpWMvLzUQApxsEEbmqquowh06YBx/wQCLNHk8kk8m4Herr65eYRAuZvELgzfh9TafTL9GWYiJAkNs4Xse6ATIjDPSR5cgCV1/CZOY7/q/wPcYYv2gfX1hYWKZtKSYCYkXKz+J4iEEmgOubTXyx/wGm8L8JtjPWhLy3gyUBMcbxIdk4CFpJu9uvYC/2jaAH/1NAqwEZzw62BOwcVvv9/0/AKWO/AQAA//8WnsHJAAAABklEQVQDADkPA1/g5ITeAAAAAElFTkSuQmCC);
- 
-    height: 30px;
-    width: 30px; 
-    background-size: contain;
-    background-repeat: no-repeat;
-    background-position: center;
+
+  height: 30px;
+  width: 30px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
 }
 
-.ettpd-view-btn, .ettpd-tiktok-btn { 
-    height: 32px;
-    width: 32px; 
-    background: yellow;
-    border-radius: 50%; 
-    padding: 3px;
-    margin-right: 12px;
-    cursor: pointer;
-    box-shadow: -5px 5px 16px 1px rgba(0,0,0,0.41);
--webkit-box-shadow: -5px 5px 16px 1px rgba(0,0,0,0.41);
--moz-box-shadow: -5px 5px 16px 1px rgba(0,0,0,0.41);
-
+/* Invert black outline to white in dark mode */
+.ettpd-theme-dark .ettpd-view-btn span {
+  filter: invert(1);
 }
-.ettpd-tiktok-btn span{
+
+.ettpd-view-btn,
+.ettpd-tiktok-btn {
+  height: 32px;
+  width: 32px;
+  background: var(--ettpd-bg-primary);
+  border-radius: 50%;
+  padding: 3px;
+  margin-right: 12px;
+  cursor: pointer;
+  box-shadow: -5px 5px 16px 1px rgba(0, 0, 0, 0.41);
+  -webkit-box-shadow: -5px 5px 16px 1px rgba(0, 0, 0, 0.41);
+  -moz-box-shadow: -5px 5px 16px 1px rgba(0, 0, 0, 0.41);
+  border: 2px solid var(--ettpd-text-secondary);
+}
+
+.ettpd-theme-dark .ettpd-view-btn,
+.ettpd-theme-dark .ettpd-tiktok-btn {
+  background: var(--ettpd-bg-tertiary);
+  border: 2px solid var(--ettpd-text-primary);
+}
+.ettpd-tiktok-btn span {
   background-image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAE9UlEQVR4AcSXC0xVdRzHP/97Lw8VErkpXsyA5QNRFFMcID43lTQzV9iqqT3WdKvZa4u2tDVdswebaVNna7n1sCmuLqZNa5kYDDBlCGiFM3GmKKhcUu+D5J5+58K1ey5wQZF19vud3+P/e3zP+f//5/6vif/56h0ArTEaV5Nm4BuOk7fzTL0D4O+k4UTzOnxMa+xvw5ZZNWZa/MOhpCnUYI/H8jcco781xscDrHFl56u/h5gZPcm/OwCCOr3OiYh/aE0Jcndq9gmAq7RMmEjR5E47Bjn7BIDe44S6towtH72Ndq6fbnfFfQYATYMPNqykyVyMuykfp2MJ7uaRwUD6DoDeqe6sjfGT4zlXPw2l7QTvCt0dyH0LQO/014WhjEyZwpyHKyfl5YdpPPqk7vbzXQdgQdWbUQ3+BrdkcUnakI2fpoO245ZPlO4BaA1ROB2P476yAZdjB66mL9HOREpup2Ql/PIF5pqnEntYAtzCIalrAHoTV9MaXGEXZP4K0EyvCHr99T0NUWGhqg4h0lrMtJrLPNS8kdTyBcSVTGRg2SLiOuwIU6eFbjTacMcUydhaFNHS+Co1J/bz2psHmDGntNn8bKnGIy/LeAhSn1mxZK4isXIvGakVzMxYQVJacEJHAPorN1kOSOAU2Upeysr3YUt0k56dw9Zt8zhyNBOvlgCmQRITkhTfnRFeCc1W8GaCegJ4TvgWdQTgDNsoo6nS3E3eWz8yK2cBjr/jxXfHpDh0U4CUKey7FIXbAwsZAXiupMh8L/cFrP/wEB9vnefTQRvPPZXrSK7KY0RlBCqi3d9rYQTgNS9FKTN1dYdZtz6nvXrLV0w6dZxZaasZPf49xqZFYA65CNvzeiSMAJR3nrx6jSVL7/VnL2dY9VPcN6rN9srPrJK3ok2QNfB5m693dyMAjQTcrpNU16T4y77PuPbvt7ZG5nGBwv6DYk+V4ps//TG9kcEA+vNrReBXrCWOSNmGqgL2vNuh0bWI8GCfGZP8CgV7u7ZNQUMXOXU60BVeh0t/UruCjoXDWscGBuu6FYtHlz3lIACqCo/LEpj8DEf/ENspbCRNU7Je3vE5ndd9Qr9lY23VpeB1tcnQdyMARSFJCYYnLeLq3Izhp2Ok2X9bTz9kuBybUGqWr/zBokE+KV1XkpQoutS4WS+yWzICiLz+NWOSbwZlWcobal/FcUk/WOyWw8Uu3APOonjJF1ffUMKRY76pSKBflXwvhoq/VrGvSWS3ZASghrsYYtvK/cMvGzI9ngFkTpf/AJ4xshJyQQ1Gvy42/sLEKQ+IqmSNOPeTpTcXEzl86KJ7NgLQ46223abYQdt01cC/144m1jaC+YuLyVu9n+yZZSSNmkpzs97UU0D66WSi4mQWHGDabMgNYXQEIMFVlaPXZhC7XdT2BSWaTpoWzs+Hstm0OYdjxzPEZbLIAcROeu1jxKeKrUnzVYpvA7eyuLumTgGMo6CllKw1JWQfHEn/Ykm/IWwgaXw+l/jDjcyPXtTWXB9/Q2H/Qld6yp0C0JMVe89nYcutZc5FJwvVT0yt+YQJ5TuZXFHN7LNuFsbvIn16DJYoib8EarGiMJ/bvLoEoNdRFDRL0dx+qBmzGXzkBRITljDswXFEJ5hR1ySmVPhFUMkKu507uEIC8NdT7DkqDZ5XFNogXD7NLQNF1zlL5BaFXRaeP9oou7P+BQAA//90S3j6AAAABklEQVQDAIp8iQZqTyoyAAAAAElFTkSuQmCC);
- 
-    height: 30px;
-    width: 30px; 
-    background-size: contain;
-    background-repeat: no-repeat;
-    background-position: center;
+
+  height: 30px;
+  width: 30px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
 }
 .ettpd-desc-span {
   display: inline-block;
-  color: black;
+  color: var(--ettpd-text-primary);
   margin-top: 3px;
   word-break: break-word;
 }
@@ -636,27 +795,28 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-modal-box {
-  background-color: #ffffff;
+  background-color: var(--ettpd-bg-secondary);
   padding: 24px;
   border-radius: 12px;
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 6px 12px var(--ettpd-shadow);
   text-align: center;
   width: 500px;
   max-width: 800px;
   max-height: 80vh;
   overflow-y: auto;
   font-family: Arial, sans-serif;
+  color: var(--ettpd-text-primary);
 }
 
 .ettpd-modal-title {
   font-size: 1.5em;
-  color: #1da1f2;
+  color: var(--ettpd-text-link);
   margin-bottom: 12px;
 }
 
 .ettpd-modal-message {
   font-size: 1em;
-  color: #555;
+  color: var(--ettpd-text-secondary);
   margin-bottom: 20px;
 }
 
@@ -804,43 +964,86 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-modal-button:hover {
-  background: #ddd;
+  background: var(--ettpd-bg-tertiary);
+  color: var(--ettpd-text-primary);
 }
 
 /*  Settings CSS */
 
+/* Closed state - default (light background, colored text) */
 .ettpd-settings-toggle {
-  background-color: #ffffff;
+  background-color: var(--ettpd-bg-secondary);
   color: #1da1f2;
-  font-weight: bold;
-  border: 1px solid #1da1f2;
+  border: 2px solid #1da1f2;
   border-radius: 6px;
   padding: 6px 12px;
   font-size: 0.9em;
+  font-weight: bold;
   cursor: pointer;
   margin: 8px 10px;
-  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px var(--ettpd-shadow);
 }
 
-.ettpd-settings-toggle:hover {
+/* Hover on closed state */
+.ettpd-settings-toggle:hover:not(.ettpd-settings-open) {
   background-color: #1da1f2;
   color: #ffffff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 6px var(--ettpd-shadow);
+}
+
+/* Open state - active/persisted (colored background, white text) */
+.ettpd-settings-toggle.ettpd-settings-open {
+  background-color: #1da1f2;
+  color: #ffffff;
+  border-color: #1da1f2;
+  box-shadow: 0 2px 6px var(--ettpd-shadow);
+}
+
+/* Hover on open state */
+.ettpd-settings-toggle.ettpd-settings-open:hover {
+  background-color: #0a84d6;
+  color: #ffffff;
+}
+
+/* Dark mode - closed state */
+.ettpd-theme-dark .ettpd-settings-toggle {
+  background-color: var(--ettpd-bg-secondary);
+  color: #1da1f2;
+  border-color: #1da1f2;
+}
+
+/* Dark mode - hover on closed state */
+.ettpd-theme-dark .ettpd-settings-toggle:hover:not(.ettpd-settings-open) {
+  background-color: #1da1f2;
+  color: var(--ettpd-text-primary);
+}
+
+/* Dark mode - open state */
+.ettpd-theme-dark .ettpd-settings-toggle.ettpd-settings-open {
+  background-color: #1da1f2;
+  color: var(--ettpd-text-primary);
+  border-color: #1da1f2;
+}
+
+/* Dark mode - hover on open state */
+.ettpd-theme-dark .ettpd-settings-toggle.ettpd-settings-open:hover {
+  background-color: #0a84d6;
+  color: var(--ettpd-text-primary);
 }
 .ettpd-preferences-box {
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 6px 10px;
-  background-color: #f4f4f4;
+  background-color: var(--ettpd-bg-secondary);
   border-radius: 6px;
   margin: 0 10px 8px 10px;
 }
 
 .ettpd-pref-label {
   font-size: 0.85em;
-  color: #555;
+  color: var(--ettpd-text-secondary);
   font-weight: bold;
 }
 
@@ -937,7 +1140,17 @@ label[for="ettpd-current-profile"] {
   font-size: 13px;
   cursor: pointer;
   user-select: none;
-  color: #333;
+  color: var(--ettpd-text-primary);
+}
+
+/* Theme toggle label */
+.ettpd-toggle-label {
+  color: var(--ettpd-text-primary);
+  font-size: 13px;
+}
+
+.ettpd-theme-toggle-container {
+  color: var(--ettpd-text-primary);
 }
 .ettpd-checkbox-container input[type="checkbox"] {
   margin: 0;
@@ -984,8 +1197,9 @@ label[for="ettpd-current-profile"] {
 .ettpd-ad-button {
   padding: 8px 14px;
   font-size: 14px;
-  background: white;
-  border: 1px solid #ccc;
+  background: var(--ettpd-bg-secondary);
+  color: var(--ettpd-text-primary);
+  border: 1px solid var(--ettpd-text-secondary);
   border-radius: 4px;
   cursor: pointer;
 }
@@ -997,13 +1211,13 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-leaderboard-list {
-  color: black;
+  color: var(--ettpd-text-primary);
   list-style: none;
   padding: 0;
   margin: 0.5em 0 1em 0;
 }
 .ettpd-leaderboard-list li {
-  color: black;
+  color: var(--ettpd-text-primary);
   margin: 4px 0;
 }
 
@@ -1025,46 +1239,46 @@ label[for="ettpd-current-profile"] {
 
 .ettpd-tab-btn {
   padding: 6px 12px;
-  background: #f5f5f5; /* light default */
+  background: var(--ettpd-bg-secondary);
   border: none;
   border-radius: 5px;
   cursor: pointer;
   font-weight: 500;
   transition: background 0.2s ease, color 0.2s ease;
   flex: 5;
-  color: #000;
+  color: var(--ettpd-text-primary);
 }
 
 /* Hover before selection */
 .ettpd-tab-btn:not(.active):hover {
-  background: #e2e2e2; /* darker grey on hover */
+  background: var(--ettpd-bg-tertiary);
 }
 
 /* Selected (active) */
 .ettpd-tab-btn.active {
-  background: #333; /* dark grey when active */
+  background: var(--ettpd-button-primary);
   color: #fff;
 }
 
 /* Hover while active */
 .ettpd-tab-btn.active:hover {
-  background: #222; /* slightly darker than active */
+  background: var(--ettpd-button-primary-hover);
 }
 
 .black-text {
-  color: black;
+  color: var(--ettpd-text-primary);
 }
 
 .black-text:hover {
-  color: #444;
+  color: var(--ettpd-text-secondary);
 }
 
 .black-text:active {
-  color: #103e45;
+  color: var(--ettpd-text-link);
 }
 
 .black-text:visited {
-  color: #d32f2f;
+  color: var(--ettpd-text-link);
 }
 
 .ettpd-modal-button.reset-leaderboard {
@@ -1324,7 +1538,7 @@ label[for="ettpd-current-profile"] {
 /* Base layout */
 .ettpd-share-content {
   padding: 10px 12px;
-  color: black;
+  color: var(--ettpd-text-primary);
 }
 .ettpd-share-heading {
   font-weight: 600;
@@ -1346,15 +1560,15 @@ label[for="ettpd-current-profile"] {
   text-decoration: none;
   padding: 10px;
   border-radius: 10px;
-  color: black;
+  color: var(--ettpd-text-primary);
 }
 .ettpd-share-item:visited,
 .ettpd-share-item:active,
 .ettpd-share-item:hover {
-  color: #fe2c55;
+  color: var(--ettpd-text-link);
 }
 .ettpd-share-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--ettpd-bg-tertiary);
 }
 .ettpd-share-text {
   line-height: 1;

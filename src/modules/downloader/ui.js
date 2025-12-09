@@ -49,11 +49,19 @@ export function createDownloaderWrapper() {
   const wrapper = document.createElement("div");
   wrapper.id = DOM_IDS.DOWNLOADER_WRAPPER;
   wrapper.className = "ettpd-wrapper";
+  
+  // Apply theme class
+  const themeMode = AppState.ui.themeMode || "dark";
+  if (themeMode === "dark") {
+    wrapper.classList.add("ettpd-theme-dark");
+  } else {
+    wrapper.classList.add("ettpd-theme-classic");
+  }
 
   const dragHandle = document.createElement("div");
   dragHandle.className = "ettpd-drag-handle";
   dragHandle.title = "Drag to move";
-  dragHandle.innerHTML = `<svg style="display: flex;align-items: center; justify-content: center;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" fill="#000000" height="22px" width="22px" version="1.1" id="Layer_1" viewBox="0 0 492.001 492.001" xml:space="preserve">
+  dragHandle.innerHTML = `<svg class="ettpd-drag-handle-icon" style="display: flex;align-items: center; justify-content: center;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" fill="currentColor" height="22px" width="22px" version="1.1" id="Layer_1" viewBox="0 0 492.001 492.001" xml:space="preserve">
                           <g>
                             <g>
                               <path d="M487.97,237.06l-58.82-58.82c-5.224-5.228-14.376-5.228-19.592,0l-7.436,7.432c-5.4,5.4-5.4,14.064,0,19.46l21.872,21.74    H265.206V68.396l21.808,22.132c5.224,5.22,14.216,5.22,19.428,0l7.36-7.432c5.404-5.404,5.356-14.196-0.044-19.596L254.846,4.444    c-2.6-2.592-6.088-4.184-9.804-4.184h-0.404c-3.712,0-7.188,1.588-9.784,4.184l-57.688,57.772    c-2.612,2.608-4.052,6.124-4.052,9.836c0,3.704,1.44,7.208,4.052,9.816l7.432,7.444c5.224,5.22,14.612,5.228,19.828,0.004    l22.368-22.132v159.688H67.814l22.14-22.008c2.608-2.608,4.048-6.028,4.048-9.732s-1.44-7.16-4.052-9.76l-7.436-7.42    c-5.22-5.216-14.372-5.2-19.584,0.008L4.034,236.856c-2.672,2.672-4.1,6.244-4.032,9.92c-0.068,3.816,1.356,7.388,4.028,10.056    l57.68,57.692c5.224,5.22,14.38,5.22,19.596,0l7.44-7.44c2.604-2.6,4.044-6.084,4.044-9.788c0-3.716-1.44-7.232-4.044-9.836    l-22.14-22.172H226.79V425.32l-23.336-23.088c-5.212-5.22-14.488-5.22-19.7,0l-7.5,7.44c-2.604,2.6-4.072,6.084-4.072,9.792    c0,3.704,1.424,7.184,4.028,9.792l58.448,58.456c2.596,2.592,6.068,4.028,9.9,4.028c0.024-0.016,0.24,0,0.272,0    c3.712,0,7.192-1.432,9.792-4.028l58.828-58.832c2.6-2.604,4.044-6.088,4.044-9.792c0-3.712-1.44-7.192-4.044-9.796l-7.44-7.44    c-5.216-5.22-14.044-5.22-19.264,0l-21.54,21.868V265.284H425.59l-23.096,23.132c-2.612,2.608-4.048,6.112-4.048,9.82    s1.432,7.192,4.048,9.8l7.44,7.444c5.212,5.224,14.372,5.224,19.584,0l58.452-58.452c2.672-2.664,4.096-6.244,4.028-9.916    C492.07,243.296,490.642,239.728,487.97,237.06z"/>
@@ -639,7 +647,6 @@ export function createControlButtons(preferencesBox) {
   const container = document.createElement("div");
   container.className = "ettpd-settings-scrapper-controls-container";
   container.style.display = "flex";
-  container.style.gap = "10px";
   container.style.justifyContent = "space-between";
 
   // --- Settings Button ---
@@ -706,13 +713,29 @@ export function updateDownloaderList(items, hashToDisplay) {
         ? "flex"
         : "none";
     }
+    
+    // Update button active states
+    if (settingsBtn) {
+      if (AppState.ui.isPreferenceBoxOpen) {
+        settingsBtn.classList.add("ettpd-settings-open");
+      } else {
+        settingsBtn.classList.remove("ettpd-settings-open");
+      }
+    }
+    if (userPostsBtn) {
+      if (AppState.ui.isScrapperBoxOpen) {
+        userPostsBtn.classList.add("ettpd-settings-open");
+      } else {
+        userPostsBtn.classList.remove("ettpd-settings-open");
+      }
+    }
   }
   updateVisibleBox();
+  
   userPostsBtn.onclick = (e) => {
+    // Close Settings if open
+    AppState.ui.isPreferenceBoxOpen = false;
     AppState.ui.isScrapperBoxOpen = !AppState.ui.isScrapperBoxOpen;
-    AppState.ui.isPreferenceBoxOpen = AppState.ui.isScrapperBoxOpen
-      ? false
-      : AppState.ui.isScrapperBoxOpen;
 
     updateVisibleBox();
     console.log("AUG7SCROLL isScrapperBoxOpen", AppState.ui.isScrapperBoxOpen);
@@ -1110,21 +1133,273 @@ function makeElementDraggable(wrapper, handle) {
   });
 }
 
+function makeShowButtonDraggable(button) {
+  let offsetX = 0,
+    offsetY = 0;
+  let isDragging = false;
+  let hasMoved = false;
+  let startX = 0;
+  let startY = 0;
+
+  // Start dragging
+  button.addEventListener("mousedown", (e) => {
+    isDragging = true;
+    hasMoved = false;
+    const rect = button.getBoundingClientRect();
+    offsetX = e.clientX - rect.left;
+    offsetY = e.clientY - rect.top;
+    startX = e.clientX;
+    startY = e.clientY;
+    document.body.style.userSelect = "none";
+    button.style.cursor = "grabbing";
+    button.classList.add("ettpd-show-dragging");
+    // Store drag state on button for click handler
+    button.dataset.wasDragging = "false";
+  });
+
+  // Function to constrain button to viewport
+  const constrainToViewport = () => {
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const buttonRect = button.getBoundingClientRect();
+    
+    // Get current position
+    let currentLeft = buttonRect.left;
+    let currentTop = buttonRect.top;
+    
+    // Ensure button is fully visible within viewport
+    const minLeft = 0;
+    const maxLeft = viewportWidth - buttonRect.width;
+    const minTop = 0;
+    const maxTop = viewportHeight - buttonRect.height;
+    
+    // Constrain position
+    currentLeft = Math.max(minLeft, Math.min(maxLeft, currentLeft));
+    currentTop = Math.max(minTop, Math.min(maxTop, currentTop));
+    
+    // Apply constrained position
+    button.style.left = `${currentLeft}px`;
+    button.style.top = `${currentTop}px`;
+    button.style.bottom = "auto";
+    button.style.right = "auto";
+    
+    return { left: currentLeft, top: currentTop };
+  };
+
+  // Dragging in motion - optimized for responsiveness
+  const handleMouseMove = (e) => {
+    if (!isDragging) return;
+
+    // Mark as moved immediately for better responsiveness
+    const deltaX = Math.abs(e.clientX - startX);
+    const deltaY = Math.abs(e.clientY - startY);
+    if (deltaX > 2 || deltaY > 2) {
+      hasMoved = true;
+      button.dataset.wasDragging = "true";
+    }
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const buttonRect = button.getBoundingClientRect();
+
+    let newLeft = e.clientX - offsetX;
+    let newTop = e.clientY - offsetY;
+
+    // Constrain to viewport bounds - ensure button never goes offscreen
+    const minLeft = 0;
+    const maxLeft = viewportWidth - buttonRect.width;
+    const minTop = 0;
+    const maxTop = viewportHeight - buttonRect.height;
+    
+    newLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
+    newTop = Math.max(minTop, Math.min(maxTop, newTop));
+
+    // Update position immediately for responsive dragging
+    button.style.left = `${newLeft}px`;
+    button.style.top = `${newTop}px`;
+    button.style.bottom = "auto";
+    button.style.right = "auto";
+
+    // Throttle localStorage saves to avoid performance issues
+    if (!button._savePositionTimeout) {
+      button._savePositionTimeout = setTimeout(() => {
+        const position = JSON.stringify({ left: newLeft, top: newTop });
+        localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_POSITION, position);
+        button._savePositionTimeout = null;
+      }, 100);
+    }
+  };
+  
+  // Ensure button stays in viewport on window resize
+  const handleResize = () => {
+    if (button && button.parentElement) {
+      constrainToViewport();
+      const pos = constrainToViewport();
+      localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_POSITION, JSON.stringify(pos));
+    }
+  };
+  
+  window.addEventListener("resize", handleResize);
+
+  document.addEventListener("mousemove", handleMouseMove);
+
+  // Stop dragging
+  const handleMouseUp = () => {
+    if (isDragging) {
+      isDragging = false;
+      document.body.style.userSelect = "";
+      button.style.cursor = "grab";
+      button.classList.remove("ettpd-show-dragging");
+      
+      // Save final position immediately
+      if (button._savePositionTimeout) {
+        clearTimeout(button._savePositionTimeout);
+        button._savePositionTimeout = null;
+      }
+      const buttonRect = button.getBoundingClientRect();
+      const position = JSON.stringify({ left: buttonRect.left, top: buttonRect.top });
+      localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_POSITION, position);
+      
+      // Reset after a short delay
+      setTimeout(() => {
+        button.dataset.wasDragging = "false";
+      }, 100);
+    }
+  };
+
+  document.addEventListener("mouseup", handleMouseUp);
+  
+  // Store cleanup on button for later removal if needed
+  button._cleanupDraggable = () => {
+    window.removeEventListener("resize", handleResize);
+    document.removeEventListener("mousemove", handleMouseMove);
+    document.removeEventListener("mouseup", handleMouseUp);
+  };
+}
+
+// Function to reset show button position to default
+export function resetShowButtonPosition() {
+  // Remove saved position from localStorage
+  localStorage.removeItem(STORAGE_KEYS.SHOW_BUTTON_POSITION);
+  
+  // If button exists, reset its position
+  const showBtn = document.getElementById(DOM_IDS.SHOW_DOWNLOADER);
+  if (showBtn) {
+    showBtn.style.left = "auto";
+    showBtn.style.top = "auto";
+    showBtn.style.bottom = "50px";
+    showBtn.style.right = "20px";
+  }
+}
+
 export function hideDownloader() {
   document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER)?.remove();
   if (document.getElementById(DOM_IDS.SHOW_DOWNLOADER)) return;
 
   const showBtn = document.createElement("button");
   showBtn.id = DOM_IDS.SHOW_DOWNLOADER;
-  showBtn.textContent = "Open Video Downloader";
-  showBtn.id = DOM_IDS.SHOW_DOWNLOADER;
-  showBtn.onclick = () => {
-    localStorage.setItem(STORAGE_KEYS.IS_DOWNLOADER_CLOSED, "false");
-    AppState.ui.isDownloaderClosed = false;
-    AppState.ui.isPreferenceBoxOpen = false;
-    document.getElementById(DOM_IDS.SHOW_DOWNLOADER)?.remove();
-    displayFoundUrls({ forced: true });
-  };
+  showBtn.className = "ettpd-show-btn";
+  
+  // Create SVG download icon
+  const svgIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svgIcon.setAttribute("width", "16");
+  svgIcon.setAttribute("height", "16");
+  svgIcon.setAttribute("viewBox", "0 0 24 24");
+  svgIcon.setAttribute("fill", "none");
+  svgIcon.setAttribute("stroke", "currentColor");
+  svgIcon.setAttribute("stroke-width", "2");
+  svgIcon.setAttribute("stroke-linecap", "round");
+  svgIcon.setAttribute("stroke-linejoin", "round");
+  svgIcon.style.verticalAlign = "middle";
+  svgIcon.style.marginRight = "4px";
+  
+  const path1 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path1.setAttribute("d", "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4");
+  svgIcon.appendChild(path1);
+  
+  const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  polyline.setAttribute("points", "7 10 12 15 17 10");
+  svgIcon.appendChild(polyline);
+  
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", "12");
+  line.setAttribute("y1", "15");
+  line.setAttribute("x2", "12");
+  line.setAttribute("y2", "3");
+  svgIcon.appendChild(line);
+  
+  // Set button content - small text with icon
+  showBtn.appendChild(svgIcon);
+  const textSpan = document.createElement("span");
+  textSpan.textContent = "Open";
+  showBtn.appendChild(textSpan);
+  
+  // Apply theme class
+  if (AppState.ui.themeMode === "dark") {
+    showBtn.classList.add("ettpd-theme-dark");
+  }
+  
+  // Restore saved position and ensure it's within viewport
+  const savedPosition = localStorage.getItem(STORAGE_KEYS.SHOW_BUTTON_POSITION);
+  if (savedPosition) {
+    try {
+      const pos = JSON.parse(savedPosition);
+      if (pos.left != null && pos.top != null) {
+        // Ensure position is within viewport bounds
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        // We'll measure the button after it's added to DOM, but set initial position
+        showBtn.style.left = `${pos.left}px`;
+        showBtn.style.top = `${pos.top}px`;
+        showBtn.style.bottom = "auto";
+        showBtn.style.right = "auto";
+        
+        // After button is added to DOM, constrain it to viewport
+        setTimeout(() => {
+          const buttonRect = showBtn.getBoundingClientRect();
+          const minLeft = 0;
+          const maxLeft = viewportWidth - buttonRect.width;
+          const minTop = 0;
+          const maxTop = viewportHeight - buttonRect.height;
+          
+          let constrainedLeft = Math.max(minLeft, Math.min(maxLeft, pos.left));
+          let constrainedTop = Math.max(minTop, Math.min(maxTop, pos.top));
+          
+          // Only update if position was constrained
+          if (constrainedLeft !== pos.left || constrainedTop !== pos.top) {
+            showBtn.style.left = `${constrainedLeft}px`;
+            showBtn.style.top = `${constrainedTop}px`;
+            localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_POSITION, JSON.stringify({
+              left: constrainedLeft,
+              top: constrainedTop
+            }));
+          }
+        }, 0);
+      }
+    } catch (e) {
+      console.warn("Failed to parse saved button position", e);
+    }
+  }
+  
+  // Click handler - check if dragging occurred
+  showBtn.addEventListener("click", (e) => {
+    // Small delay to check if dragging occurred
+    setTimeout(() => {
+      if (showBtn.dataset.wasDragging !== "true") {
+        localStorage.setItem(STORAGE_KEYS.IS_DOWNLOADER_CLOSED, "false");
+        AppState.ui.isDownloaderClosed = false;
+        AppState.ui.isPreferenceBoxOpen = false;
+        document.getElementById(DOM_IDS.SHOW_DOWNLOADER)?.remove();
+        displayFoundUrls({ forced: true });
+      }
+    }, 50);
+  });
+  
+  // Make draggable
+  makeShowButtonDraggable(showBtn);
+  
+  // Make draggable
+  makeShowButtonDraggable(showBtn);
 
   document.body?.appendChild(showBtn);
 }
@@ -2025,6 +2300,8 @@ export function createPreferencesBox() {
   // 🔄 Create button container
   const btnContainer = document.createElement("div");
   btnContainer.style.display = "flex";
+  btnContainer.style.flexWrap = "wrap";
+  btnContainer.style.gap = "8px";
   btnContainer.style.justifyContent = "space-around";
   btnContainer.style.marginTop = "10px";
 
@@ -2164,6 +2441,69 @@ export function createPreferencesBox() {
     AppState.downloadPreferences.disableConfetti
   );
 
+  // Theme toggle
+  function createThemeToggle() {
+    const container = document.createElement("div");
+    container.className = "ettpd-theme-toggle-container";
+    container.style.display = "flex";
+    container.style.alignItems = "center";
+    container.style.gap = "10px";
+    container.style.marginTop = "8px";
+
+    const label = document.createElement("label");
+    label.className = "ettpd-label";
+    label.textContent = "Theme:";
+    label.style.marginRight = "8px";
+
+    const toggleWrapper = document.createElement("label");
+    toggleWrapper.className = "ettpd-toggle-wrapper";
+    toggleWrapper.style.display = "flex";
+    toggleWrapper.style.alignItems = "center";
+    toggleWrapper.style.cursor = "pointer";
+    toggleWrapper.style.gap = "8px";
+
+    const toggleSwitch = document.createElement("input");
+    toggleSwitch.type = "checkbox";
+    toggleSwitch.className = "ettpd-theme-toggle";
+    toggleSwitch.checked = AppState.ui.themeMode === "dark";
+    toggleSwitch.style.cursor = "pointer";
+
+    const toggleLabel = document.createElement("span");
+    toggleLabel.className = "ettpd-toggle-label";
+    toggleLabel.textContent = AppState.ui.themeMode === "dark" ? "Dark" : "Classic";
+    toggleLabel.style.userSelect = "none";
+
+    toggleSwitch.onchange = (e) => {
+      const newTheme = e.target.checked ? "dark" : "classic";
+      AppState.ui.themeMode = newTheme;
+      localStorage.setItem(STORAGE_KEYS.THEME_MODE, newTheme);
+      toggleLabel.textContent = newTheme === "dark" ? "Dark" : "Classic";
+      
+      // Apply theme to downloader wrapper
+      const wrapper = document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER);
+      if (wrapper) {
+        if (newTheme === "dark") {
+          wrapper.classList.add("ettpd-theme-dark");
+          wrapper.classList.remove("ettpd-theme-classic");
+        } else {
+          wrapper.classList.add("ettpd-theme-classic");
+          wrapper.classList.remove("ettpd-theme-dark");
+        }
+      }
+      
+      showFeedback(`Theme set to ${newTheme === "dark" ? "Dark" : "Classic"} mode`);
+    };
+
+    toggleWrapper.appendChild(toggleSwitch);
+    toggleWrapper.appendChild(toggleLabel);
+    container.appendChild(label);
+    container.appendChild(toggleWrapper);
+
+    return container;
+  }
+
+  const themeToggle = createThemeToggle();
+
   const autoScrollSettingUI = createScrollModeSelector();
 
   // Feedback container
@@ -2276,6 +2616,7 @@ export function createPreferencesBox() {
     skipAdsCheckbox,
     includeCSVFile,
     disableConfetti,
+    themeToggle,
     autoScrollSettingUI,
     prefLabel,
     templateEditorBtn,
@@ -2292,19 +2633,27 @@ export function createSettingsToggle(preferencesBox) {
   settingsBtn.title = "Click to toggle settings";
   settingsBtn.onclick = (e) => {
     e.stopPropagation();
+    // Close Scrapper if open
+    AppState.ui.isScrapperBoxOpen = false;
+    if (document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER)) {
+      document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER).style.display = "none";
+    }
     preferencesBox.style.display =
       preferencesBox.style.display === "none" ? "flex" : "none";
     AppState.ui.isPreferenceBoxOpen = preferencesBox.style.display === "flex";
     updateSettingsBtn();
+    // Update Scrapper button state - find it and update
+    const allButtons = document.querySelectorAll(".ettpd-settings-toggle");
+    allButtons.forEach(btn => {
+      if (btn !== settingsBtn && btn.textContent.includes("Scrapper")) {
+        btn.classList.remove("ettpd-settings-open");
+      }
+    });
   };
 
   updateSettingsBtn();
 
   function updateSettingsBtn() {
-    // Reset any previous listeners
-    settingsBtn.onmouseenter = null;
-    settingsBtn.onmouseleave = null;
-
     if (AppState.ui.isPreferenceBoxOpen) {
       AppState.ui.isScrapperBoxOpen = false;
       if (document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER))
@@ -2313,34 +2662,18 @@ export function createSettingsToggle(preferencesBox) {
         ).style.display = AppState.ui.isScrapperBoxOpen ? "flex" : "none";
 
       settingsBtn.textContent = "⚙️ Close";
-      settingsBtn.style.border = "1px solid #fe2c55";
-      settingsBtn.style.color = "#fe2c55";
-      settingsBtn.style.background = "#fff";
-
-      settingsBtn.onmouseenter = () => {
-        settingsBtn.style.background = "#fe2c55";
-        settingsBtn.style.color = "#fff";
-      };
-
-      settingsBtn.onmouseleave = () => {
-        settingsBtn.style.background = "#fff";
-        settingsBtn.style.color = "#fe2c55";
-      };
+      settingsBtn.classList.add("ettpd-settings-open");
+      
+      // Update Scrapper button state
+      const allButtons = document.querySelectorAll(".ettpd-settings-toggle");
+      allButtons.forEach(btn => {
+        if (btn !== settingsBtn && btn.textContent.includes("Scrapper")) {
+          btn.classList.remove("ettpd-settings-open");
+        }
+      });
     } else {
       settingsBtn.textContent = "⚙️ Settings";
-      settingsBtn.style.border = "1px solid #1da1f2";
-      settingsBtn.style.color = "#1da1f2";
-      settingsBtn.style.background = "#fff";
-
-      settingsBtn.onmouseenter = () => {
-        settingsBtn.style.background = "#1da1f2";
-        settingsBtn.style.color = "#fff";
-      };
-
-      settingsBtn.onmouseleave = () => {
-        settingsBtn.style.background = "#fff";
-        settingsBtn.style.color = "#1da1f2";
-      };
+      settingsBtn.classList.remove("ettpd-settings-open");
     }
   }
   return settingsBtn;
@@ -2425,6 +2758,10 @@ function createDownloadButton({
   });
 
   const className = `download-btn ${videoId}`;
+  const mediaTypeLabel = isImage ? "Image" : "Video";
+  const defaultBtnLabel = isSmallView ? "Save" : `Save ${mediaTypeLabel}`;
+  const buildDefaultMarkup = () =>
+    `<span class="download-btn-icon" aria-hidden="true"></span><span class="download-btn-label">${defaultBtnLabel}</span>`;
 
   // Prevent duplicate buttons
   if (parentEl.querySelector(`.${CSS.escape(videoId)}`)) {
@@ -2438,11 +2775,16 @@ function createDownloadButton({
   container.className = "download-btn-container";
 
   const btn = document.createElement("button");
-  btn.textContent = isSmallView
-    ? "⬇️ Download"
-    : "⬇️ Download " + (isImage ? "Image" : "Video");
+  btn.type = "button";
   btn.className = className;
   btn.dataset.wrapperId = wrapperId;
+  btn.title = `Download ${mediaTypeLabel}`;
+  btn.setAttribute("aria-label", `Download ${mediaTypeLabel}`);
+  const resetButtonToDefault = () => {
+    btn.disabled = false;
+    btn.innerHTML = buildDefaultMarkup();
+  };
+  resetButtonToDefault();
 
   btn.addEventListener("click", async (e) => {
     e.preventDefault();
@@ -2461,7 +2803,7 @@ function createDownloadButton({
     }
 
     btn.disabled = true;
-    btn.textContent = "Downloading…";
+    btn.textContent = "Saving…";
     let hasFailed = false;
     try {
       await downloadURLToDisk(
@@ -2470,7 +2812,7 @@ function createDownloadButton({
           imageIndex: photoIndex,
         })
       );
-      btn.textContent = "✅ Downloaded!";
+      btn.textContent = "✅ Saved";
       showCelebration(
         "downloads",
         getRandomDownloadSuccessMessage(isImage ? "photo" : "video")
@@ -2485,12 +2827,9 @@ function createDownloadButton({
         console.warn("IMAGES_DL ❌ Download failed", err);
       hasFailed = true;
     } finally {
-      if (hasFailed) btn.textContent = "Download Failed";
+      if (hasFailed) btn.textContent = "Save Failed";
       setTimeout(() => {
-        btn.disabled = false;
-        btn.textContent = isSmallView
-          ? "⬇️ Download"
-          : "⬇️ Download " + (isImage ? "Image" : "Video");
+        resetButtonToDefault();
       }, 5000);
     }
   });

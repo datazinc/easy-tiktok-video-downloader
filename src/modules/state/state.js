@@ -154,6 +154,7 @@ const AppState = {
     ),
     isRatePopupOpen: false,
     isDragging: false,
+    themeMode: getStringOrNull(STORAGE_KEYS.THEME_MODE) || "dark",
     autoSwipeConfigurations: {
       nextClickTimeout: null,
       countdownInterval: null,
@@ -210,6 +211,7 @@ export function resetAppStateToDefaults() {
   localStorage.removeItem(STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE);
   localStorage.removeItem(STORAGE_KEYS.FULL_PATH_TEMPLATES);
   localStorage.removeItem(STORAGE_KEYS.SHOW_FOLDER_PICKER);
+  localStorage.removeItem(STORAGE_KEYS.THEME_MODE);
 
   // Reset AppState
   AppState.debug.active = false;
@@ -240,6 +242,7 @@ export function resetAppStateToDefaults() {
     isDownloaderClosed: false,
     isRatePopupOpen: false,
     isDragging: false,
+    themeMode: "dark",
     autoSwipeConfigurations: {
       nextClickTimeout: null,
       countdownInterval: null,

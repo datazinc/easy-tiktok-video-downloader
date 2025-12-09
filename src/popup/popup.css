@@ -1,16 +1,42 @@
 /* popup.css */
+:root {
+  --popup-bg-primary: linear-gradient(to right, #fdfcfb, #e2d1c3);
+  --popup-bg-secondary: #ffffff;
+  --popup-text-primary: #333;
+  --popup-text-secondary: #555;
+  --popup-button-primary: #fe2c55;
+  --popup-button-hover: #e5234a;
+  --popup-link-color: #0077cc;
+  --popup-alert-bg: #fff3cd;
+  --popup-alert-text: #856404;
+  --popup-alert-border: #ffeeba;
+}
+
+.theme-dark {
+  --popup-bg-primary: linear-gradient(to right, #1a1a1a, #2d2d2d);
+  --popup-bg-secondary: #2d2d2d;
+  --popup-text-primary: #e0e0e0;
+  --popup-text-secondary: #b0b0b0;
+  --popup-button-primary: #fe2c55;
+  --popup-button-hover: #ff4b6e;
+  --popup-link-color: #6bb6ff;
+  --popup-alert-bg: #3a2e1a;
+  --popup-alert-text: #ffd54f;
+  --popup-alert-border: #ffb300;
+}
+
 body {
   margin: 0;
   padding: 0;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  background: linear-gradient(to right, #fdfcfb, #e2d1c3);
-  color: #333;
+  background: var(--popup-bg-primary);
+  color: var(--popup-text-primary);
 }
 
 .container {
   width: 520px;
   margin: 30px auto;
-  background-color: #ffffff;
+  background-color: var(--popup-bg-secondary);
   border-radius: 12px;
   padding: 24px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
@@ -24,7 +50,7 @@ h1 {
 .subtitle {
   font-size: 1.1em;
   margin-bottom: 20px;
-  color: #555;
+  color: var(--popup-text-secondary);
 }
 
 #start-wrapper {
@@ -37,13 +63,15 @@ input {
   flex: 1;
   padding: 10px;
   font-size: 1em;
-  border: 1px solid #ccc;
+  border: 1px solid var(--popup-text-secondary);
   border-radius: 6px;
   outline: none;
+  background-color: var(--popup-bg-secondary);
+  color: var(--popup-text-primary);
 }
 
 button {
-  background-color: #fe2c55;
+  background-color: var(--popup-button-primary);
   color: #fff;
   border: none;
   padding: 10px 20px;
@@ -55,14 +83,14 @@ button {
 }
 
 button:hover {
-  background-color: #e5234a;
+  background-color: var(--popup-button-hover);
 }
 
 .alert {
-  background-color: #fff3cd;
-  color: #856404;
+  background-color: var(--popup-alert-bg);
+  color: var(--popup-alert-text);
   padding: 10px;
-  border-left: 5px solid #ffeeba;
+  border-left: 5px solid var(--popup-alert-border);
   border-radius: 4px;
   margin-bottom: 20px;
 }
@@ -79,7 +107,7 @@ button:hover {
   display: inline-block;
   margin-right: 15px;
   text-decoration: none;
-  color: #0077cc;
+  color: var(--popup-link-color);
 }
 
 .links a:hover {
@@ -90,7 +118,7 @@ footer {
   margin-top: 30px;
   text-align: center;
   font-size: 0.9em;
-  color: #999;
+  color: var(--popup-text-secondary);
 }
 
 footer a {
