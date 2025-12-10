@@ -17,12 +17,11 @@ module.exports = (_env, argv) => {
     output: {
       path: path.resolve(__dirname, "dist"),
       filename: (pathData) => {
-        
         if (pathData.chunk.name === "index")
-          return "js/injex.js"
+          return "js/injex.js";
         if (pathData.chunk.name === "popup")
-          return "popup/popup.js";
-          return "js/[name].bundle.js";
+          return "popup/popup.bundle.js";
+        return "js/[name].bundle.js";
       },
       clean: true,
     },

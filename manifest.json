@@ -8,7 +8,8 @@
   ],
   "permissions": [
     "downloads",
-    "tabs"
+    "tabs",
+    "storage"
   ],
   "background": {
     "service_worker": "js/background.bundle.js",

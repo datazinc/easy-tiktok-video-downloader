@@ -268,6 +268,18 @@
 
 // ----------------- Resource Injection (unchanged, just scoped tidy) -----------------
 (() => {
+  // Helper function to check if extension is enabled
+  // Note: This runs at document_start, so we use localStorage as immediate fallback
+  // The state will be synced from chrome.storage by the content script
+  function isExtensionEnabled() {
+    try {
+      const stored = localStorage.getItem("tik.tok::extensionEnabled");
+      return stored !== "false"; // Default to true if not set
+    } catch (err) {
+      return true; // Default to enabled
+    }
+  }
+
   const resources = [
     { type: "script", src: "js/confetti.browser.min.js", isModule: true },
     { type: "script", src: "js/injex.js", isModule: true },
@@ -275,6 +287,11 @@
   ];
 
   const inject = () => {
+    // Check if extension is disabled before injecting resources
+    if (!isExtensionEnabled()) {
+      console.log("[Extension] Extension is disabled. Skipping resource injection.");
+      return;
+    }
     resources.forEach(({ type, href, src, isModule }) => {
       const existing = document.querySelector(
         `${href ? `${type}[href="${chrome.runtime.getURL(href)}"]` : ""}${
@@ -318,4 +335,33 @@
     childList: true,
     subtree: true,
   });
+
+  // Sync extension state from chrome.storage to localStorage
+  // This ensures content scripts can read the state immediately
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    // Read initial state
+    chrome.storage.local.get(["tik.tok::extensionEnabled"], (items) => {
+      if (!chrome.runtime.lastError && items["tik.tok::extensionEnabled"] !== undefined) {
+        try {
+          localStorage.setItem("tik.tok::extensionEnabled", items["tik.tok::extensionEnabled"]);
+        } catch (err) {
+          console.warn("Failed to sync extension state to localStorage:", err);
+        }
+      }
+    });
+
+    // Listen for changes
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === "local" && changes["tik.tok::extensionEnabled"]) {
+        try {
+          localStorage.setItem(
+            "tik.tok::extensionEnabled",
+            changes["tik.tok::extensionEnabled"].newValue
+          );
+        } catch (err) {
+          console.warn("Failed to sync extension state change to localStorage:", err);
+        }
+      }
+    });
+  }
 })();

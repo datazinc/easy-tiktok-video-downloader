@@ -13,6 +13,7 @@ export const STORAGE_KEYS = {
   DOWNLOADER_POSITION_TYPE: "tik.tok::downloaderPositionType",
   THEME_MODE: "tik.tok::themeMode",
   SHOW_BUTTON_POSITION: "tik.tok::showButtonPosition",
+  EXTENSION_ENABLED: "tik.tok::extensionEnabled",
 
   // Scrapper
   SCRAPPER_DETAILS: "tik.tok::scrapperDetails",

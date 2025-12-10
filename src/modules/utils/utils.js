@@ -32,6 +32,37 @@ export function getCurrentPageUsername() {
   return at ? at.slice(1) : "😃";
 }
 
+/**
+ * Checks if we're currently on a profile or collection page
+ * @returns {Object} { isProfile: boolean, isCollection: boolean, collectionName: string }
+ */
+export function isOnProfileOrCollectionPage() {
+  const path = window.location.pathname;
+
+  // Check if it's a profile page: /@username or /@username/
+  const isProfile = /^\/@[^/]+\/?$/.test(path);
+
+  // Check if it's a collection page: /@username/collection/collection-name
+  const collectionMatch = path.match(/\/@[^/]+\/collection\/([^/]+)/);
+  const isCollection = !!collectionMatch;
+  let collectionName = "";
+
+  if (isCollection && collectionMatch) {
+    try {
+      const raw = decodeURIComponent(collectionMatch[1]);
+      collectionName = raw.replace(/-\d+$/, "");
+    } catch (e) {
+      console.warn("Failed to decode collection name:", e);
+    }
+  }
+
+  return {
+    isProfile: isProfile || isCollection, // Collection pages are also profile pages
+    isCollection,
+    collectionName,
+  };
+}
+
 // Simple hash by concatenating IDs
 export function getDisplayedItemsHash(items = []) {
   return items
@@ -285,9 +316,7 @@ export function getDownloadFilePath(
         .map((tag) => sanitize(tag.name || tag))
         .join("-"),
       createTime: sanitize(
-        media.createTime
-          ? formattedDate(media.createTime)
-          : "-"
+        media.createTime ? formattedDate(media.createTime) : "-"
       ),
       downloadTime: formattedDate(new Date()),
       isImage: media.isImage,
@@ -346,8 +375,14 @@ export const applyTemplate = (
 
       if (
         key === "tabName" &&
-        AppState.scrapperDetails.scrappingStage == "downloading"
+        AppState.scrapperDetails.isAutoBatchDownloading &&
+        (AppState.scrapperDetails.scrappingStage == "downloading" ||
+          AppState.scrapperDetails.scrappingStage == "ongoing")
       ) {
+        // Only set tabName when actively scrapping (auto-batch downloading)
+        // This prevents tabName from being set during manual downloads
+        // Check for both "downloading" and "ongoing" stages since batch downloads
+        // can happen during "ongoing" stage
         const val =
           toTitleCase(AppState.scrapperDetails.selectedTab || "") ||
           fallbackRaw ||
@@ -365,11 +400,14 @@ export const applyTemplate = (
       let val = fieldValues[key];
 
       // Special fallback for authorUsername when tpl has {tabName} and fallback is :profile:
+      // Only apply this during active scrapping (auto-batch downloading)
       if (
         key === "authorUsername" &&
         fallbackRaw === ":profile:" &&
         tplHasTabName &&
-        AppState.scrapperDetails.scrappingStage == "downloading"
+        AppState.scrapperDetails.isAutoBatchDownloading &&
+        (AppState.scrapperDetails.scrappingStage == "downloading" ||
+          AppState.scrapperDetails.scrappingStage == "ongoing")
       ) {
         val = getCurrentPageUsername() || val;
       }
@@ -1068,6 +1106,89 @@ export async function downloadSingleMedia(
   }
 }
 
+// Batch download function for scrapper
+export async function downloadBatch(items, batchNumber) {
+  if (AppState.debug.active)
+    console.log(
+      `[Batch ${batchNumber}] Starting batch download of ${items.length} items`
+    );
+
+  AppState.downloading.isActive = true;
+  AppState.downloading.isDownloadingAll = true;
+  AppState.scrapperDetails.currentBatch = batchNumber;
+
+  let newVideoDownloadedCount = 0;
+  let hasImage = false;
+
+  try {
+    for (let i = 0; i < items.length; i++) {
+      // Respect pause state
+      while (AppState.scrapperDetails.paused) await sleep(800);
+
+      const media = items[i];
+
+      // Skip if already downloaded
+      if (AppState.downloadedURLs.includes(media.url)) {
+        console.log(
+          `[Batch ${batchNumber}] Item ${i + 1} already downloaded:`,
+          media.videoId
+        );
+        continue;
+      }
+
+      AppState.downloadedURLs.push(media.url);
+
+      try {
+        updateDownloadButtonLabelSimple();
+        await (!media.isImage
+          ? downloadSingleMedia(media)
+          : downloadAllPostImagesHandler(null, media));
+
+        // Load confirmed downloaded urls
+        AppState.leaderboard.newlyConfirmedMedia.push(media);
+
+        if (media.isImage) hasImage = true;
+        newVideoDownloadedCount += 1;
+
+        // Update batch progress
+        AppState.scrapperDetails.downloadedInBatches += 1;
+        localStorage.setItem(
+          STORAGE_KEYS.SCRAPPER_DETAILS,
+          JSON.stringify(AppState.scrapperDetails)
+        );
+      } catch (err) {
+        console.log(
+          `[Batch ${batchNumber}] Failed to download item ${i + 1}:`,
+          err
+        );
+        if (AppState.debug.active) console.warn(err);
+      }
+    }
+
+    if (AppState.debug.active)
+      console.log(
+        `[Batch ${batchNumber}] Completed: ${newVideoDownloadedCount} new items downloaded`
+      );
+
+    return {
+      success: true,
+      downloaded: newVideoDownloadedCount,
+      hasImage,
+    };
+  } catch (error) {
+    console.error(`[Batch ${batchNumber}] Error:`, error);
+    return {
+      success: false,
+      downloaded: newVideoDownloadedCount,
+      hasImage,
+      error,
+    };
+  } finally {
+    AppState.downloading.isActive = false;
+    AppState.downloading.isDownloadingAll = false;
+  }
+}
+
 // export function downloadURLToDisk(url, filename, options = {}) {
 //   return new Promise((resolve, reject) => {
 //     const maxRetries = 3;
@@ -1230,7 +1351,7 @@ function waitForBlobDownloadResponse(id, timeoutMs = 25000) {
 }
 window.__dl = downloadURLToDisk;
 export async function downloadURLToDisk(url, filename, options = {}) {
-  console.log("FFDEBUGG", {url, filename, options})
+  console.log("FFDEBUGG", { url, filename, options });
   const maxRetries = 3;
   let attempt = options.retryCount || 1;
 
@@ -1526,6 +1647,9 @@ export async function downloadAllLinks(mainBtn) {
   if (AppState.debug.active)
     console.log("ettvdebugger: Starting batch download");
 
+  // Check if this is a user-triggered download (not from scrapper auto-batch)
+  const isUserTriggered = !AppState.scrapperDetails.isAutoBatchDownloading;
+
   AppState.downloading.isActive = true;
   AppState.downloading.isDownloadingAll = true;
   AppState.downloadPreferences.autoScrollMode = "off"; // Turn off scroll for now.
@@ -1536,7 +1660,10 @@ export async function downloadAllLinks(mainBtn) {
   try {
     console.log("DEBUG_DL_ALLA before loop ", links.length);
     for (let i = 0; i < links.length; i++) {
-      while (AppState.scrapperDetails.paused) await sleep(800);
+      // Only respect pause state for automatic scrapper downloads, not user-triggered ones
+      if (!isUserTriggered) {
+        while (AppState.scrapperDetails.paused) await sleep(800);
+      }
 
       const media = links[i];
       if (AppState.downloadedURLs.includes(media.url)) {

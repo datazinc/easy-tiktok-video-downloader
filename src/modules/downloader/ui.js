@@ -42,16 +42,47 @@ import {
   buildVideoLinkMeta,
   cleanupPath,
   applyTemplate,
+  isOnProfileOrCollectionPage,
+  saveCSVFile,
 } from "../utils/utils.js";
-import { startAutoSwipeLoop } from "../polling/polling.js";
+import {
+  startAutoSwipeLoop,
+  startAutoBatchDownloads,
+} from "../polling/polling.js";
+import {
+  isExtensionEnabledSync,
+  setExtensionEnabled,
+} from "../utils/extensionState.js";
+
+export function getResolvedThemeMode() {
+  const stored = AppState.ui.themeMode || "dark";
+  const normalized = stored === "classic" ? "light" : stored;
+
+  // If system is selected, detect system preference
+  if (normalized === "system") {
+    const prefersDark = window.matchMedia(
+      "(prefers-color-scheme: dark)"
+    ).matches;
+    return prefersDark ? "dark" : "light";
+  }
+
+  if (normalized !== stored && stored !== "system") {
+    AppState.ui.themeMode = normalized;
+    try {
+      localStorage.setItem(STORAGE_KEYS.THEME_MODE, normalized);
+    } catch {}
+  }
+
+  return normalized;
+}
 
 export function createDownloaderWrapper() {
   const wrapper = document.createElement("div");
   wrapper.id = DOM_IDS.DOWNLOADER_WRAPPER;
   wrapper.className = "ettpd-wrapper";
-  
+
   // Apply theme class
-  const themeMode = AppState.ui.themeMode || "dark";
+  const themeMode = getResolvedThemeMode();
   if (themeMode === "dark") {
     wrapper.classList.add("ettpd-theme-dark");
   } else {
@@ -167,6 +198,10 @@ export async function showScrapperControls() {
 
   const btnContainer = document.createElement("div");
   btnContainer.className = "ettpd-tab-buttons";
+
+  // Check if we're on a profile or collection page (synchronous check)
+  const pageInfo = isOnProfileOrCollectionPage();
+
   const spans = await getTabSpans(30 * 1000); // 30 seconds wait at most
 
   // Button Generator
@@ -175,49 +210,409 @@ export async function showScrapperControls() {
     { key: "reposts", label: "🔁 Scrape Reposts" },
     { key: "liked", label: "❤️ Scrape Likes" },
     { key: "favorites", label: "⭐ Scrape Favorites" },
-    { key: "collection", label: `🗂️ Scrape: ${spans.collection}` },
+    {
+      key: "collection",
+      label: `🗂️ Scrape: ${
+        spans.collection || pageInfo.collectionName || "Collection"
+      }`,
+    },
   ];
 
-  tabOptions.forEach(({ key, label }) => {
-    const tabSpan = spans[key];
-    if (
-      !tabSpan ||
-      (typeof tabSpan === "string" && !tabSpan.trim()) ||
-      (typeof tabSpan !== "string" && !tabSpan.offsetParent)
-    ) {
-      return;
-    }
+  // Check if scrapping is already ongoing or downloading
+  // Also check for "initiated" stage (after page reload) or if selectedTab is set (scrapping has started)
+  // If selectedTab is set and stage is not "completed", scrapping is active
+  const isScrappingActive =
+    AppState.scrapperDetails.scrappingStage == "ongoing" ||
+    AppState.scrapperDetails.scrappingStage == "downloading" ||
+    AppState.scrapperDetails.scrappingStage == "initiated" ||
+    (AppState.scrapperDetails.selectedTab != null &&
+      AppState.scrapperDetails.scrappingStage != "completed");
 
-    const btn = document.createElement("button");
-    btn.className = `ettpd-tab-btn ettpd-tab-btn-${key} ${
-      AppState.scrapperDetails.selectedTab == key &&
-      (AppState.scrapperDetails.scrappingStage == "ongoing" ||
-        AppState.scrapperDetails.scrappingStage == "downloading")
-        ? "active"
-        : ""
-    }`;
-    btn.textContent = label;
+  // Only show completion view if scrapping has actually completed AND there was a selected tab
+  // (meaning a scrapping session was actually started)
+  const isScrappingCompleted =
+    AppState.scrapperDetails.scrappingStage == "completed" &&
+    AppState.scrapperDetails.selectedTab != null;
 
-    btn.addEventListener("click", () => {
-      // Remove active class from all tab buttons
-      document
-        .querySelectorAll(".ettpd-tab-btn.active")
-        .forEach((b) => b.classList.remove("active"));
+  // If scrapping is active, show progress instead of tabs
+  if (isScrappingActive) {
+    const progressContainer = document.createElement("div");
+    progressContainer.className = "ettpd-scrapper-progress";
 
-      // Set the clicked one as active
-      btn.classList.add("active");
-      if (key == "collection") {
-        AppState.scrapperDetails.selectedCollectionName = spans.collection;
+    const progressTitle = document.createElement("div");
+    progressTitle.className = "ettpd-scrapper-progress-title";
+    progressTitle.textContent = `📂 ${toTitleCase(
+      AppState.scrapperDetails.selectedTab || "Scrapper"
+    )} Scrapper Active`;
+    progressContainer.appendChild(progressTitle);
+
+    const progressInfo = document.createElement("div");
+    progressInfo.className = "ettpd-scrapper-progress-info";
+    progressInfo.id = "ettpd-scrapper-progress-info";
+
+    // Update progress info
+    const updateProgressInfo = () => {
+      const total = AppState.allDirectLinks.length;
+      const downloaded = AppState.downloadedURLs.length;
+      const batch = AppState.scrapperDetails.currentBatch || 1;
+      const isDownloading = AppState.downloading.isDownloadingAll;
+
+      if (isDownloading && AppState.scrapperDetails.isAutoBatchDownloading) {
+        // Show current batch being downloaded
+        const currentBatch = AppState.scrapperDetails.currentBatch || 1;
+        progressInfo.innerHTML = `
+          <div>⏳ Batch ${currentBatch}: Downloading items...</div>
+          <div>Downloaded: ${downloaded} of ${total} posts</div>
+          <div style="font-size: 11px; color: #666; margin-top: 5px;">Auto-scrolling and downloading in progress</div>
+        `;
+      } else if (total > 0) {
+        progressInfo.innerHTML = `
+          <div>📊 Total discovered: ${total} posts</div>
+          <div>✅ Downloaded: ${downloaded} posts</div>
+        `;
+      } else {
+        progressInfo.innerHTML = `
+          <div>🔍 Discovering posts...</div>
+          <div style="font-size: 11px; color: #666; margin-top: 5px;">Auto-scrolling in progress</div>
+        `;
+      }
+    };
+
+    updateProgressInfo();
+    progressContainer.appendChild(progressInfo);
+
+    // Add pause/resume controls
+    const controlsRow = document.createElement("div");
+    controlsRow.style.cssText = `
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+      justify-content: center;
+    `;
+
+    const pauseBtn = document.createElement("button");
+    pauseBtn.className = "ettpd-scrapper-pause";
+    pauseBtn.textContent = AppState.scrapperDetails.paused
+      ? "▶️ Resume"
+      : "⏸️ Pause";
+    pauseBtn.style.cssText = `
+      background: ${AppState.scrapperDetails.paused ? "#007AFF" : "#FF9500"};
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.2s;
+    `;
+
+    pauseBtn.onmouseover = () => {
+      pauseBtn.style.background = AppState.scrapperDetails.paused
+        ? "#0056CC"
+        : "#E68500";
+    };
+    pauseBtn.onmouseout = () => {
+      pauseBtn.style.background = AppState.scrapperDetails.paused
+        ? "#007AFF"
+        : "#FF9500";
+    };
+
+    pauseBtn.onclick = () => {
+      AppState.scrapperDetails.paused = !AppState.scrapperDetails.paused;
+      if (AppState.scrapperDetails.paused) {
+        // Pause logic
+        AppState.downloadPreferences.autoScrollMode = "off";
+        pauseBtn.textContent = "▶️ Resume";
+        pauseBtn.style.background = "#007AFF";
+        console.log("[Scrapper] Paused");
+      } else {
+        // Resume logic
+        AppState.downloadPreferences.autoScrollMode = "always";
+        pauseBtn.textContent = "⏸️ Pause";
+        pauseBtn.style.background = "#FF9500";
+        console.log("[Scrapper] Resumed");
+      }
+      localStorage.setItem(
+        STORAGE_KEYS.SCRAPPER_DETAILS,
+        JSON.stringify(AppState.scrapperDetails)
+      );
+      // Update button hover colors
+      pauseBtn.onmouseover = () => {
+        pauseBtn.style.background = AppState.scrapperDetails.paused
+          ? "#0056CC"
+          : "#E68500";
+      };
+    };
+
+    controlsRow.appendChild(pauseBtn);
+    progressContainer.appendChild(controlsRow);
+
+    // Update progress periodically
+    const progressInterval = setInterval(() => {
+      if (!document.getElementById("ettpd-scrapper-progress-info")) {
+        clearInterval(progressInterval);
+        return;
       }
 
-      // Your existing logic
-      showScrapperStateUI(key);
+      // Check if scrapping has completed - if so, refresh the controls
+      if (
+        AppState.scrapperDetails.scrappingStage === "completed" &&
+        AppState.ui.isScrapperBoxOpen
+      ) {
+        clearInterval(progressInterval);
+        showScrapperControls();
+        return;
+      }
+
+      // Update pause button state if it changed externally
+      if (pauseBtn && pauseBtn.textContent) {
+        const shouldBePaused = AppState.scrapperDetails.paused;
+        const isCurrentlyPaused = pauseBtn.textContent.includes("Resume");
+        if (shouldBePaused !== isCurrentlyPaused) {
+          pauseBtn.textContent = shouldBePaused ? "▶️ Resume" : "⏸️ Pause";
+          pauseBtn.style.background = shouldBePaused ? "#007AFF" : "#FF9500";
+        }
+      }
+
+      updateProgressInfo();
+    }, 2000);
+
+    btnContainer.appendChild(progressContainer);
+  } else if (isScrappingCompleted) {
+    // Show completion state with continue button
+    const completionContainer = document.createElement("div");
+    completionContainer.className = "ettpd-scrapper-completion";
+
+    const completionTitle = document.createElement("div");
+    completionTitle.className = "ettpd-scrapper-completion-title";
+    completionTitle.textContent = `✅ ${toTitleCase(
+      AppState.scrapperDetails.selectedTab || "Scrapper"
+    )} Scraping Finished`;
+    completionContainer.appendChild(completionTitle);
+
+    const completionInfo = document.createElement("div");
+    completionInfo.className = "ettpd-scrapper-completion-info";
+    const total = AppState.allDirectLinks.length;
+    const downloaded = AppState.downloadedURLs.length;
+    completionInfo.innerHTML = `
+      <div style="margin-bottom: 15px;">
+        <div>📊 Total discovered: ${total} posts</div>
+        <div>✅ Downloaded: ${downloaded} posts</div>
+      </div>
+      <div style="font-size: 12px; color: #666; margin-bottom: 15px; line-height: 1.5;">
+        Auto-scrolling has reached the bottom. If you think there are more items, try manually scrolling down to trigger TikTok's "load more" feature, then click Continue.
+      </div>
+    `;
+    completionContainer.appendChild(completionInfo);
+
+    const continueBtn = document.createElement("button");
+    continueBtn.className = "ettpd-scrapper-continue-btn";
+    continueBtn.textContent = "🔄 Continue";
+    continueBtn.style.cssText = `
+      background: #007AFF;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 600;
+      width: 100%;
+      margin-top: 10px;
+      transition: background 0.2s;
+    `;
+
+    continueBtn.onmouseover = () => {
+      continueBtn.style.background = "#0056CC";
+    };
+    continueBtn.onmouseout = () => {
+      continueBtn.style.background = "#007AFF";
+    };
+
+    continueBtn.onclick = () => {
+      // Resume auto-scrolling and batch downloading
+      AppState.scrapperDetails.scrappingStage = "ongoing";
+      AppState.scrapperDetails.isAutoBatchDownloading = false;
+
+      // Resume scrolling if not at bottom
+      if (AppState.downloadPreferences.autoScrollMode === "off") {
+        AppState.downloadPreferences.autoScrollMode = "always";
+      }
+
+      localStorage.setItem(
+        STORAGE_KEYS.SCRAPPER_DETAILS,
+        JSON.stringify(AppState.scrapperDetails)
+      );
+
+      // Restart batch downloading
+      startAutoBatchDownloads();
+
+      // Refresh the scrapper controls to show progress
+      showScrapperControls();
+    };
+
+    // Add CSV download button
+    const csvBtn = document.createElement("button");
+    csvBtn.className = "ettpd-scrapper-continue-btn";
+    csvBtn.textContent = "📥 Download CSV";
+    csvBtn.style.cssText = `
+      background: #f0f0f0;
+      color: #333;
+      border: 1px solid #ddd;
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 600;
+      width: 100%;
+      margin-top: 10px;
+      transition: background 0.2s;
+    `;
+
+    csvBtn.onmouseover = () => {
+      csvBtn.style.background = "#e0e0e0";
+    };
+    csvBtn.onmouseout = () => {
+      csvBtn.style.background = "#f0f0f0";
+    };
+
+    csvBtn.onclick = () => {
+      // Get all downloaded items by filtering allDirectLinks
+      const allItems = AppState.allDirectLinks || [];
+      const downloadedItems = allItems.filter((item) =>
+        AppState.downloadedURLs.includes(item.url)
+      );
+
+      if (downloadedItems.length === 0) {
+        showAlertModal(
+          "No items to export",
+          "No downloaded items found to export to CSV."
+        );
+        return;
+      }
+
+      // Generate CSV using existing function
+      saveCSVFile(downloadedItems);
+
+      // Show success message
+      showAlertModal(
+        "CSV Export Started",
+        `Exporting ${downloadedItems.length} downloaded items to CSV file.`
+      );
+    };
+
+    // Add "End Scrapping" button
+    const endBtn = document.createElement("button");
+    endBtn.className = "ettpd-scrapper-continue-btn";
+    endBtn.textContent = "End Scrapping";
+    endBtn.style.cssText = `
+      background: #ff3b30;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 600;
+      width: 100%;
+      margin-top: 10px;
+      transition: background 0.2s;
+    `;
+
+    endBtn.onmouseover = () => {
+      endBtn.style.background = "#d32f2f";
+    };
+    endBtn.onmouseout = () => {
+      endBtn.style.background = "#ff3b30";
+    };
+
+    endBtn.onclick = () => {
+      // End scrapping - clear selected tab and reset state
+      AppState.scrapperDetails.scrappingStage = "completed";
+      AppState.scrapperDetails.isAutoBatchDownloading = false;
+      AppState.scrapperDetails.selectedTab = null;
+      AppState.scrapperDetails.selectedCollectionName = null;
+      AppState.scrapperDetails.paused = false;
+
+      // Stop auto-scroll
+      AppState.downloadPreferences.autoScrollMode = "off";
+
+      // Stop any ongoing downloads
+      AppState.downloading.isDownloadingAll = false;
+      AppState.downloading.isActive = false;
+
+      // Clear original path tracking
+      AppState.scrapperDetails.originalPath = null;
+      AppState.scrapperDetails.originalUsername = null;
+      AppState.scrapperDetails.originalCollectionName = null;
+
+      // Save to localStorage
+      localStorage.setItem(
+        STORAGE_KEYS.SCRAPPER_DETAILS,
+        JSON.stringify(AppState.scrapperDetails)
+      );
+
+      // Refresh scrapper controls to show initial state (tabs)
+      showScrapperControls();
+
+      // Update download button state
+      updateDownloadButtonLabelSimple();
+    };
+
+    completionContainer.appendChild(continueBtn);
+    completionContainer.appendChild(csvBtn);
+    completionContainer.appendChild(endBtn);
+    btnContainer.appendChild(completionContainer);
+  } else if (!isScrappingActive) {
+    // Show tabs when scrapping is not active
+    // Double-check that scrapping is not active before showing tabs
+    const createdTabButtons = [];
+
+    tabOptions.forEach(({ key, label }) => {
+      const tabSpan = spans[key];
+      if (
+        !tabSpan ||
+        (typeof tabSpan === "string" && !tabSpan.trim()) ||
+        (typeof tabSpan !== "string" && !tabSpan.offsetParent)
+      ) {
+        return;
+      }
+
+      const btn = document.createElement("button");
+      btn.className = `ettpd-tab-btn ettpd-tab-btn-${key}`;
+      btn.dataset.tabKey = key; // Store key for easy lookup
+      btn.innerHTML = `
+        <span class="ettpd-tab-check" aria-hidden="true">✓</span>
+        <span class="ettpd-tab-label">${label}</span>
+      `;
+      btn.setAttribute("aria-pressed", "false");
+
+      btn.addEventListener("click", () => {
+        // Remove active class from all tab buttons
+        document.querySelectorAll(".ettpd-tab-btn.active").forEach((b) => {
+          b.classList.remove("active");
+          b.setAttribute("aria-pressed", "false");
+        });
+
+        // Set the clicked one as active
+        btn.classList.add("active");
+        btn.setAttribute("aria-pressed", "true");
+        if (key == "collection") {
+          AppState.scrapperDetails.selectedCollectionName =
+            spans.collection || pageInfo.collectionName;
+        }
+
+        // Your existing logic
+        showScrapperStateUI(key);
+      });
+
+      btnContainer.appendChild(btn);
+      createdTabButtons.push({ key, btn });
     });
 
-    btnContainer.appendChild(btn);
-  });
-  const tabsAvailable =
-    tabOptions.filter(({ key }) => {
+    // Check which tabs are available
+    const availableTabs = tabOptions.filter(({ key }) => {
       const span = spans[key];
       if (!span) return false;
 
@@ -226,35 +621,369 @@ export async function showScrapperControls() {
       }
 
       return !!span.offsetParent; // DOM element visible
-    }).length !== 0;
-  if (!tabsAvailable) {
-    const subtitle = document.createElement("span");
-    subtitle.id = "tab-subtitle";
-    subtitle.innerText =
-      "🛑 Whoops — you're not on a profile or collection page. Turn on Auto Scroll in Settings (mode => 'Anytime'), smash that download, and you're golden. If this ain't it, refresh or hmu.";
+    });
 
-    btnContainer.appendChild(subtitle);
-  }
-  {
-    const subtitle = document.getElementById("tab-subtitle");
-    if (subtitle) {
-      subtitle.remove();
+    const tabsAvailable = availableTabs.length > 0;
+    const allTabsAvailable = availableTabs.length === tabOptions.length;
+
+    // Show refresh button if not all tabs are available (but at least some are)
+    if (tabsAvailable && !allTabsAvailable && pageInfo.isProfile) {
+      const refreshTabsBtn = document.createElement("button");
+      refreshTabsBtn.textContent = "🔄 Check for More Tabs";
+      refreshTabsBtn.className = "ettpd-refresh-tabs-btn";
+      refreshTabsBtn.style.cssText = `
+        background: #f0f0f0;
+        color: #333;
+        border: 1px solid #ddd;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: background 0.2s;
+        margin-top: 10px;
+        width: 100%;
+      `;
+      refreshTabsBtn.onmouseover = () => {
+        refreshTabsBtn.style.background = "#e0e0e0";
+      };
+      refreshTabsBtn.onmouseout = () => {
+        refreshTabsBtn.style.background = "#f0f0f0";
+      };
+
+      let isRefreshing = false;
+      refreshTabsBtn.onclick = async () => {
+        if (isRefreshing) return;
+        isRefreshing = true;
+        refreshTabsBtn.disabled = true;
+        refreshTabsBtn.textContent = "⏳ Checking...";
+        refreshTabsBtn.style.background = "#999";
+
+        try {
+          // Re-fetch tabs from DOM
+          const newSpans = await getTabSpans(5000, 100);
+
+          // Check which tabs are now available
+          const newAvailableTabs = tabOptions.filter(({ key }) => {
+            const span = newSpans[key];
+            if (!span) return false;
+            if (typeof span === "string") {
+              return span.trim().length > 0;
+            }
+            return !!span.offsetParent;
+          });
+
+          // If we found more tabs, re-render
+          if (newAvailableTabs.length > availableTabs.length) {
+            refreshTabsBtn.textContent = "✅ Found More!";
+            setTimeout(() => {
+              showScrapperControls(); // Re-render with new tabs
+            }, 500);
+          } else {
+            refreshTabsBtn.textContent = "🔄 Check for More Tabs";
+            refreshTabsBtn.style.background = "#f0f0f0";
+            // Show a brief message
+            const originalText = refreshTabsBtn.textContent;
+            refreshTabsBtn.textContent = "No new tabs found";
+            setTimeout(() => {
+              refreshTabsBtn.textContent = originalText;
+            }, 2000);
+          }
+        } catch (err) {
+          console.error("Error checking for tabs:", err);
+          refreshTabsBtn.textContent = "🔄 Check for More Tabs";
+          refreshTabsBtn.style.background = "#f0f0f0";
+        } finally {
+          isRefreshing = false;
+          refreshTabsBtn.disabled = false;
+        }
+      };
+
+      btnContainer.appendChild(refreshTabsBtn);
+    }
+
+    // Show message if not on profile/collection page OR if no tabs are available
+    if (!pageInfo.isProfile) {
+      const subtitle = document.createElement("span");
+      subtitle.id = "tab-subtitle";
+      subtitle.className = "ettpd-tab-subtitle";
+      subtitle.innerHTML =
+        "<strong>Heads up:</strong> Please navigate to a profile or collection page first. If you download from other pages, you may end up downloading random posts. Reload the page if you don't see any tabs.";
+      btnContainer.appendChild(subtitle);
+    } else if (!tabsAvailable) {
+      // Show auto-checking message with manual refresh button
+      const subtitle = document.createElement("div");
+      subtitle.id = "tab-subtitle";
+      subtitle.className = "ettpd-tab-subtitle";
+      subtitle.style.cssText = `
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        padding: 15px;
+        text-align: center;
+      `;
+
+      const message = document.createElement("div");
+      message.style.cssText = `
+        font-size: 13px;
+        color: #666;
+        margin-bottom: 5px;
+      `;
+      message.innerHTML = "<strong>🔍 Auto-checking for tabs...</strong>";
+
+      const refreshBtn = document.createElement("button");
+      refreshBtn.textContent = "🔄 Refresh Tabs";
+      refreshBtn.style.cssText = `
+        background: #007AFF;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 13px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: background 0.2s;
+      `;
+      refreshBtn.onmouseover = () => {
+        refreshBtn.style.background = "#0056CC";
+      };
+      refreshBtn.onmouseout = () => {
+        refreshBtn.style.background = "#007AFF";
+      };
+
+      let isRefreshing = false;
+      refreshBtn.onclick = async () => {
+        if (isRefreshing) return;
+        isRefreshing = true;
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = "⏳ Checking...";
+        refreshBtn.style.background = "#999";
+
+        try {
+          // Re-fetch tabs
+          const newSpans = await getTabSpans(5000, 100);
+
+          // Check if we found any tabs
+          const newTabsAvailable =
+            tabOptions.filter(({ key }) => {
+              const span = newSpans[key];
+              if (!span) return false;
+              if (typeof span === "string") {
+                return span.trim().length > 0;
+              }
+              return !!span.offsetParent;
+            }).length > 0;
+
+          if (newTabsAvailable) {
+            // Tabs found! Re-render the controls
+            refreshBtn.textContent = "✅ Found!";
+            setTimeout(() => {
+              showScrapperControls(); // Re-render with new tabs
+            }, 500);
+          } else {
+            refreshBtn.textContent = "🔄 Refresh Tabs";
+            refreshBtn.style.background = "#007AFF";
+            message.innerHTML =
+              "<strong>⚠️ No tabs found yet. Try scrolling the page or wait a moment.</strong>";
+          }
+        } catch (err) {
+          console.error("Error refreshing tabs:", err);
+          refreshBtn.textContent = "🔄 Refresh Tabs";
+          refreshBtn.style.background = "#007AFF";
+          message.innerHTML =
+            "<strong>❌ Error checking for tabs. Please try again.</strong>";
+        } finally {
+          isRefreshing = false;
+          refreshBtn.disabled = false;
+        }
+      };
+
+      subtitle.appendChild(message);
+      subtitle.appendChild(refreshBtn);
+      btnContainer.appendChild(subtitle);
+
+      // Auto-check for tabs periodically
+      let checkCount = 0;
+      const maxAutoChecks = 30; // Check for 30 seconds (30 checks * 1 second)
+      let autoCheckInterval = null;
+
+      // Store interval ID on the subtitle element so we can clean it up
+      const startAutoCheck = () => {
+        if (autoCheckInterval) {
+          clearInterval(autoCheckInterval);
+        }
+
+        autoCheckInterval = setInterval(async () => {
+          // Check if subtitle still exists (controls might have been re-rendered)
+          if (!document.getElementById("tab-subtitle")) {
+            clearInterval(autoCheckInterval);
+            return;
+          }
+
+          checkCount++;
+
+          // Stop checking after max attempts
+          if (checkCount > maxAutoChecks) {
+            clearInterval(autoCheckInterval);
+            if (message && document.getElementById("tab-subtitle")) {
+              message.innerHTML =
+                "<strong>⏱️ Auto-check stopped. Click Refresh Tabs to try again.</strong>";
+            }
+            return;
+          }
+
+          try {
+            const newSpans = await getTabSpans(2000, 100); // Quick check (2 seconds)
+
+            const newTabsAvailable =
+              tabOptions.filter(({ key }) => {
+                const span = newSpans[key];
+                if (!span) return false;
+                if (typeof span === "string") {
+                  return span.trim().length > 0;
+                }
+                return !!span.offsetParent;
+              }).length > 0;
+
+            if (newTabsAvailable) {
+              clearInterval(autoCheckInterval);
+              if (message) {
+                message.innerHTML =
+                  "<strong>✅ Tabs found! Loading...</strong>";
+              }
+              setTimeout(() => {
+                showScrapperControls(); // Re-render with new tabs
+              }, 500);
+            } else if (message && document.getElementById("tab-subtitle")) {
+              message.innerHTML = `<strong>🔍 Auto-checking for tabs... (${checkCount}/${maxAutoChecks})</strong>`;
+            }
+          } catch (err) {
+            console.error("Error in auto-check:", err);
+          }
+        }, 1000); // Check every 1 second
+      };
+
+      startAutoCheck();
     }
   }
 
+  // Remove any existing subtitle that might be stale
+  {
+    const existingSubtitle = document.getElementById("tab-subtitle");
+    if (existingSubtitle && existingSubtitle.parentElement !== btnContainer) {
+      existingSubtitle.remove();
+    }
+  }
+
+  // Remove all existing controls and tab buttons
   scrapperContainer
     .querySelectorAll(".ettpd-scrapper-controls")
+    .forEach((el) => el.remove());
+  scrapperContainer
+    .querySelectorAll(".ettpd-tab-btn")
     .forEach((el) => el.remove());
 
   scrapperContainer.appendChild(controls);
   controls.appendChild(btnContainer);
-  if (
-    AppState.scrapperDetails.scrappingStage == "ongoing" ||
-    AppState.scrapperDetails.scrappingStage == "downloading"
-  ) {
-    if (tabsAvailable)
-      showScrapperStateUI(AppState.scrapperDetails.selectedTab);
+
+  // Auto-select the previously chosen tab (or the first available) after controls are in DOM
+  // Only do this if we're showing tabs (not active or completed scrapping)
+  if (!isScrappingActive && !isScrappingCompleted) {
+    const tabButtons = btnContainer.querySelectorAll(".ettpd-tab-btn");
+    if (tabButtons.length > 0) {
+      const savedKey = AppState.scrapperDetails.selectedTab;
+      let defaultBtn = null;
+
+      // Find the button matching saved key using data attribute
+      if (savedKey) {
+        defaultBtn = Array.from(tabButtons).find(
+          (btn) => btn.dataset.tabKey === savedKey
+        );
+      }
+
+      // If no match found, use first button
+      if (!defaultBtn && tabButtons.length > 0) {
+        defaultBtn = tabButtons[0];
+      }
+
+      if (defaultBtn) {
+        // Remove active from all
+        tabButtons.forEach((btn) => {
+          btn.classList.remove("active");
+          btn.setAttribute("aria-pressed", "false");
+        });
+
+        // Set active on default
+        defaultBtn.classList.add("active");
+        defaultBtn.setAttribute("aria-pressed", "true");
+
+        // Get the key from data attribute
+        const tabKey = defaultBtn.dataset.tabKey;
+
+        // Set selected tab and collection name if needed
+        if (tabKey == "collection") {
+          AppState.scrapperDetails.selectedCollectionName =
+            spans.collection || pageInfo.collectionName;
+        }
+
+        // Show the start button container - controls are now in the DOM
+        showScrapperStateUI(tabKey);
+      }
+    }
   }
+
+  // Update download all button state when scrapper controls are shown
+  const downloadAllBtn = document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
+  if (downloadAllBtn) {
+    updateDownloadAllButtonState(downloadAllBtn);
+  }
+
+  // Update message when location changes
+  const updateMessageOnLocationChange = () => {
+    const pageInfo = isOnProfileOrCollectionPage();
+    const subtitle = document.getElementById("tab-subtitle");
+
+    if (!subtitle) return;
+
+    if (!pageInfo.isProfile) {
+      subtitle.innerHTML =
+        "<strong>Heads up:</strong> Please navigate to a profile or collection page first. If you download from other pages, you may end up downloading random posts. Reload the page if you don't see any tabs.";
+    } else {
+      // On valid page, check if tabs are available
+      const tabsAvailable =
+        btnContainer.querySelectorAll(".ettpd-tab-btn").length > 0;
+      if (!tabsAvailable) {
+        // If tabs aren't available, trigger a refresh of scrapper controls
+        // This will set up the auto-checking mechanism
+        showScrapperControls();
+      } else {
+        // Tabs are available, remove the message
+        subtitle.remove();
+      }
+    }
+  };
+
+  // Listen for location changes
+  window.addEventListener("locationchange", updateMessageOnLocationChange);
+  window.addEventListener("popstate", updateMessageOnLocationChange);
+
+  // Also check periodically in case tabs load after initial render
+  let checkCount = 0;
+  const checkInterval = setInterval(() => {
+    if (!document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER)) {
+      clearInterval(checkInterval);
+      return;
+    }
+    updateMessageOnLocationChange();
+
+    // Stop checking after 15 iterations (30 seconds at 2s intervals)
+    checkCount++;
+    if (checkCount >= 15) {
+      clearInterval(checkInterval);
+    }
+  }, 2000);
+
   return controls;
 }
 
@@ -277,22 +1006,54 @@ function explainerModal(tab) {
   <strong>File Path Templates</strong> under <strong>Settings → File Paths</strong>. 🛠️
 </p>`;
 
-  // Open the custom template modal
-  const configBtn = document.createElement("button");
-  configBtn.className = "ettpd-action-btn";
-  configBtn.textContent = "⚙️ Configure file paths";
-  configBtn.style.marginTop = "10px";
-  configBtn.onclick = () => {
-    createFilenameTemplateModal();
-  };
+  // Recommended template card with quick apply
+  const recommendedCard = document.createElement("div");
+  recommendedCard.style.cssText = `
+    background: var(--ettpd-bg-tertiary, #f0f0f0);
+    border: 1px solid var(--ettpd-border-color, #ddd);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+  `;
 
-  // NEW: one-click apply recommended template
+  const recommendedLabel = document.createElement("div");
+  recommendedLabel.style.cssText = `
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ettpd-text-primary, #333);
+    margin-bottom: 8px;
+  `;
+  recommendedLabel.textContent = "✨ Recommended Template";
+
+  const recommendedExample = document.createElement("div");
+  recommendedExample.style.cssText = `
+    font-size: 11px;
+    color: var(--ettpd-text-secondary, #666);
+    font-family: monospace;
+    margin-bottom: 10px;
+    word-break: break-all;
+  `;
+  recommendedExample.textContent = getRecommendedPresetTemplate().example;
+
   const applyBtn = document.createElement("button");
-  applyBtn.className = "ettpd-action-btn";
-  applyBtn.textContent = "✨ Apply Recommended File Path Template";
-  applyBtn.style.marginTop = "10px";
-  applyBtn.style.backgroundColor = "#0a84d6";
-  applyBtn.style.color = "white";
+  applyBtn.className = "ettpd-action-btn primary";
+  applyBtn.textContent = "✨ Use This Template";
+  applyBtn.style.cssText = `
+    width: 100%;
+    margin-bottom: 0;
+  `;
+
+  // Success message element (initially hidden)
+  const successMessage = document.createElement("div");
+  successMessage.style.cssText = `
+    font-size: 12px;
+    color: var(--ettpd-accent, #3391ff);
+    margin-top: 8px;
+    text-align: center;
+    font-weight: 500;
+    display: none;
+  `;
+
   applyBtn.onclick = () => {
     // Update state first (your comment says saveTemplates needs it)
     AppState.downloadPreferences.fullPathTemplate =
@@ -305,15 +1066,56 @@ function explainerModal(tab) {
     // First update the state, since it's needed by saveTemplates
     saveTemplates(updated);
     saveSelectedTemplate();
-    showAlertModal("Saved Recommended Template!");
+
+    // Show success message instead of opening another modal
+    successMessage.textContent = "✅ Template applied successfully!";
+    successMessage.style.display = "block";
+    applyBtn.disabled = true;
+    applyBtn.style.opacity = "0.7";
   };
 
-  const example = document.createElement("div");
-  example.innerText = `Example: ${getRecommendedPresetTemplate().example}`;
-  example.style.marginTop = "5px";
-  example.style.fontSize = "11px";
+  recommendedCard.appendChild(recommendedLabel);
+  recommendedCard.appendChild(recommendedExample);
+  recommendedCard.appendChild(applyBtn);
+  recommendedCard.appendChild(successMessage);
+
+  // Configure button - secondary action
+  const configBtn = document.createElement("button");
+  configBtn.className = "ettpd-action-btn secondary";
+  configBtn.textContent = "⚙️ Customize File Paths";
+  configBtn.style.cssText = `
+    width: 100%;
+  `;
+  configBtn.onclick = () => {
+    createFilenameTemplateModal();
+  };
+
+  const actionsContainer = document.createElement("div");
+  actionsContainer.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  `;
+  actionsContainer.appendChild(recommendedCard);
+  actionsContainer.appendChild(configBtn);
+
+  // Close button for easy access
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "ettpd-action-btn secondary";
+  closeBtn.textContent = "✕ Close";
+  closeBtn.style.cssText = `
+    width: 100%;
+    margin-top: 8px;
+  `;
+  closeBtn.onclick = () => {
+    const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
+    if (overlay) overlay.remove();
+  };
+
+  actionsContainer.appendChild(closeBtn);
+
   createModal({
-    children: [description, configBtn, applyBtn, example],
+    children: [description, actionsContainer],
   });
 }
 
@@ -353,6 +1155,15 @@ function showScrapperStateUI(tabKey) {
     AppState.scrapperDetails.scrappingStage = "initiated";
     AppState.scrapperDetails.paused = false;
     AppState.scrapperDetails.locked = true;
+
+    // Store original path and username to detect navigation away
+    const pageInfo = isOnProfileOrCollectionPage();
+    AppState.scrapperDetails.originalPath = window.location.pathname;
+    AppState.scrapperDetails.originalUsername = getCurrentPageUsername();
+    if (pageInfo.isCollection) {
+      AppState.scrapperDetails.originalCollectionName = pageInfo.collectionName;
+    }
+
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
       JSON.stringify(AppState.scrapperDetails)
@@ -428,41 +1239,147 @@ function applyCornerPosition(wrapper, position) {
   }
 }
 
-function createDownloadAllButton(enabled = true) {
+function createDownloadAllButton() {
+  const container = document.createElement("div");
+  container.id = DOM_IDS.DOWNLOAD_ALL_BUTTON + "-container";
+  container.className = "ettpd-download-all-container";
+
   const btn = document.createElement("button");
   btn.id = DOM_IDS.DOWNLOAD_ALL_BUTTON;
   btn.className = "ettpd-btn download-all-btn";
-  const total = AppState.allDirectLinks.length;
+  btn.textContent = "⬇️ Download";
+  btn.disabled = true;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    if (btn.disabled) return;
+    downloadAllLinks(btn);
+  };
+
+  const message = document.createElement("div");
+  message.id = DOM_IDS.DOWNLOAD_ALL_BUTTON + "-message";
+  message.className = "ettpd-scrapper-message";
+  message.style.display = "none";
+  message.innerHTML = `
+    <strong>💡 Use the Scrapper instead!</strong><br>
+    <span style="font-size: 11px;">Pick a tab (e.g., Scrape Videos), then click Start to begin automated downloading.</span>
+  `;
+  message.style.fontSize = "12px";
+  message.style.color = "#666";
+  message.style.marginTop = "5px";
+  message.style.textAlign = "center";
+  message.style.padding = "10px";
+  message.style.borderRadius = "5px";
+  message.style.backgroundColor = "#f0f0f0";
+  message.style.border = "1px solid #ccc";
+  message.style.lineHeight = "1.5";
+
+  container.appendChild(btn);
+  container.appendChild(message);
+
+  return container;
+}
+
+function updateDownloadAllButtonState(btn, items = []) {
+  if (!btn) return;
+
+  const scrapperBoxOpen = AppState.ui.isScrapperBoxOpen;
+  const scrappingStage = AppState.scrapperDetails.scrappingStage;
+  const selectedTab = AppState.scrapperDetails.selectedTab;
+  const scrappingAbandoned =
+    scrappingStage === "completed" &&
+    AppState.scrapperDetails.paused &&
+    AppState.scrapperDetails.originalPath !== null; // Indicates it was abandoned
+
+  // Check if scrapping is actually active (ongoing or downloading)
+  const isScrappingActive =
+    scrappingStage === "ongoing" || scrappingStage === "downloading";
+
+  // Check if scrapper is selected but not started - hide button in this case
+  const scrapperSelectedNotStarted =
+    selectedTab &&
+    scrappingStage !== "ongoing" &&
+    scrappingStage !== "downloading" &&
+    scrappingStage !== "completed";
+
+  // btn might be the container or the actual button
+  const container =
+    btn.id === DOM_IDS.DOWNLOAD_ALL_BUTTON + "-container"
+      ? btn
+      : btn.closest("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-container");
+  const actualBtn = container
+    ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON)
+    : btn.id === DOM_IDS.DOWNLOAD_ALL_BUTTON
+    ? btn
+    : null;
+  const message = container
+    ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-message")
+    : null;
+
+  if (!actualBtn) return;
+
+  // Show container
+  if (container) container.style.display = "block";
+
+  // Hide button only when:
+  // 1. Scrapper box is open AND scrapping is active (ongoing/downloading), OR
+  // 2. Scrapper box is open AND a tab is selected but not started
+  // BUT allow manual downloads if scrapping was abandoned
+  if (scrapperBoxOpen && !scrappingAbandoned) {
+    if (isScrappingActive || scrapperSelectedNotStarted) {
+      actualBtn.style.display = "none";
+      if (message) message.style.display = "block";
+      return;
+    }
+    // If scrapper box is open but scrapping is not active and no tab selected,
+    // show the button normally (user can use regular download)
+  }
+
+  // If scrapping was abandoned, show the button for manual downloads
+  if (scrapperBoxOpen && scrappingAbandoned) {
+    actualBtn.style.display = "block";
+    if (message) message.style.display = "none";
+    // Continue to show normal button state below
+  }
+
+  if (scrapperSelectedNotStarted) {
+    // Hide button and show message when scrapper is selected but not started
+    actualBtn.style.display = "none";
+    if (message) message.style.display = "block";
+    return;
+  }
+
+  // Show button and hide message (when scrapping is ongoing or not using scrapper)
+  actualBtn.style.display = "block";
+  if (message) message.style.display = "none";
+
+  const total = items.length || AppState.allDirectLinks.length;
   const done = AppState.downloadedURLs.length;
+  const isDownloading = AppState.downloading.isDownloadingAll;
 
   if (!total) {
-    btn.textContent = "🚫 Nothing to download";
-    btn.disabled = true;
-  } else if (AppState.downloading.isDownloadingAll) {
+    actualBtn.textContent = "🚫 Nothing to download";
+    actualBtn.disabled = true;
+    return;
+  }
+
+  if (isDownloading) {
     if (done < total) {
-      btn.textContent = `⏳ Downloading ${done} of ${total} post${
+      actualBtn.textContent = `⏳ Downloading ${done} of ${total} post${
         total !== 1 ? "s" : ""
       }…`;
-      btn.disabled = true;
     } else {
-      btn.textContent = `✅ All ${total} post${
+      actualBtn.textContent = `✅ All ${total} post${
         total !== 1 ? "s" : ""
       } downloaded`;
     }
-  } else {
-    btn.textContent = `⬇️ Download ${total > 1 ? `all ${total}` : "1"} post${
-      total !== 1 ? "s" : ""
-    }`;
-    btn.disabled = false;
+    actualBtn.disabled = true;
+    return;
   }
 
-  btn.disabled = !enabled;
-  btn.onclick = (e) => {
-    e.stopPropagation();
-    if (!enabled) return;
-    downloadAllLinks(btn);
-  };
-  return btn;
+  actualBtn.textContent = `⬇️ Download ${
+    total > 1 ? `all ${total}` : "1"
+  } post${total !== 1 ? "s" : ""}`;
+  actualBtn.disabled = false;
 }
 
 export function updateDownloadButtonLabel(btnElement, text) {
@@ -479,9 +1396,53 @@ export function updateDownloadButtonLabel(btnElement, text) {
 export function updateDownloadButtonLabelSimple() {
   const downloadAllBtn = document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
   if (!downloadAllBtn) return;
+
+  // Check if scrapper is selected but not started - hide button in this case
+  const scrapperSelectedNotStarted =
+    AppState.scrapperDetails.selectedTab &&
+    AppState.scrapperDetails.scrappingStage !== "ongoing" &&
+    AppState.scrapperDetails.scrappingStage !== "downloading" &&
+    AppState.scrapperDetails.scrappingStage !== "completed";
+
+  const container = downloadAllBtn.parentElement;
+  const message = container
+    ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-message")
+    : null;
+
+  // Show container
+  if (container) container.style.display = "block";
+
+  if (scrapperSelectedNotStarted) {
+    // Hide button and show message when scrapper is selected but not started
+    downloadAllBtn.style.display = "none";
+    if (message) message.style.display = "block";
+    return;
+  }
+
+  // Show button and hide message (when scrapping is ongoing or not using scrapper)
+  downloadAllBtn.style.display = "block";
+  if (message) message.style.display = "none";
+
   const total = AppState.allDirectLinks.length;
   const done = AppState.downloadedURLs.length;
   const isDownloading = AppState.downloading.isDownloadingAll;
+
+  // If scrapper is in batch downloading mode, show batch status
+  if (
+    AppState.scrapperDetails.scrappingStage === "ongoing" &&
+    AppState.scrapperDetails.isAutoBatchDownloading
+  ) {
+    // Show simple progress: current item being downloaded out of total discovered
+    // Cap the current item at total to avoid showing "item X of Y" where X > Y
+    const currentItem = Math.min(done + 1, total);
+    if (done >= total) {
+      downloadAllBtn.textContent = `Downloaded: ${done} of ${total} items discovered`;
+    } else {
+      downloadAllBtn.textContent = `Downloading item ${currentItem} of ${total} items discovered`;
+    }
+    downloadAllBtn.disabled = true;
+    return;
+  }
 
   if (!total) {
     downloadAllBtn.textContent = "🚫 Nothing to download";
@@ -505,23 +1466,59 @@ export function updateDownloadButtonLabelSimple() {
   }
 }
 
-function createCurrentVideoButton(items) {
+function createCurrentVideoButton() {
   const btn = document.createElement("button");
   btn.className = "ettpd-btn ettpd-current-video-btn";
   btn.textContent = "Download Current";
+  btn.disabled = true;
+  btn.onclick = () => {};
+  btn.style.width = "100%";
+  btn.style.marginBottom = "5px";
+  btn.style.marginTop = "10px";
+  return btn;
+}
 
+function updateCurrentVideoButton(btn, items = []) {
+  if (!btn) return;
   const currentVideoId = document.location.pathname.split("/")[3];
   const currentMedia = items.find(
     (media) => currentVideoId && media.videoId === currentVideoId
   );
 
-  btn.onclick = !currentMedia
-    ? () => {}
-    : !currentMedia.isImage
-    ? () => downloadSingleMedia(currentMedia)
-    : (e) => downloadAllPostImagesHandler(e, currentMedia);
+  if (!currentMedia) {
+    btn.disabled = true;
+    btn.textContent = "Download Current";
+    btn.onclick = () => {};
+    return;
+  }
 
-  return currentMedia ? btn : document.createElement("span");
+  btn.disabled = false;
+  btn.textContent = currentMedia.isImage
+    ? "Download Current Images"
+    : "Download Current";
+
+  if (currentMedia.isImage) {
+    btn.onclick = (e) => downloadAllPostImagesHandler(e, currentMedia);
+  } else {
+    btn.onclick = async (e) => {
+      e?.stopPropagation?.();
+      btn.disabled = true;
+      const originalText = btn.textContent;
+      btn.textContent = "⏳ Downloading...";
+      try {
+        await downloadSingleMedia(currentMedia);
+        btn.textContent = "✅ Done!";
+      } catch (err) {
+        console.warn("Download current failed", err);
+        btn.textContent = "❌ Failed";
+      } finally {
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }, 1500);
+      }
+    };
+  }
 }
 
 function createReportBugButton() {
@@ -657,7 +1654,8 @@ export function createControlButtons(preferencesBox) {
   const userPostsBtn = document.createElement("button");
   userPostsBtn.className = "ettpd-settings-toggle";
   userPostsBtn.textContent = "🥹 Scrapper";
-  userPostsBtn.title = "Download/Archive likes, reposts, favorites or collections";
+  userPostsBtn.title =
+    "Download/Archive likes, reposts, favorites or collections";
   userPostsBtn.style.flex = "1";
 
   container.appendChild(settingsBtn);
@@ -670,396 +1668,443 @@ export function updateDownloaderList(items, hashToDisplay) {
   if (AppState.downloading.isActive || AppState.downloading.isDownloadingAll)
     return;
   const _id = DOM_IDS.DOWNLOADER_WRAPPER;
-  // Clean up if a wrapper already exists;
-  document.getElementById(_id)?.remove();
-
-  const wrapper = createDownloaderWrapper();
-  // Despicable hack
-  setTimeout(async () => {
-    showStatsSpan();
-    await showScrapperControls();
-  });
-
-  // AppState.allDirectLinks = [];
-  // ettpd-download-btn-holder
-
-  // Preferences box
-  const preferencesBox = createPreferencesBox();
-  const {
-    container: settingsAndScrapperBtnContainer,
-    settingsBtn,
-    userPostsBtn,
-  } = createControlButtons(preferencesBox, () => {
-    console.log("Fetching user post stats...");
-    // call your user posts stats fetcher here
-  });
-
-  const scrapperContainer = document.createElement("div");
-  scrapperContainer.id = DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER;
-  function updateVisibleBox() {
-    // if scrapper and pref are open give higher priority the scrapper
-    if (AppState.ui.isScrapperBoxOpen && AppState.ui.isPreferenceBoxOpen) {
-      AppState.ui.isScrapperBoxOpen = true;
-      AppState.ui.isPreferenceBoxOpen = false;
-    }
-    if (document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER))
-      document.getElementById(
-        DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER
-      ).style.display = AppState.ui.isScrapperBoxOpen ? "flex" : "none";
-
-    if (document.querySelector(".ettpd-preferences-box")) {
-      document.querySelector(".ettpd-preferences-box").style.display = AppState
-        .ui.isPreferenceBoxOpen
-        ? "flex"
-        : "none";
-    }
-    
-    // Update button active states
-    if (settingsBtn) {
-      if (AppState.ui.isPreferenceBoxOpen) {
-        settingsBtn.classList.add("ettpd-settings-open");
-      } else {
-        settingsBtn.classList.remove("ettpd-settings-open");
-      }
-    }
-    if (userPostsBtn) {
-      if (AppState.ui.isScrapperBoxOpen) {
-        userPostsBtn.classList.add("ettpd-settings-open");
-      } else {
-        userPostsBtn.classList.remove("ettpd-settings-open");
-      }
-    }
+  let wrapper = document.getElementById(_id);
+  let isNewWrapper = false;
+  if (!wrapper) {
+    wrapper = createDownloaderWrapper();
+    isNewWrapper = true;
   }
-  updateVisibleBox();
-  
-  userPostsBtn.onclick = (e) => {
-    // Close Settings if open
-    AppState.ui.isPreferenceBoxOpen = false;
-    AppState.ui.isScrapperBoxOpen = !AppState.ui.isScrapperBoxOpen;
 
-    updateVisibleBox();
-    console.log("AUG7SCROLL isScrapperBoxOpen", AppState.ui.isScrapperBoxOpen);
-  };
-  // addClosePreferenceButton(preferencesBox);
+  if (isNewWrapper || !wrapper._structureInitialized) {
+    initializeDownloaderStructure(wrapper);
+    wrapper._structureInitialized = true;
+  }
 
-  // === Create the main wrapper ===
+  const refs = wrapper._ettpdRefs;
+  refs?.updateVisibleBox?.();
+  updateDownloadAllButtonState(refs?.downloadAllBtn, items);
+  updateCurrentVideoButton(refs?.currentVideoBtn, items);
 
-  const list = document.createElement("ol");
-  list.className = "ettpd-ol";
-  let downloadAllBtn = document.createElement("span");
   if (items.length > 0) {
-    downloadAllBtn = createDownloadAllButton(items.length > 0);
-    // Update the download button label
-
-    updateDownloadButtonLabel(
-      downloadAllBtn,
-      `Download ${items.length > 1 ? "All " + items.length : 1} Post${
-        items.length > 1 ? "s" : ""
-      }!`
-    );
     AppState.recommendationsLeaderboard.newlyRecommendedUrls = items;
     try {
       setTimeout(() => {
         updateAllTimeRecommendationsLeaderBoard(hashToDisplay);
       }, 0);
-    } catch (err) {}
-    // Populate the list with items
-    items.reverse().forEach((media, idx) => {
-      const item = document.createElement("li");
-      item.className = "ettpd-li";
-
-      const currentVideoId = document.location.pathname.split("/")[3];
-
-      // Container for author and desc
-      const textContainer = document.createElement("div");
-      textContainer.className = "ettpd-text-container";
-
-      // Container to hold emojis and author link
-      const authorWrapper = document.createElement("div");
-      authorWrapper.className = "ettpd-author-wrapper"; // Add CSS to style inline if needed
-
-      // ▶️ Current video indicator
-      if (currentVideoId && currentVideoId === media?.videoId) {
-        const liveEmoji = document.createElement("span");
-        liveEmoji.textContent = "▶️";
-        liveEmoji.title = "Currently playing video";
-        liveEmoji.className = "ettpd-emoji";
-        authorWrapper.appendChild(liveEmoji);
-      }
-
-      // 🤷‍♂️ Low confidence indicator
-      if (media?.downloaderHasLowConfidence) {
-        const lowConfidenceEmoji = document.createElement("span");
-        lowConfidenceEmoji.textContent = "🤷‍♂️";
-        lowConfidenceEmoji.title = "Low confidence data";
-        lowConfidenceEmoji.className = "ettpd-emoji";
-        authorWrapper.appendChild(lowConfidenceEmoji);
-      }
-
-      // 📣  Ad indicator
-      if (media?.isAd) {
-        const adEmoji = document.createElement("span");
-        adEmoji.textContent = "📣";
-        adEmoji.title = "Sponsored or ad content";
-        adEmoji.className = "ettpd-emoji";
-        authorWrapper.appendChild(adEmoji);
-      }
-
-      // Author link
-      const authorAnchor = document.createElement("a");
-      authorAnchor.className = "ettpd-a ettpd-author-link";
-      authorAnchor.target = "_blank";
-      authorAnchor.href = `https://www.tiktok.com/@${media?.authorId}`;
-      authorAnchor.innerText = media?.authorId
-        ? `@${media.authorId}`
-        : "Unknown Author";
-
-      authorWrapper.appendChild(authorAnchor);
-
-      // Description element
-      const descSpan = document.createElement("span");
-      descSpan.className = "ettpd-desc-span";
-      const fullDesc = media?.desc || "";
-      const shortDesc =
-        fullDesc.length > 100 ? fullDesc.slice(0, 100) + "..." : fullDesc;
-      let expanded = false;
-      descSpan.innerText = shortDesc;
-
-      // Toggle on click
-      descSpan.style.cursor = fullDesc.length > 100 ? "pointer" : "default";
-      descSpan.style.textDecoration =
-        fullDesc.length > 100 ? "underline" : "none";
-      descSpan.title = fullDesc.length > 100 ? "Expandable" : "Description";
-      descSpan.onclick = () => {
-        expanded = !expanded;
-        descSpan.innerText = expanded ? fullDesc : shortDesc;
-      };
-
-      textContainer.append(authorWrapper, descSpan);
-
-      // Download button holder
-
-      const downloadBtnHolder = document.createElement("div");
-      downloadBtnHolder.className = "ettpd-download-btn-holder";
-
-      if (media.isImage && Array.isArray(media.imagePostImages)) {
-        // Create the download-all button container
-
-        const downloadAllBtnContainer = document.createElement("div");
-        downloadAllBtnContainer.className =
-          "ettpd-images-download-all-container";
-        const downloadAllBtn = document.createElement("button");
-        const tiktokBtnContainer = document.createElement("div");
-        tiktokBtnContainer.className =
-                  "ettpd-download-btn ettpd-tiktok-btn";
-        tiktokBtnContainer.title = "Open on TikTok";
-        tiktokBtnContainer.onclick = (e) => {
-            e.stopPropagation();
-            if (media?.videoId && media?.authorId)
-              window.open(
-                `https://tiktok.com/@${media.authorId}/photo/${media.videoId}`,
-                "_blank"
-              );
-          };
-        const tiktokBtn = document.createElement("span");
-        tiktokBtnContainer.appendChild(tiktokBtn);
-        downloadAllBtnContainer.appendChild(tiktokBtnContainer);
-        downloadAllBtn.textContent = "⬇️ Download All Images";
-        downloadAllBtn.className = "ettpd-download-btn";
-        downloadAllBtn.style.marginBottom = "10px";
-        downloadAllBtn.style.marginTop = "5px";
-
-        downloadAllBtn.onclick = (e) => downloadAllPostImagesHandler(e, media);
-        downloadAllBtnContainer.appendChild(downloadAllBtn);
-        downloadBtnHolder.appendChild(downloadAllBtnContainer);
-        // Then render the image list after
-        const imageList = document.createElement("ol");
-        imageList.className = "ettpd-image-download-list";
-
-        media.imagePostImages.forEach((url, i) => {
-          const li = document.createElement("li");
-          li.className = "ettpd-image-download-item";
-
-          // Open button
-          const openBtn = document.createElement("button");
-          const openBtnSpan = document.createElement("span");
-          openBtn.className = "ettpd-download-btn ettpd-view-btn";
-          openBtn.onclick = (e) => {
-            e.stopPropagation();
-            if (url) window.open(url, "_blank");
-          };
-          openBtn.appendChild(openBtnSpan);
-
-          // Download button
-          const downloadBtn = document.createElement("button");
-          downloadBtn.textContent = "Download";
-          downloadBtn.className = "ettpd-download-btn";
-
-          downloadBtn.onclick = async (e) => {
-            e.stopPropagation();
-
-            const originalText = downloadBtn.textContent;
-            downloadBtn.textContent = "⏳ Downloading...";
-
-            const delayBeforeStart = 600;
-            const minDisplayAfter = 1000;
-            const startedAt = Date.now();
-
-            await new Promise((r) => setTimeout(r, delayBeforeStart));
-
-            try {
-              await downloadSingleMedia(media, { imageIndex: i });
-
-              const elapsed = Date.now() - startedAt;
-              const remaining = Math.max(0, minDisplayAfter - elapsed);
-
-              setTimeout(() => {
-                downloadBtn.textContent = "✅ Done!";
-                setTimeout(() => {
-                  downloadBtn.textContent = originalText;
-                }, 3000);
-              }, remaining);
-            } catch (err) {
-              console.error("Image download failed:", err);
-              const elapsed = Date.now() - startedAt;
-              const remaining = Math.max(0, minDisplayAfter - elapsed);
-
-              setTimeout(() => {
-                downloadBtn.textContent = "❌ Failed!";
-                setTimeout(() => {
-                  downloadBtn.textContent = originalText;
-                }, 3000);
-              }, remaining);
-            }
-          };
-
-          li.append(openBtn, downloadBtn);
-
-          imageList.appendChild(li);
-        });
-
-        downloadBtnHolder.appendChild(imageList);
-      } else {
-        // Single video or non-image content
-        const tiktokBtnContainer = document.createElement("div");
-        tiktokBtnContainer.className = "ettpd-download-btn ettpd-tiktok-btn";
-        tiktokBtnContainer.title = "Open on TikTok";
-        const tiktokBtn = document.createElement("span");
-
-        tiktokBtn.onclick = (e) => {
-          e.stopPropagation();
-          if (media?.videoId && media?.authorId)
-            window.open(
-              `https://tiktok.com/@${media.authorId}/video/${media.videoId}`,
-              "_blank"
-            );
-        };
-        tiktokBtnContainer.appendChild(tiktokBtn);
-        const viewBtnContainer = document.createElement("div");
-        viewBtnContainer.className = "ettpd-download-btn ettpd-view-btn";
-        viewBtnContainer.title = "Open Direct Link";
-        const viewBtn = document.createElement("span");
-        viewBtn.onclick = (e) => {
-          e.stopPropagation();
-          if (media?.url) window.open(media.url, "_blank");
-        };
-        viewBtnContainer.appendChild(viewBtn);
-
-        const downloadBtn = document.createElement("button");
-        downloadBtn.textContent = "Download";
-        downloadBtn.className = "ettpd-download-btn";
-
-        downloadBtn.onclick = async (e) => {
-          e.stopPropagation();
-
-          const originalText = downloadBtn.textContent;
-          downloadBtn.textContent = "⏳ Downloading...";
-          const delayBeforeStart = 600;
-          const minDisplayAfter = 1000;
-          const startedAt = Date.now();
-
-          await new Promise((r) => setTimeout(r, delayBeforeStart));
-
-          try {
-            await downloadSingleMedia(media);
-
-            const elapsed = Date.now() - startedAt;
-            const remaining = Math.max(0, minDisplayAfter - elapsed);
-
-            setTimeout(() => {
-              downloadBtn.textContent = "✅ Done!";
-              setTimeout(() => {
-                downloadBtn.textContent = originalText;
-              }, 3000);
-            }, remaining);
-          } catch (err) {
-            console.error("Download failed:", err);
-            const elapsed = Date.now() - startedAt;
-            const remaining = Math.max(0, minDisplayAfter - elapsed);
-
-            setTimeout(() => {
-              downloadBtn.textContent = "❌ Failed!";
-              setTimeout(() => {
-                downloadBtn.textContent = originalText;
-              }, 3000);
-            }, remaining);
-          }
-        };
-
-        const holderEl = document.createElement("div");
-        holderEl.className = "ettpd-download-btns-container";
-        holderEl.append(tiktokBtnContainer, viewBtnContainer, downloadBtn);
-        downloadBtnHolder.append(holderEl);
-      }
-
-      item.append(textContainer, downloadBtnHolder);
-      list.appendChild(item);
-    });
-
-    list.style.setProperty("--list-length", list.children.length);
-    AppState.displayedState.itemsHash = hashToDisplay;
-    AppState.displayedState.path = window.location.pathname;
+    } catch (err) {
+      console.warn("Failed to update leaderboard", err);
+    }
   } else {
-    showEmptyState(downloadAllBtn); // place the empty message inside the list area
+    AppState.recommendationsLeaderboard.newlyRecommendedUrls = [];
   }
-  // === Persistent controls ===
-  wrapper.append(
-    // createStatsSpan(),
-    settingsAndScrapperBtnContainer,
-    scrapperContainer,
-    preferencesBox,
-    downloadAllBtn,
-    createCurrentVideoButton(items),
-    createReportBugButton(),
-    createCreditsSpan(),
-    list,
-    createCloseButton()
-  );
-  console.log("ALLHELLBLOCKLOSE", {
-    settingsAndScrapperBtnContainer,
-    preferencesBox,
-    downloadAllBtn,
-    createCurrentVideoButton: createCurrentVideoButton(items),
-    createReportBugButton: createReportBugButton(),
-    createCreditsSpan: createCreditsSpan(),
-    list: list,
-    createCloseButton: createCloseButton(),
-  });
+
+  renderMediaList(refs?.list, items);
+
+  if (isNewWrapper && !wrapper.dataset.statsInitialized) {
+    setTimeout(async () => {
+      showStatsSpan();
+      await showScrapperControls();
+    });
+    wrapper.dataset.statsInitialized = "true";
+  }
+
+  AppState.displayedState.itemsHash = hashToDisplay;
+  AppState.displayedState.path = window.location.pathname;
+
   return wrapper;
 }
 
-export function showEmptyState(container) {
-  let existing = container.querySelector(".ettpd-empty");
+function initializeDownloaderStructure(wrapper) {
+  const preferencesBox = createPreferencesBox();
+  const {
+    container: settingsAndScrapperBtnContainer,
+    settingsBtn,
+    userPostsBtn,
+  } = createControlButtons(preferencesBox);
 
-  if (existing) {
-    existing.style.display = "";
+  const scrapperContainer = document.createElement("div");
+  scrapperContainer.id = DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER;
+  const downloadAllContainer = createDownloadAllButton();
+  const downloadAllBtn = downloadAllContainer.querySelector(
+    "#" + DOM_IDS.DOWNLOAD_ALL_BUTTON
+  );
+  const currentVideoBtn = createCurrentVideoButton();
+  const reportBugBtn = createReportBugButton();
+  const creditsSpan = createCreditsSpan();
+  const list = document.createElement("ol");
+  list.className = "ettpd-ol";
+  const closeBtn = createCloseButton();
+
+  wrapper.append(
+    settingsAndScrapperBtnContainer,
+    scrapperContainer,
+    preferencesBox,
+    downloadAllContainer,
+    currentVideoBtn,
+    reportBugBtn,
+    creditsSpan,
+    list,
+    closeBtn
+  );
+
+  const refs = {
+    preferencesBox,
+    settingsBtn,
+    userPostsBtn,
+    scrapperContainer,
+    downloadAllBtn,
+    currentVideoBtn,
+    list,
+  };
+
+  const updateVisibleBox = () => {
+    if (AppState.ui.isScrapperBoxOpen && AppState.ui.isPreferenceBoxOpen) {
+      AppState.ui.isScrapperBoxOpen = true;
+      AppState.ui.isPreferenceBoxOpen = false;
+    }
+
+    if (scrapperContainer) {
+      scrapperContainer.style.display = AppState.ui.isScrapperBoxOpen
+        ? "flex"
+        : "none";
+    }
+
+    if (preferencesBox) {
+      preferencesBox.style.display = AppState.ui.isPreferenceBoxOpen
+        ? "flex"
+        : "none";
+    }
+
+    if (settingsBtn) {
+      settingsBtn.classList.toggle(
+        "ettpd-settings-open",
+        AppState.ui.isPreferenceBoxOpen
+      );
+    }
+
+    if (userPostsBtn) {
+      userPostsBtn.classList.toggle(
+        "ettpd-settings-open",
+        AppState.ui.isScrapperBoxOpen
+      );
+    }
+
+    // Update download all button state when scrapper box visibility changes
+    if (downloadAllBtn) {
+      updateDownloadAllButtonState(downloadAllBtn);
+    }
+  };
+
+  refs.updateVisibleBox = updateVisibleBox;
+  updateVisibleBox();
+
+  userPostsBtn.onclick = (e) => {
+    e.stopPropagation();
+    AppState.ui.isPreferenceBoxOpen = false;
+    AppState.ui.isScrapperBoxOpen = !AppState.ui.isScrapperBoxOpen;
+    updateVisibleBox();
+  };
+
+  wrapper._ettpdRefs = refs;
+}
+
+function renderMediaList(listEl, items = []) {
+  if (!listEl) return;
+
+  if (!items.length) {
+    listEl.replaceChildren(createEmptyListPlaceholder());
+    listEl.style.setProperty("--list-length", "0");
     return;
   }
 
-  const p = document.createElement("p");
-  p.className = "ettpd-span ettpd-empty";
-  p.innerText = "No videos found to display 😔";
-  container.appendChild(p);
+  const existingNodes = new Map(
+    Array.from(listEl.children).map((child) => [child.dataset.videoId, child])
+  );
+
+  const fragment = document.createDocumentFragment();
+  const orderedItems = [...items].reverse();
+
+  orderedItems.forEach((media) => {
+    const key = media.videoId || media.id;
+    if (!key) return;
+    const entryHash = getMediaEntryHash(media);
+
+    let node = existingNodes.get(key);
+
+    if (node && node.dataset.entryHash === entryHash) {
+      existingNodes.delete(key);
+    } else {
+      if (node) {
+        existingNodes.delete(key);
+        node.remove();
+      }
+      node = buildMediaListItem(media);
+      node.dataset.entryHash = entryHash;
+    }
+
+    node.dataset.videoId = key;
+    fragment.appendChild(node);
+  });
+
+  existingNodes.forEach((node) => node.remove());
+
+  listEl.replaceChildren(fragment);
+  listEl.style.setProperty("--list-length", String(orderedItems.length));
+}
+
+function createEmptyListPlaceholder() {
+  const li = document.createElement("li");
+  li.className = "ettpd-li ettpd-empty";
+  li.textContent = "No videos found to display 😔";
+  return li;
+}
+
+function getMediaEntryHash(media) {
+  const parts = [
+    media.videoId || media.id || "",
+    media.authorId || "",
+    media.desc || "",
+    media.downloaderHasLowConfidence ? "1" : "0",
+    media.isAd ? "1" : "0",
+    media.isImage
+      ? `img:${(media.imagePostImages || []).join("|")}`
+      : `vid:${media.url || ""}`,
+  ];
+  return parts.join("|");
+}
+
+function buildMediaListItem(media) {
+  const item = document.createElement("li");
+  item.className = "ettpd-li";
+  item.dataset.videoId = media.videoId || media.id || "";
+
+  const currentVideoId = document.location.pathname.split("/")[3];
+
+  const textContainer = document.createElement("div");
+  textContainer.className = "ettpd-text-container";
+
+  const authorWrapper = document.createElement("div");
+  authorWrapper.className = "ettpd-author-wrapper";
+
+  if (currentVideoId && currentVideoId === media?.videoId) {
+    const liveEmoji = document.createElement("span");
+    liveEmoji.textContent = "▶️";
+    liveEmoji.title = "Currently playing video";
+    liveEmoji.className = "ettpd-emoji";
+    authorWrapper.appendChild(liveEmoji);
+  }
+
+  if (media?.downloaderHasLowConfidence) {
+    const lowConfidenceEmoji = document.createElement("span");
+    lowConfidenceEmoji.textContent = "🤷‍♂️";
+    lowConfidenceEmoji.title = "Low confidence data";
+    lowConfidenceEmoji.className = "ettpd-emoji";
+    authorWrapper.appendChild(lowConfidenceEmoji);
+  }
+
+  if (media?.isAd) {
+    const adEmoji = document.createElement("span");
+    adEmoji.textContent = "📣";
+    adEmoji.title = "Sponsored or ad content";
+    adEmoji.className = "ettpd-emoji";
+    authorWrapper.appendChild(adEmoji);
+  }
+
+  const authorAnchor = document.createElement("a");
+  authorAnchor.className = "ettpd-a ettpd-author-link";
+  authorAnchor.target = "_blank";
+  authorAnchor.href = `https://www.tiktok.com/@${media?.authorId}`;
+  authorAnchor.innerText = media?.authorId
+    ? `@${media.authorId}`
+    : "Unknown Author";
+
+  authorWrapper.appendChild(authorAnchor);
+
+  const descSpan = document.createElement("span");
+  descSpan.className = "ettpd-desc-span";
+  const fullDesc = media?.desc || "";
+  const shortDesc =
+    fullDesc.length > 100 ? fullDesc.slice(0, 100) + "..." : fullDesc;
+  let expanded = false;
+  descSpan.innerText = shortDesc;
+  descSpan.style.cursor = fullDesc.length > 100 ? "pointer" : "default";
+  descSpan.style.textDecoration = fullDesc.length > 100 ? "underline" : "none";
+  descSpan.title = fullDesc.length > 100 ? "Expandable" : "Description";
+  descSpan.onclick = () => {
+    expanded = !expanded;
+    descSpan.innerText = expanded ? fullDesc : shortDesc;
+  };
+
+  textContainer.append(authorWrapper, descSpan);
+
+  const downloadBtnHolder = document.createElement("div");
+  downloadBtnHolder.className = "ettpd-download-btn-holder";
+
+  if (media.isImage && Array.isArray(media.imagePostImages)) {
+    const downloadAllBtnContainer = document.createElement("div");
+    downloadAllBtnContainer.className = "ettpd-images-download-all-container";
+    const downloadAllBtn = document.createElement("button");
+    const tiktokBtnContainer = document.createElement("div");
+    tiktokBtnContainer.className = "ettpd-download-btn ettpd-tiktok-btn";
+    tiktokBtnContainer.title = "Open on TikTok";
+    tiktokBtnContainer.onclick = (e) => {
+      e.stopPropagation();
+      if (media?.videoId && media?.authorId)
+        window.open(
+          `https://tiktok.com/@${media.authorId}/photo/${media.videoId}`,
+          "_blank"
+        );
+    };
+    const tiktokBtn = document.createElement("span");
+    tiktokBtnContainer.appendChild(tiktokBtn);
+    downloadAllBtnContainer.appendChild(tiktokBtnContainer);
+    downloadAllBtn.textContent = "⬇️ Download All Images";
+    downloadAllBtn.className = "ettpd-download-btn";
+    downloadAllBtn.style.marginBottom = "10px";
+    downloadAllBtn.style.marginTop = "5px";
+
+    downloadAllBtn.onclick = (e) => downloadAllPostImagesHandler(e, media);
+    downloadAllBtnContainer.appendChild(downloadAllBtn);
+    downloadBtnHolder.appendChild(downloadAllBtnContainer);
+
+    const imageList = document.createElement("ol");
+    imageList.className = "ettpd-image-download-list";
+
+    media.imagePostImages.forEach((url, i) => {
+      const li = document.createElement("li");
+      li.className = "ettpd-image-download-item";
+
+      const openBtn = document.createElement("button");
+      const openBtnSpan = document.createElement("span");
+      openBtn.className = "ettpd-download-btn ettpd-view-btn";
+      openBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (url) window.open(url, "_blank");
+      };
+      openBtn.appendChild(openBtnSpan);
+
+      const downloadBtn = document.createElement("button");
+      downloadBtn.textContent = "Download";
+      downloadBtn.className = "ettpd-download-btn";
+
+      downloadBtn.onclick = async (e) => {
+        e.stopPropagation();
+
+        const originalText = downloadBtn.textContent;
+        downloadBtn.textContent = "⏳ Downloading...";
+
+        const delayBeforeStart = 600;
+        const minDisplayAfter = 1000;
+        const startedAt = Date.now();
+
+        await new Promise((r) => setTimeout(r, delayBeforeStart));
+
+        try {
+          await downloadSingleMedia(media, { imageIndex: i });
+
+          const elapsed = Date.now() - startedAt;
+          const remaining = Math.max(0, minDisplayAfter - elapsed);
+
+          setTimeout(() => {
+            downloadBtn.textContent = "✅ Done!";
+            setTimeout(() => {
+              downloadBtn.textContent = originalText;
+            }, 3000);
+          }, remaining);
+        } catch (err) {
+          console.error("Image download failed:", err);
+          const elapsed = Date.now() - startedAt;
+          const remaining = Math.max(0, minDisplayAfter - elapsed);
+
+          setTimeout(() => {
+            downloadBtn.textContent = "❌ Failed!";
+            setTimeout(() => {
+              downloadBtn.textContent = originalText;
+            }, 3000);
+          }, remaining);
+        }
+      };
+
+      li.append(openBtn, downloadBtn);
+
+      imageList.appendChild(li);
+    });
+
+    downloadBtnHolder.appendChild(imageList);
+  } else {
+    const tiktokBtnContainer = document.createElement("div");
+    tiktokBtnContainer.className = "ettpd-download-btn ettpd-tiktok-btn";
+    tiktokBtnContainer.title = "Open on TikTok";
+    const tiktokBtn = document.createElement("span");
+
+    tiktokBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (media?.videoId && media?.authorId)
+        window.open(
+          `https://tiktok.com/@${media.authorId}/video/${media.videoId}`,
+          "_blank"
+        );
+    };
+    tiktokBtnContainer.appendChild(tiktokBtn);
+    const viewBtnContainer = document.createElement("div");
+    viewBtnContainer.className = "ettpd-download-btn ettpd-view-btn";
+    viewBtnContainer.title = "Open Direct Link";
+    const viewBtn = document.createElement("span");
+    viewBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (media?.url) window.open(media.url, "_blank");
+    };
+    viewBtnContainer.appendChild(viewBtn);
+
+    const downloadBtn = document.createElement("button");
+    downloadBtn.textContent = "Download";
+    downloadBtn.className = "ettpd-download-btn";
+
+    downloadBtn.onclick = async (e) => {
+      e.stopPropagation();
+
+      const originalText = downloadBtn.textContent;
+      downloadBtn.textContent = "⏳ Downloading...";
+      const delayBeforeStart = 600;
+      const minDisplayAfter = 1000;
+      const startedAt = Date.now();
+
+      await new Promise((r) => setTimeout(r, delayBeforeStart));
+
+      try {
+        await downloadSingleMedia(media);
+
+        const elapsed = Date.now() - startedAt;
+        const remaining = Math.max(0, minDisplayAfter - elapsed);
+
+        setTimeout(() => {
+          downloadBtn.textContent = "✅ Done!";
+          setTimeout(() => {
+            downloadBtn.textContent = originalText;
+          }, 3000);
+        }, remaining);
+      } catch (err) {
+        console.error("Download failed:", err);
+        const elapsed = Date.now() - startedAt;
+        const remaining = Math.max(0, minDisplayAfter - elapsed);
+
+        setTimeout(() => {
+          downloadBtn.textContent = "❌ Failed!";
+          setTimeout(() => {
+            downloadBtn.textContent = originalText;
+          }, 3000);
+        }, remaining);
+      }
+    };
+
+    const holderEl = document.createElement("div");
+    holderEl.className = "ettpd-download-btns-container";
+    holderEl.append(tiktokBtnContainer, viewBtnContainer, downloadBtn);
+    downloadBtnHolder.append(holderEl);
+  }
+
+  item.append(textContainer, downloadBtnHolder);
+  return item;
 }
 
 function makeElementDraggable(wrapper, handle) {
@@ -1162,27 +2207,27 @@ function makeShowButtonDraggable(button) {
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const buttonRect = button.getBoundingClientRect();
-    
+
     // Get current position
     let currentLeft = buttonRect.left;
     let currentTop = buttonRect.top;
-    
+
     // Ensure button is fully visible within viewport
     const minLeft = 0;
     const maxLeft = viewportWidth - buttonRect.width;
     const minTop = 0;
     const maxTop = viewportHeight - buttonRect.height;
-    
+
     // Constrain position
     currentLeft = Math.max(minLeft, Math.min(maxLeft, currentLeft));
     currentTop = Math.max(minTop, Math.min(maxTop, currentTop));
-    
+
     // Apply constrained position
     button.style.left = `${currentLeft}px`;
     button.style.top = `${currentTop}px`;
     button.style.bottom = "auto";
     button.style.right = "auto";
-    
+
     return { left: currentLeft, top: currentTop };
   };
 
@@ -1210,7 +2255,7 @@ function makeShowButtonDraggable(button) {
     const maxLeft = viewportWidth - buttonRect.width;
     const minTop = 0;
     const maxTop = viewportHeight - buttonRect.height;
-    
+
     newLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
     newTop = Math.max(minTop, Math.min(maxTop, newTop));
 
@@ -1229,16 +2274,19 @@ function makeShowButtonDraggable(button) {
       }, 100);
     }
   };
-  
+
   // Ensure button stays in viewport on window resize
   const handleResize = () => {
     if (button && button.parentElement) {
       constrainToViewport();
       const pos = constrainToViewport();
-      localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_POSITION, JSON.stringify(pos));
+      localStorage.setItem(
+        STORAGE_KEYS.SHOW_BUTTON_POSITION,
+        JSON.stringify(pos)
+      );
     }
   };
-  
+
   window.addEventListener("resize", handleResize);
 
   document.addEventListener("mousemove", handleMouseMove);
@@ -1250,16 +2298,19 @@ function makeShowButtonDraggable(button) {
       document.body.style.userSelect = "";
       button.style.cursor = "grab";
       button.classList.remove("ettpd-show-dragging");
-      
+
       // Save final position immediately
       if (button._savePositionTimeout) {
         clearTimeout(button._savePositionTimeout);
         button._savePositionTimeout = null;
       }
       const buttonRect = button.getBoundingClientRect();
-      const position = JSON.stringify({ left: buttonRect.left, top: buttonRect.top });
+      const position = JSON.stringify({
+        left: buttonRect.left,
+        top: buttonRect.top,
+      });
       localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_POSITION, position);
-      
+
       // Reset after a short delay
       setTimeout(() => {
         button.dataset.wasDragging = "false";
@@ -1268,7 +2319,7 @@ function makeShowButtonDraggable(button) {
   };
 
   document.addEventListener("mouseup", handleMouseUp);
-  
+
   // Store cleanup on button for later removal if needed
   button._cleanupDraggable = () => {
     window.removeEventListener("resize", handleResize);
@@ -1281,7 +2332,7 @@ function makeShowButtonDraggable(button) {
 export function resetShowButtonPosition() {
   // Remove saved position from localStorage
   localStorage.removeItem(STORAGE_KEYS.SHOW_BUTTON_POSITION);
-  
+
   // If button exists, reset its position
   const showBtn = document.getElementById(DOM_IDS.SHOW_DOWNLOADER);
   if (showBtn) {
@@ -1299,7 +2350,7 @@ export function hideDownloader() {
   const showBtn = document.createElement("button");
   showBtn.id = DOM_IDS.SHOW_DOWNLOADER;
   showBtn.className = "ettpd-show-btn";
-  
+
   // Create SVG download icon
   const svgIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svgIcon.setAttribute("width", "16");
@@ -1312,33 +2363,36 @@ export function hideDownloader() {
   svgIcon.setAttribute("stroke-linejoin", "round");
   svgIcon.style.verticalAlign = "middle";
   svgIcon.style.marginRight = "4px";
-  
+
   const path1 = document.createElementNS("http://www.w3.org/2000/svg", "path");
   path1.setAttribute("d", "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4");
   svgIcon.appendChild(path1);
-  
-  const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+
+  const polyline = document.createElementNS(
+    "http://www.w3.org/2000/svg",
+    "polyline"
+  );
   polyline.setAttribute("points", "7 10 12 15 17 10");
   svgIcon.appendChild(polyline);
-  
+
   const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
   line.setAttribute("x1", "12");
   line.setAttribute("y1", "15");
   line.setAttribute("x2", "12");
   line.setAttribute("y2", "3");
   svgIcon.appendChild(line);
-  
+
   // Set button content - small text with icon
   showBtn.appendChild(svgIcon);
   const textSpan = document.createElement("span");
   textSpan.textContent = "Open";
   showBtn.appendChild(textSpan);
-  
+
   // Apply theme class
-  if (AppState.ui.themeMode === "dark") {
+  if (getResolvedThemeMode() === "dark") {
     showBtn.classList.add("ettpd-theme-dark");
   }
-  
+
   // Restore saved position and ensure it's within viewport
   const savedPosition = localStorage.getItem(STORAGE_KEYS.SHOW_BUTTON_POSITION);
   if (savedPosition) {
@@ -1353,7 +2407,7 @@ export function hideDownloader() {
         showBtn.style.top = `${pos.top}px`;
         showBtn.style.bottom = "auto";
         showBtn.style.right = "auto";
-        
+
         // After button is added to DOM, constrain it to viewport
         setTimeout(() => {
           const buttonRect = showBtn.getBoundingClientRect();
@@ -1361,18 +2415,21 @@ export function hideDownloader() {
           const maxLeft = viewportWidth - buttonRect.width;
           const minTop = 0;
           const maxTop = viewportHeight - buttonRect.height;
-          
+
           let constrainedLeft = Math.max(minLeft, Math.min(maxLeft, pos.left));
           let constrainedTop = Math.max(minTop, Math.min(maxTop, pos.top));
-          
+
           // Only update if position was constrained
           if (constrainedLeft !== pos.left || constrainedTop !== pos.top) {
             showBtn.style.left = `${constrainedLeft}px`;
             showBtn.style.top = `${constrainedTop}px`;
-            localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_POSITION, JSON.stringify({
-              left: constrainedLeft,
-              top: constrainedTop
-            }));
+            localStorage.setItem(
+              STORAGE_KEYS.SHOW_BUTTON_POSITION,
+              JSON.stringify({
+                left: constrainedLeft,
+                top: constrainedTop,
+              })
+            );
           }
         }, 0);
       }
@@ -1380,12 +2437,21 @@ export function hideDownloader() {
       console.warn("Failed to parse saved button position", e);
     }
   }
-  
+
   // Click handler - check if dragging occurred
   showBtn.addEventListener("click", (e) => {
     // Small delay to check if dragging occurred
     setTimeout(() => {
       if (showBtn.dataset.wasDragging !== "true") {
+        // Check if extension is enabled before showing downloader
+        if (!isExtensionEnabledSync()) {
+          // Extension is disabled, show message
+          alert(
+            "Extension is disabled. Please enable it from the extension popup to use the downloader."
+          );
+          return;
+        }
+
         localStorage.setItem(STORAGE_KEYS.IS_DOWNLOADER_CLOSED, "false");
         AppState.ui.isDownloaderClosed = false;
         AppState.ui.isPreferenceBoxOpen = false;
@@ -1394,10 +2460,10 @@ export function hideDownloader() {
       }
     }, 50);
   });
-  
+
   // Make draggable
   makeShowButtonDraggable(showBtn);
-  
+
   // Make draggable
   makeShowButtonDraggable(showBtn);
 
@@ -1500,6 +2566,7 @@ export function showStatsPopUp() {
 
   const contentWrapper = document.createElement("div");
   contentWrapper.className = "ettpd-tab-content-wrapper";
+  contentWrapper.classList.add("ettpd-stats-modal");
 
   const tabNav = document.createElement("div");
   tabNav.className = "ettpd-tab-nav";
@@ -1545,42 +2612,49 @@ export function showStatsPopUp() {
 
     tierLabel = `<span class="ettpd-tier">${tier.emoji} ${tier.name}</span>`;
 
-    const section = (label, list, count = 0) => `
-    <div class="ettpd-stats-section">
-      <div class="ettpd-section-header black-text">
-        <span>${label}</span>
-        <span class="ettpd-section-total" title="${count.toLocaleString()}">  |  Total: ${formatCompactNumberWithTooltip(
-      count
-    )} 🔢</span>
-      </div>
-      <ol class="ettpd-leaderboard-list">
-        ${
-          list.length
-            ? list
-                .map(
-                  (item, i) => `
-          <li>
-            <a class="ettpd-name black-text" href="https://tiktok.com/@${
-              item.username || "tiktok"
-            }" target="_blank">
-              <span class="ettpd-rank">${i + 1}.</span>  ${item.username}
-            </a>
-            <span class="ettpd-count black-text" title="${item.count.toLocaleString()}"> — ${formatCompactNumberWithTooltip(
-                    item.count
-                  )}</span>
-          </li>`
-                )
-                .join("")
-            : "<li class='alert'>No entries yet</li>"
-        }
-      </ol>
-    </div>
-  `;
+    const section = (label, list, count = 0) => {
+      const itemsMarkup = list.length
+        ? list
+            .map((item, i) => {
+              const username = item.username || "tiktok";
+              return `
+            <li class="ettpd-leaderboard-item">
+              <div class="ettpd-leaderboard-rank">${i + 1}</div>
+              <div class="ettpd-leaderboard-meta">
+                <a class="ettpd-leaderboard-name" href="https://tiktok.com/@${username}" target="_blank" rel="noopener noreferrer">@${username}</a>
+                <span class="ettpd-leaderboard-handle">tiktok.com/@${username}</span>
+              </div>
+              <div class="ettpd-leaderboard-count" title="${item.count.toLocaleString()}">
+                ${formatCompactNumberWithTooltip(item.count)}
+                <span class="ettpd-leaderboard-count-label">posts</span>
+              </div>
+            </li>`;
+            })
+            .join("")
+        : `<li class="ettpd-leaderboard-empty">No entries yet</li>`;
+
+      return `
+        <section class="ettpd-stats-card">
+          <div class="ettpd-stats-card__header">
+            <div class="ettpd-stats-card__title">${label}</div>
+            <div class="ettpd-stats-card__total" title="${count.toLocaleString()}">
+              <span class="ettpd-total-label">Total</span>
+              <span class="ettpd-total-value">${formatCompactNumberWithTooltip(
+                count
+              )}</span>
+            </div>
+          </div>
+          <ol class="ettpd-leaderboard-list">
+            ${itemsMarkup}
+          </ol>
+        </section>
+      `;
+    };
 
     const sameCount = weeklyCount === allTimeCount && allTimeCount > 0;
 
     const funMessage = sameCount
-      ? `<div class="alert">You peaked this week 😮‍💨</div>`
+      ? `<div class="ettpd-stats-banner">You peaked this week 😮‍💨</div>`
       : "";
 
     content.innerHTML = `
@@ -1695,6 +2769,11 @@ export function createModal({ children = [], onClose = null }) {
   const overlay = document.createElement("div");
   overlay.id = DOM_IDS.MODAL_CONTAINER;
   overlay.className = "ettpd-modal-overlay";
+  overlay.classList.add(
+    getResolvedThemeMode() === "dark"
+      ? "ettpd-theme-dark"
+      : "ettpd-theme-classic"
+  );
 
   // === Container to hold both close btn and modal box ===
   const container = document.createElement("div");
@@ -1705,21 +2784,7 @@ export function createModal({ children = [], onClose = null }) {
   btn.textContent = "×";
   btn.id = "ettpd-close";
   btn.setAttribute("aria-label", "Close modal");
-
-  Object.assign(btn.style, {
-    fontSize: "24px",
-    border: "none",
-    borderRadius: "50%",
-    cursor: "pointer",
-    width: "36px",
-    height: "36px",
-    lineHeight: "36px",
-    right: "234px",
-    top: "-20px",
-    textAlign: "center",
-    marginBottom: "12px",
-    boxShadow: "0 2px 6px rgba(0, 0, 0, 0.2)",
-  });
+  btn.classList.add("ettpd-modal-close");
 
   btn.onclick = () => {
     overlay.remove();
@@ -1816,6 +2881,11 @@ export function createModalMorpheus({
   const overlay = document.createElement("div");
   overlay.id = "ettpd-morpheus-overlay";
   overlay.className = "ettpd-modal-overlay morpheus-theme";
+  overlay.classList.add(
+    getResolvedThemeMode() === "dark"
+      ? "ettpd-theme-dark"
+      : "ettpd-theme-classic"
+  );
 
   const modal = document.createElement("div");
   modal.className = "ettpd-morpheus-modal";
@@ -1876,8 +2946,7 @@ export function createFilenameTemplateModal() {
   // Main container
   const layout = document.createElement("div");
   layout.className = "layout";
-  layout.style.padding = "10px";
-  layout.style.color = "#fff";
+  layout.classList.add("ettpd-template-modal");
 
   // Collapsible instructions
   const knownFields = [
@@ -1898,43 +2967,86 @@ export function createFilenameTemplateModal() {
     "tabName",
   ];
 
-  const instructions = document.createElement("details");
-  instructions.style.fontSize = "13px";
-  instructions.style.marginBottom = "10px";
-  instructions.style.color = "black";
-  instructions.innerHTML = ` 
-     <summary style="cursor: pointer;">
-    <div>
-      <strong>📂 Customize your full file path</strong><br/>
-      <span style="font-size: 12px; display: block; color: #555;">
-        Use <code>{fieldName}</code>, <code>{fieldName|fallback}</code>, or <code>{fieldName:maxLen|fallback}</code> in your relative path. 'fallback' defaults to "missing-{fieldName}", to change it, add a fallback value of '-' as seen on <em>desc</em> in the default preset." <br/>
-        Supports dynamic values and constants like <code>{videoId}-cat.mp4</code>.<br/>
-        👉<em style="color:#888;"> Click to read more...</em>
-      </span>
-    </div>
-  </summary>
-  <div style="margin-top: 8px;">
-    <p><strong>Supported fields:</strong> <code style="display: block; color: brown; font-family: monospace; white-space: normal;">
-    ${knownFields.join(", ")}
-    </code></p>
-    <strong>Notes:</strong>
-    <ul style="margin-left:1em; padding-left:1em; text-align: left;">
-      <li>Downloader auto-appends correct extension: <code>.jpeg</code> for images, <code>.mp4</code> for videos.</li>
-      <li>If you omit <code>{sequenceNumber}</code>, it will be added automatically for multi-image posts.</li>
-      <li>Use <code>{sequenceNumber|required}</code> to force numbering even on single-image posts.</li>
-      <li>You can optionally control field length, e.g. <code>{desc:40|no-desc}</code> limits to 40 characters.</li>
-      <li>Paths must be <strong>relative</strong>. No leading slashes or <code>..</code>.</li>
-      <li>{ad} adds "ad" to the file path if the media is an advertisement.</li>
-      <li>{mediaType} inserts either "image" or "video" based on the type of media being downloaded.</li>
-      <li>{tabName} Best for scrapping mode, it prints: Video, Reposts, Liked, Favorited! Recommended template replaces the initial username with the account being scrapped username so you find everything in the same folder. </li>
-      <li>Use your imagination—or don't. Totally up to you.</li>
-    </ul>
-  </div>
-`;
+  const instructions = document.createElement("div");
+  instructions.className = "ettpd-template-instructions";
+
+  const tabNav = document.createElement("div");
+  tabNav.className = "ettpd-template-tabs";
+
+  const tabContent = document.createElement("div");
+  tabContent.className = "ettpd-template-panel";
+
+  const tabConfig = [
+    {
+      key: "guide",
+      label: "Guide",
+      body: `
+        <p class="ettpd-template-subtitle">Use <code>{field}</code>, <code>{field|fallback}</code>, or <code>{field:maxLen|fallback}</code>. Defaults use <code>missing-{field}</code>. Click to see the full playbook.</p>
+        <details class="ettpd-template-accordion">
+          <summary style="cursor: pointer;">Read more</summary>
+          <ul class="ettpd-template-list">
+            <li><strong>Extensions</strong>: auto-added (<code>.jpeg</code> / <code>.mp4</code>).</li>
+            <li><strong>Numbering</strong>: <code>{sequenceNumber}</code> only on multi-image unless forced with <code>{sequenceNumber|required}</code>.</li>
+            <li><strong>Length</strong>: trim with <code>{desc:40|no-desc}</code> or any field.</li>
+            <li><strong>Paths</strong>: keep them relative; no leading <code>/</code> or <code>..</code>.</li>
+            <li><strong>Ads & media</strong>: <code>{ad}</code> adds “ad”; <code>{mediaType}</code> is <em>image</em>/<em>video</em>.</li>
+            <li><strong>Context</strong>: <code>{tabName}</code> follows the scrapper tab (Video, Reposts, Liked, Favorited).</li>
+          </ul>
+        </details>
+      `,
+    },
+    {
+      key: "fields",
+      label: "Supported fields",
+      body: `
+        <p><strong>Fields:</strong></p>
+        <code class="ettpd-template-code">${knownFields.join(", ")}</code>
+        <div class="ettpd-template-grid">
+          <div><strong>{videoId}</strong><span>Unique post ID</span></div>
+          <div><strong>{authorUsername}</strong><span>@handle of the creator</span></div>
+          <div><strong>{authorNickname}</strong><span>Display name when available</span></div>
+          <div><strong>{desc}</strong><span>Caption/description text</span></div>
+          <div><strong>{createTime}</strong><span>Original post timestamp</span></div>
+          <div><strong>{downloadTime}</strong><span>When you downloaded it</span></div>
+          <div><strong>{musicTitle}</strong><span>Track title</span></div>
+          <div><strong>{musicAuthor}</strong><span>Track artist</span></div>
+          <div><strong>{views}</strong><span>View count if available</span></div>
+          <div><strong>{duration}</strong><span>Length in seconds</span></div>
+          <div><strong>{hashtags}</strong><span>Comma-separated tags</span></div>
+          <div><strong>{sequenceNumber}</strong><span>Index for multi-assets</span></div>
+          <div><strong>{ad}</strong><span>“ad” when marked as ad</span></div>
+          <div><strong>{mediaType}</strong><span>image or video</span></div>
+          <div><strong>{tabName}</strong><span>Video/Reposts/Liked/Favorited</span></div>
+        </div>
+      `,
+    },
+  ];
+
+  const renderTab = (key) => {
+    tabButtons.forEach((btn) =>
+      btn.classList.toggle("active", btn.dataset.key === key)
+    );
+    const section = tabConfig.find((t) => t.key === key);
+    tabContent.innerHTML = section?.body || "";
+  };
+
+  const tabButtons = tabConfig.map((tab) => {
+    const btn = document.createElement("button");
+    btn.className = "ettpd-template-tab";
+    btn.dataset.key = tab.key;
+    btn.textContent = tab.label;
+    btn.onclick = () => renderTab(tab.key);
+    tabNav.appendChild(btn);
+    return btn;
+  });
+
+  instructions.appendChild(tabNav);
+  instructions.appendChild(tabContent);
+  renderTab("guide");
 
   // Dropdown for both user templates and presets
   const comboSelect = document.createElement("select");
-  comboSelect.style = "margin-bottom: 8px; width: 100%; padding: 6px;";
+  comboSelect.className = "ettpd-template-select";
 
   // Default placeholder option
   const defaultOpt = document.createElement("option");
@@ -1975,7 +3087,6 @@ export function createFilenameTemplateModal() {
   labelInput.name = "label";
   labelInput.placeholder = "Template name (e.g. Default, ShortDesc)";
   labelInput.value = savedLabel;
-  // labelInput.style = "width:100%;padding:6px;margin-bottom:8px;";
   labelInput.className = "ettpd-modal-input";
 
   const inputPathTemplate = document.createElement("input");
@@ -1984,18 +3095,16 @@ export function createFilenameTemplateModal() {
   inputPathTemplate.placeholder =
     "downloads/{authorUsername}/{videoId}-{desc|no-desc}.mp4";
   inputPathTemplate.value = savedFullTemplate;
-  inputPathTemplate.style = "width:100%;padding:6px;margin-bottom:8px;";
+  inputPathTemplate.className = "ettpd-modal-input";
 
   const error = document.createElement("div");
-  error.style = "color:red;font-size:12px;margin-top:4px;";
+  error.className = "ettpd-modal-error";
 
   const preview = document.createElement("div");
-  preview.style =
-    "font-family:monospace;color:#fe2c55;margin-top:6px;font-size:13px;margin-bottom:5px;";
+  preview.className = "ettpd-template-preview";
 
   const activeFullPathTemplate = document.createElement("div");
-  activeFullPathTemplate.style =
-    "font-family:monospace;color:#2f3989;margin-top:6px;font-size:13px;margin-bottom:5px;";
+  activeFullPathTemplate.className = "ettpd-template-active";
   if (
     savedLabel &&
     savedLabel == AppState.downloadPreferences.fullPathTemplate?.label
@@ -2254,16 +3363,32 @@ export function createFilenameTemplateModal() {
 
   // Wire input events
   const inputsLabel = document.createElement("span");
-  inputsLabel.style.color = "black";
-  inputsLabel.style.textAlign = "left";
-  inputsLabel.style.display = "block";
-  inputsLabel.style.marginBottom = "5px";
+  inputsLabel.style.cssText = `
+    color: var(--ettpd-text-primary, #333);
+    text-align: left;
+    display: block;
+    margin-bottom: 5px;
+  `;
 
   inputsLabel.textContent = "🤤 Create your own or copy existing template!";
   inputPathTemplate.addEventListener("input", renderPreviewAndErrors);
   inputPathTemplate.className = "ettpd-modal-input";
 
   labelInput.addEventListener("input", () => (deleteBtn.disabled = false));
+
+  // Create a flex container for template label and buttons (same line)
+  const templateActionsContainer = document.createElement("div");
+  templateActionsContainer.style.cssText = `
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  `;
+  templateActionsContainer.appendChild(activeFullPathTemplate);
+  templateActionsContainer.appendChild(deleteBtn);
+  templateActionsContainer.appendChild(saveBtn);
 
   // Assemble UI
   layout.append(
@@ -2275,9 +3400,7 @@ export function createFilenameTemplateModal() {
     inputPathTemplate,
     error,
     preview,
-    activeFullPathTemplate,
-    deleteBtn,
-    saveBtn
+    templateActionsContainer
   );
 
   createModal({
@@ -2441,7 +3564,7 @@ export function createPreferencesBox() {
     AppState.downloadPreferences.disableConfetti
   );
 
-  // Theme toggle
+  // Theme dropdown
   function createThemeToggle() {
     const container = document.createElement("div");
     container.className = "ettpd-theme-toggle-container";
@@ -2455,34 +3578,49 @@ export function createPreferencesBox() {
     label.textContent = "Theme:";
     label.style.marginRight = "8px";
 
-    const toggleWrapper = document.createElement("label");
-    toggleWrapper.className = "ettpd-toggle-wrapper";
-    toggleWrapper.style.display = "flex";
-    toggleWrapper.style.alignItems = "center";
-    toggleWrapper.style.cursor = "pointer";
-    toggleWrapper.style.gap = "8px";
+    const select = document.createElement("select");
+    select.name = "themeMode";
+    select.className = "ettpd-select";
+    select.style.cursor = "pointer";
 
-    const toggleSwitch = document.createElement("input");
-    toggleSwitch.type = "checkbox";
-    toggleSwitch.className = "ettpd-theme-toggle";
-    toggleSwitch.checked = AppState.ui.themeMode === "dark";
-    toggleSwitch.style.cursor = "pointer";
+    // Get current stored theme (not resolved, to show "system" if selected)
+    const currentStored = AppState.ui.themeMode || "dark";
+    const currentNormalized =
+      currentStored === "classic" ? "light" : currentStored;
 
-    const toggleLabel = document.createElement("span");
-    toggleLabel.className = "ettpd-toggle-label";
-    toggleLabel.textContent = AppState.ui.themeMode === "dark" ? "Dark" : "Classic";
-    toggleLabel.style.userSelect = "none";
+    const options = [
+      { value: "dark", label: "🌙 Dark" },
+      { value: "light", label: "☀️ Light" },
+      { value: "system", label: "🖥️ System" },
+    ];
 
-    toggleSwitch.onchange = (e) => {
-      const newTheme = e.target.checked ? "dark" : "classic";
+    options.forEach(({ value, label }) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      if (value === currentNormalized) {
+        opt.selected = true;
+      }
+      select.appendChild(opt);
+    });
+
+    select.onchange = (e) => {
+      const newTheme = e.target.value;
       AppState.ui.themeMode = newTheme;
       localStorage.setItem(STORAGE_KEYS.THEME_MODE, newTheme);
-      toggleLabel.textContent = newTheme === "dark" ? "Dark" : "Classic";
-      
+
+      // Get resolved theme (actual theme to apply)
+      const resolvedTheme =
+        newTheme === "system"
+          ? window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light"
+          : newTheme;
+
       // Apply theme to downloader wrapper
       const wrapper = document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER);
       if (wrapper) {
-        if (newTheme === "dark") {
+        if (resolvedTheme === "dark") {
           wrapper.classList.add("ettpd-theme-dark");
           wrapper.classList.remove("ettpd-theme-classic");
         } else {
@@ -2490,19 +3628,230 @@ export function createPreferencesBox() {
           wrapper.classList.remove("ettpd-theme-dark");
         }
       }
-      
-      showFeedback(`Theme set to ${newTheme === "dark" ? "Dark" : "Classic"} mode`);
+
+      // Update all modals
+      document.querySelectorAll(".ettpd-modal-overlay").forEach((modal) => {
+        if (resolvedTheme === "dark") {
+          modal.classList.add("ettpd-theme-dark");
+          modal.classList.remove("ettpd-theme-classic");
+        } else {
+          modal.classList.add("ettpd-theme-classic");
+          modal.classList.remove("ettpd-theme-dark");
+        }
+      });
+
+      const themeLabel =
+        newTheme === "system"
+          ? "System"
+          : newTheme === "dark"
+          ? "Dark"
+          : "Light";
+      showFeedback(`Theme set to ${themeLabel} mode`);
     };
 
-    toggleWrapper.appendChild(toggleSwitch);
-    toggleWrapper.appendChild(toggleLabel);
+    // Listen for system theme changes when "system" is selected
+    if (currentNormalized === "system") {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handleSystemThemeChange = (e) => {
+        if (AppState.ui.themeMode === "system") {
+          const resolvedTheme = e.matches ? "dark" : "light";
+          const wrapper = document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER);
+          if (wrapper) {
+            if (resolvedTheme === "dark") {
+              wrapper.classList.add("ettpd-theme-dark");
+              wrapper.classList.remove("ettpd-theme-classic");
+            } else {
+              wrapper.classList.add("ettpd-theme-classic");
+              wrapper.classList.remove("ettpd-theme-dark");
+            }
+          }
+        }
+      };
+      mediaQuery.addEventListener("change", handleSystemThemeChange);
+      // Store handler for cleanup if needed
+      select._systemThemeHandler = handleSystemThemeChange;
+    }
+
     container.appendChild(label);
-    container.appendChild(toggleWrapper);
+    container.appendChild(select);
 
     return container;
   }
 
   const themeToggle = createThemeToggle();
+
+  // Power Toggle Component
+  function createPowerToggle() {
+    const container = document.createElement("div");
+    container.className = "ettpd-power-toggle-container";
+    container.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+      padding: 10px;
+      border: 1px solid var(--ettpd-border-color);
+      border-radius: 8px;
+      background: var(--ettpd-bg-tertiary);
+    `;
+
+    const label = document.createElement("label");
+    label.className = "ettpd-label";
+    label.textContent = "Extension Status:";
+    label.style.marginBottom = "0";
+
+    const toggleContainer = document.createElement("div");
+    toggleContainer.className = "ettpd-power-toggle-wrapper";
+    toggleContainer.style.cssText = `
+      position: relative;
+      width: 60px;
+      height: 30px;
+      cursor: pointer;
+    `;
+
+    const toggle = document.createElement("div");
+    toggle.className = "ettpd-power-toggle";
+    const isEnabled = isExtensionEnabledSync();
+    toggle.classList.toggle("ettpd-power-toggle-on", isEnabled);
+    toggle.classList.toggle("ettpd-power-toggle-off", !isEnabled);
+
+    const toggleIcon = document.createElement("span");
+    toggleIcon.className = "ettpd-power-toggle-icon";
+    toggleIcon.textContent = isEnabled ? "⚡" : "🔌";
+    toggleIcon.style.cssText = `
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 16px;
+      transition: all 0.3s ease;
+    `;
+
+    toggle.appendChild(toggleIcon);
+    toggleContainer.appendChild(toggle);
+
+    toggleContainer.onclick = async (e) => {
+      e.stopPropagation();
+      const currentState = isExtensionEnabledSync();
+      console.log("[EXT_POWER] toggle clicked, currentState:", currentState);
+
+      if (currentState) {
+        // Turning off - show warning modal with Cancel and Disable buttons
+        return new Promise((resolve) => {
+          const message = document.createElement("div");
+          message.className = "alert";
+          message.innerHTML =
+            "⚠️ <b>Disable Extension?</b><br><br>" +
+            "The extension will be completely disabled. No scripts will run, no polling will occur, and no downloads will be processed.<br><br>" +
+            "To re-enable, click the extension icon and select 'Turn On'.";
+
+          const actionsContainer = document.createElement("div");
+          actionsContainer.style.cssText = `
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            justify-content: center;
+          `;
+
+          const cancelBtn = document.createElement("button");
+          cancelBtn.className = "ettpd-modal-button secondary";
+          cancelBtn.textContent = "Cancel";
+          cancelBtn.onclick = () => {
+            const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
+            if (overlay) overlay.remove();
+            resolve(false);
+          };
+
+          const disableBtn = document.createElement("button");
+          disableBtn.className = "ettpd-modal-button danger";
+          disableBtn.textContent = "Disable";
+          disableBtn.onclick = async () => {
+            console.log("[EXT_POWER] disabling via modal");
+            await setExtensionEnabled(false);
+            toggle.classList.remove("ettpd-power-toggle-on");
+            toggle.classList.add("ettpd-power-toggle-off");
+            toggleIcon.textContent = "🔌";
+
+            // Refresh all TikTok tabs
+            try {
+              if (typeof chrome !== "undefined" && chrome.tabs) {
+                const tabs = await new Promise((resolve) => {
+                  chrome.tabs.query({ url: "*://*.tiktok.com/*" }, resolve);
+                });
+
+                if (tabs && tabs.length > 0) {
+                  console.log("[EXT_POWER] reloading TikTok tabs:", tabs.length);
+                  tabs.forEach((tab) => {
+                    if (tab.id) {
+                      chrome.tabs.reload(tab.id);
+                    }
+                  });
+                  showFeedback(
+                    `Extension disabled. Refreshed ${tabs.length} TikTok tab${
+                      tabs.length !== 1 ? "s" : ""
+                    }.`
+                  );
+                } else {
+                  showFeedback(
+                    "Extension disabled. Reload the page for changes to take effect."
+                  );
+                  console.log("[EXT_POWER] no TikTok tabs found on disable");
+                }
+              } else {
+                // Fallback: reload current page
+                showFeedback(
+                  "Extension disabled. Reload the page for changes to take effect."
+                );
+                setTimeout(() => {
+                  window.location.reload();
+                }, 1500);
+                console.log("[EXT_POWER] disable fallback: no chrome.tabs");
+              }
+            } catch (err) {
+              console.warn("Failed to refresh tabs:", err);
+              showFeedback(
+                "Extension disabled. Reload the page for changes to take effect."
+              );
+              // Fallback: reload current page
+              setTimeout(() => {
+                window.location.reload();
+              }, 1500);
+              console.log("[EXT_POWER] disable error", err);
+            }
+
+            const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
+            if (overlay) overlay.remove();
+            resolve(true);
+          };
+
+          actionsContainer.appendChild(cancelBtn);
+          actionsContainer.appendChild(disableBtn);
+
+          createModal({
+            children: [message, actionsContainer],
+            onClose: () => resolve(false),
+          });
+        });
+      } else {
+        // Turning on
+        console.log("[EXT_POWER] enabling via toggle");
+        await setExtensionEnabled(true);
+        toggle.classList.remove("ettpd-power-toggle-off");
+        toggle.classList.add("ettpd-power-toggle-on");
+        toggleIcon.textContent = "⚡";
+        showFeedback(
+          "Extension enabled. Reload the page for changes to take effect."
+        );
+      }
+    };
+
+    container.appendChild(label);
+    container.appendChild(toggleContainer);
+
+    return container;
+  }
+
+  const powerToggle = createPowerToggle();
 
   const autoScrollSettingUI = createScrollModeSelector();
 
@@ -2617,6 +3966,7 @@ export function createPreferencesBox() {
     includeCSVFile,
     disableConfetti,
     themeToggle,
+    powerToggle,
     autoScrollSettingUI,
     prefLabel,
     templateEditorBtn,
@@ -2636,7 +3986,9 @@ export function createSettingsToggle(preferencesBox) {
     // Close Scrapper if open
     AppState.ui.isScrapperBoxOpen = false;
     if (document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER)) {
-      document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER).style.display = "none";
+      document.getElementById(
+        DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER
+      ).style.display = "none";
     }
     preferencesBox.style.display =
       preferencesBox.style.display === "none" ? "flex" : "none";
@@ -2644,7 +3996,7 @@ export function createSettingsToggle(preferencesBox) {
     updateSettingsBtn();
     // Update Scrapper button state - find it and update
     const allButtons = document.querySelectorAll(".ettpd-settings-toggle");
-    allButtons.forEach(btn => {
+    allButtons.forEach((btn) => {
       if (btn !== settingsBtn && btn.textContent.includes("Scrapper")) {
         btn.classList.remove("ettpd-settings-open");
       }
@@ -2663,10 +4015,10 @@ export function createSettingsToggle(preferencesBox) {
 
       settingsBtn.textContent = "⚙️ Close";
       settingsBtn.classList.add("ettpd-settings-open");
-      
+
       // Update Scrapper button state
       const allButtons = document.querySelectorAll(".ettpd-settings-toggle");
-      allButtons.forEach(btn => {
+      allButtons.forEach((btn) => {
         if (btn !== settingsBtn && btn.textContent.includes("Scrapper")) {
           btn.classList.remove("ettpd-settings-open");
         }
@@ -2759,7 +4111,8 @@ function createDownloadButton({
 
   const className = `download-btn ${videoId}`;
   const mediaTypeLabel = isImage ? "Image" : "Video";
-  const defaultBtnLabel = isSmallView ? "Save" : `Save ${mediaTypeLabel}`;
+  // const defaultBtnLabel = isSmallView ? "Save" : `Save ${mediaTypeLabel}`;
+  const defaultBtnLabel = "Save";
   const buildDefaultMarkup = () =>
     `<span class="download-btn-icon" aria-hidden="true"></span><span class="download-btn-label">${defaultBtnLabel}</span>`;
 

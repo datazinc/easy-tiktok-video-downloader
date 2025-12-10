@@ -48,7 +48,7 @@ function safeParseScrapperDetails(jsonValue, fallback = {}) {
         ? "completed"
         : parsed.scrappingStage,
 
-    paused: false,
+    paused: typeof parsed.paused === "boolean" ? parsed.paused : false,
     startedAt: fixDate(parsed.startedAt),
     lastSuccessfullScrollAt: fixDate(parsed.lastSuccessfullScrollAt),
     selectedTab:
@@ -57,10 +57,28 @@ function safeParseScrapperDetails(jsonValue, fallback = {}) {
       parsed.scrappingStage == "initiated"
         ? parsed.selectedCollectionName
         : null,
+    // Track original path/username to detect navigation away
+    originalPath:
+      parsed.scrappingStage == "initiated" ? parsed.originalPath : null,
+    originalUsername:
+      parsed.scrappingStage == "initiated" ? parsed.originalUsername : null,
+    originalCollectionName:
+      parsed.scrappingStage == "initiated"
+        ? parsed.originalCollectionName
+        : null,
     scrappedPostsCount:
       typeof parsed.scrappedPostsCount === "number"
         ? parsed.scrappedPostsCount
         : 0,
+    // Batch download tracking
+    downloadedInBatches:
+      typeof parsed.downloadedInBatches === "number"
+        ? parsed.downloadedInBatches
+        : 0,
+    currentBatch:
+      typeof parsed.currentBatch === "number" ? parsed.currentBatch : 0,
+    // Reset isAutoBatchDownloading on page reload - it should start fresh
+    isAutoBatchDownloading: false,
   };
 }
 
@@ -172,7 +190,9 @@ const AppState = {
       FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault)
     ),
     showFolderPicker: getBooleanFromStorage(STORAGE_KEYS.SHOW_FOLDER_PICKER),
-    disableConfetti: getBooleanFromStorage(STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI),
+    disableConfetti: getBooleanFromStorage(
+      STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI
+    ),
   },
   rateDonate: safeParseRateDonateDates(
     localStorage.getItem(STORAGE_KEYS.RATE_DONATE_DATA),
@@ -194,6 +214,9 @@ const AppState = {
       selectedCollectionName: null,
       scrappingStage: null,
       scrappedPostsCount: null,
+      downloadedInBatches: 0,
+      currentBatch: 0,
+      isAutoBatchDownloading: false,
     }
   ),
 };
