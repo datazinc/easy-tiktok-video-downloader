@@ -35,7 +35,6 @@ import {
   getTabSpans,
   listScrollingCompleted,
   toTitleCase,
-  showAlertModal,
   shouldShowRatePopupLegacy,
   getRecommendedPresetTemplate,
   showShareOptions,
@@ -53,9 +52,288 @@ import {
   isExtensionEnabledSync,
   setExtensionEnabled,
 } from "../utils/extensionState.js";
+import {
+  loadProgress,
+  getAllProgress,
+  saveProgress,
+} from "../storage/progress.js";
+import { handleResumeDownload } from "./handlers.js";
+
+// Track current username to detect profile changes for resume downloads
+let lastTrackedUsername = null;
+
+/**
+ * Show a toast notification that auto-dismisses after a few seconds
+ * @param {string} title - The title of the toast
+ * @param {string} message - The message content
+ * @param {number} duration - Duration in milliseconds (default: 4500)
+ */
+export function showToast(title, message, duration = 4500) {
+  // Remove any existing toast
+  const existingToast = document.getElementById("ettpd-toast-container");
+  if (existingToast) {
+    existingToast.remove();
+  }
+
+  const toast = document.createElement("div");
+  toast.id = "ettpd-toast-container";
+
+  // Apply current theme so toast matches the utility UI
+  const resolvedTheme = getResolvedThemeMode();
+  if (resolvedTheme === "dark") {
+    toast.classList.add("ettpd-theme-dark");
+  } else {
+    toast.classList.add("ettpd-theme-classic");
+  }
+
+  // Add animation keyframes if not already present
+  if (!document.getElementById("ettpd-toast-styles")) {
+    const style = document.createElement("style");
+    style.id = "ettpd-toast-styles";
+    style.textContent = `
+      #ettpd-toast-container {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 100000;
+        max-width: 420px;
+        padding: 12px 16px;
+        border-radius: 12px;
+        background: var(--ettpd-bg-tertiary, #333);
+        color: var(--ettpd-text-primary, #fff);
+        border: 1px solid var(--ettpd-border-color, rgba(0, 0, 0, 0.2));
+        box-shadow: 0 14px 32px var(--ettpd-shadow, rgba(15, 23, 42, 0.45));
+        font-size: 13px;
+        line-height: 1.5;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        column-gap: 12px;
+        row-gap: 4px;
+        align-items: flex-start;
+        animation: slideInRight 0.25s ease-out;
+        pointer-events: auto;
+      }
+
+      #ettpd-toast-container .ettpd-toast-content {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      #ettpd-toast-container .ettpd-toast-title {
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--ettpd-text-primary, #fff);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #ettpd-toast-container .ettpd-toast-message {
+        color: var(--ettpd-text-secondary, rgba(255, 255, 255, 0.9));
+        font-size: 13px;
+        word-wrap: break-word;
+        overflow-wrap: anywhere;
+      }
+
+      #ettpd-toast-container .ettpd-toast-close {
+        border: none;
+        background: transparent;
+        color: var(--ettpd-text-secondary, rgba(255, 255, 255, 0.8));
+        padding: 0;
+        margin: 0;
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+      }
+
+      #ettpd-toast-container .ettpd-toast-close:hover {
+        color: var(--ettpd-text-primary, #fff);
+      }
+
+      @keyframes slideInRight {
+        from {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+      @keyframes slideOutRight {
+        from {
+          transform: translateX(0);
+          opacity: 1;
+        }
+        to {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  const contentEl = document.createElement("div");
+  contentEl.className = "ettpd-toast-content";
+
+  const titleEl = document.createElement("div");
+  titleEl.className = "ettpd-toast-title";
+  titleEl.textContent = title;
+
+  const messageEl = document.createElement("div");
+  messageEl.className = "ettpd-toast-message";
+  // Support HTML in message if it contains HTML tags
+  if (message && /<[a-z][\s\S]*>/i.test(message)) {
+    messageEl.innerHTML = message;
+  } else {
+    messageEl.textContent = message;
+  }
+
+  contentEl.appendChild(titleEl);
+  contentEl.appendChild(messageEl);
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "ettpd-toast-close";
+  closeBtn.setAttribute("aria-label", "Dismiss notification");
+  closeBtn.textContent = "×";
+
+  const dismissToast = () => {
+    if (toast && toast.parentNode) {
+      toast.style.animation = "slideOutRight 0.2s ease-in forwards";
+      setTimeout(() => {
+        if (toast && toast.parentNode) {
+          toast.remove();
+        }
+      }, 200);
+    }
+  };
+
+  closeBtn.onclick = (e) => {
+    e.stopPropagation();
+    dismissToast();
+  };
+
+  toast.onclick = () => {
+    dismissToast();
+  };
+
+  toast.setAttribute("role", "status");
+  toast.setAttribute("aria-live", "polite");
+
+  toast.appendChild(contentEl);
+  toast.appendChild(closeBtn);
+  document.body.appendChild(toast);
+
+  // Auto-dismiss after duration
+  setTimeout(dismissToast, duration);
+}
+
+/**
+ * Create an SVG icon element
+ * @param {string} iconName - Name of the icon (download, refresh, play, pause, etc.)
+ * @param {number} size - Size of the icon in pixels (default: 16)
+ * @returns {SVGElement} SVG element with the icon
+ */
+export function createIcon(iconName, size = 16) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", size);
+  svg.setAttribute("height", size);
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.style.verticalAlign = "middle";
+  svg.style.display = "inline-block";
+
+  const icons = {
+    download: `<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line>`,
+    refresh: `<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M3 21v-5h5"></path>`,
+    play: `<polygon points="10 8 16 12 10 16 10 8" fill="currentColor"></polygon>`,
+    pause: `<rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect>`,
+    check: `<polyline points="20 6 9 17 4 12"></polyline>`,
+    warning: `<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line>`,
+    error: `<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>`,
+    settings: `<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle>`,
+    info: `<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line>`,
+    delete: `<path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>`,
+    video: `<path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"></path><rect x="2" y="6" width="14" height="12" rx="2"></rect>`,
+    repost: `<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path><path d="m15 5 4 4"></path>`,
+    heart: `<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.29 1.51 4.04 3 5.5l7 7Z"></path>`,
+    star: `<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>`,
+    folder: `<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>`,
+    sun: `<circle cx="12" cy="12" r="4"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>`,
+    computer: `<rect width="20" height="14" x="2" y="3" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line>`,
+    fire: `<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.5-1.5-2-1.5-5C9.5 4 8.5 5 8.5 7c0 1.5.5 2.5.5 3.5s-.5 2.5-1 4"></path><path d="M12.5 13.5A2.5 2.5 0 0 0 15 11c0-1.5-1.5-2-1.5-5C13.5 3 12.5 4 12.5 6c0 1.5.5 2.5.5 3.5s-.5 2.5-1 4"></path><path d="M16.5 12.5A2.5 2.5 0 0 0 19 10c0-1.5-1.5-2-1.5-5C17.5 2 16.5 3 16.5 5c0 1.5.5 2.5.5 3.5s-.5 2.5-1 4"></path>`,
+    sparkles: `<path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path><path d="M5 3v4"></path><path d="M19 17v4"></path><path d="M3 5h4"></path><path d="M17 19h4"></path>`,
+    hourglass: `<path d="M5 22h14"></path><path d="M5 2h14"></path><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"></path><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"></path>`,
+    stop: `<circle cx="12" cy="12" r="10"></circle><rect x="9" y="9" width="6" height="6"></rect>`,
+    skip: `<polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line>`,
+    down: `<path d="M12 5v14"></path><path d="m19 12-7 7-7-7"></path>`,
+  };
+
+  const iconPath = icons[iconName];
+  if (!iconPath) {
+    console.warn(`Icon "${iconName}" not found`);
+    return svg;
+  }
+
+  svg.innerHTML = iconPath;
+  return svg;
+}
+
+/**
+ * Set button text with an icon
+ * @param {HTMLElement} button - Button element
+ * @param {string} text - Text to display
+ * @param {string} iconName - Name of the icon (optional)
+ * @param {string} iconPosition - 'before' or 'after' (default: 'before')
+ */
+export function setButtonWithIcon(
+  button,
+  text,
+  iconName = null,
+  iconPosition = "before"
+) {
+  // Clear existing content
+  button.textContent = "";
+
+  if (iconName) {
+    const icon = createIcon(iconName, 16);
+    icon.style.marginRight = iconPosition === "before" ? "4px" : "0";
+    icon.style.marginLeft = iconPosition === "after" ? "4px" : "0";
+
+    if (iconPosition === "before") {
+      button.appendChild(icon);
+      button.appendChild(document.createTextNode(text));
+    } else {
+      button.appendChild(document.createTextNode(text));
+      button.appendChild(icon);
+    }
+  } else {
+    button.textContent = text;
+  }
+}
+
+/**
+ * Update button text with an icon (for dynamic updates)
+ * @param {HTMLElement} button - Button element
+ * @param {string} text - Text to display
+ * @param {string} iconName - Name of the icon (optional)
+ */
+export function updateButtonWithIcon(button, text, iconName = null) {
+  setButtonWithIcon(button, text, iconName);
+}
 
 export function getResolvedThemeMode() {
-  const stored = AppState.ui.themeMode || "dark";
+  const stored = AppState.ui.themeMode || "system";
   const normalized = stored === "classic" ? "light" : stored;
 
   // If system is selected, detect system preference
@@ -76,6 +354,115 @@ export function getResolvedThemeMode() {
   return normalized;
 }
 
+function createHeaderPowerButton() {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ettpd-icon-btn ettpd-power-btn";
+  button.title = "Turn extension off";
+  button.setAttribute("aria-label", "Turn extension off");
+
+  button.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <line x1="12" y1="4" x2="12" y2="11" />
+        <path d="M8.5 6.5A7 7 0 1 0 15.5 6.5" />
+      </g>
+    </svg>
+  `;
+
+  const applyState = (enabled) => {
+    button.classList.toggle("ettpd-power-btn-on", enabled);
+    button.classList.toggle("ettpd-power-btn-off", !enabled);
+    button.setAttribute("aria-pressed", enabled ? "true" : "false");
+    button.title = enabled ? "Turn extension off" : "Turn extension on";
+    button.setAttribute(
+      "aria-label",
+      enabled ? "Turn extension off" : "Turn extension on"
+    );
+  };
+
+  applyState(isExtensionEnabledSync());
+
+  button.onclick = async (e) => {
+    e.stopPropagation();
+    const currentState = isExtensionEnabledSync();
+    console.log(
+      "[EXT_POWER] header button clicked, currentState:",
+      currentState
+    );
+
+    if (currentState) {
+      // Turning off - show warning modal with Cancel and Disable buttons
+      return new Promise((resolve) => {
+        const message = document.createElement("div");
+        message.className = "alert";
+        message.innerHTML =
+          "⚠️ <b>Disable Extension?</b><br><br>" +
+          "The extension will be completely disabled. No scripts will run, no polling will occur, and no downloads will be processed.<br><br>" +
+          "To re-enable, click the extension icon and select 'Turn On'.";
+
+        const actionsContainer = document.createElement("div");
+        actionsContainer.style.cssText = `
+          display: flex;
+          gap: 10px;
+          margin-top: 20px;
+          justify-content: center;
+        `;
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "ettpd-modal-button secondary";
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.onclick = () => {
+          const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
+          if (overlay) overlay.remove();
+          resolve(false);
+        };
+
+        const disableBtn = document.createElement("button");
+        disableBtn.className = "ettpd-modal-button danger";
+        disableBtn.textContent = "Disable";
+        disableBtn.onclick = async () => {
+          console.log("[EXT_POWER] disabling via header modal");
+          await setExtensionEnabled(false);
+          applyState(false);
+
+          showToast(
+            "Extension disabled",
+            "Reloading the page to stop the downloader..."
+          );
+
+          const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
+          if (overlay) overlay.remove();
+          setTimeout(() => {
+            try {
+              window.location.reload();
+            } catch {}
+          }, 300);
+          resolve(true);
+        };
+
+        actionsContainer.appendChild(cancelBtn);
+        actionsContainer.appendChild(disableBtn);
+
+        createModal({
+          children: [message, actionsContainer],
+          onClose: () => resolve(false),
+        });
+      });
+    }
+
+    console.log("[EXT_POWER] enabling via header button");
+    await setExtensionEnabled(true);
+    applyState(true);
+    showToast(
+      "Extension enabled",
+      "Reload the page for changes to take effect."
+    );
+  };
+
+  return button;
+}
+
 export function createDownloaderWrapper() {
   const wrapper = document.createElement("div");
   wrapper.id = DOM_IDS.DOWNLOADER_WRAPPER;
@@ -91,16 +478,18 @@ export function createDownloaderWrapper() {
 
   const dragHandle = document.createElement("div");
   dragHandle.className = "ettpd-drag-handle";
-  dragHandle.title = "Drag to move";
-  dragHandle.innerHTML = `<svg class="ettpd-drag-handle-icon" style="display: flex;align-items: center; justify-content: center;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" fill="currentColor" height="22px" width="22px" version="1.1" id="Layer_1" viewBox="0 0 492.001 492.001" xml:space="preserve">
-                          <g>
-                            <g>
-                              <path d="M487.97,237.06l-58.82-58.82c-5.224-5.228-14.376-5.228-19.592,0l-7.436,7.432c-5.4,5.4-5.4,14.064,0,19.46l21.872,21.74    H265.206V68.396l21.808,22.132c5.224,5.22,14.216,5.22,19.428,0l7.36-7.432c5.404-5.404,5.356-14.196-0.044-19.596L254.846,4.444    c-2.6-2.592-6.088-4.184-9.804-4.184h-0.404c-3.712,0-7.188,1.588-9.784,4.184l-57.688,57.772    c-2.612,2.608-4.052,6.124-4.052,9.836c0,3.704,1.44,7.208,4.052,9.816l7.432,7.444c5.224,5.22,14.612,5.228,19.828,0.004    l22.368-22.132v159.688H67.814l22.14-22.008c2.608-2.608,4.048-6.028,4.048-9.732s-1.44-7.16-4.052-9.76l-7.436-7.42    c-5.22-5.216-14.372-5.2-19.584,0.008L4.034,236.856c-2.672,2.672-4.1,6.244-4.032,9.92c-0.068,3.816,1.356,7.388,4.028,10.056    l57.68,57.692c5.224,5.22,14.38,5.22,19.596,0l7.44-7.44c2.604-2.6,4.044-6.084,4.044-9.788c0-3.716-1.44-7.232-4.044-9.836    l-22.14-22.172H226.79V425.32l-23.336-23.088c-5.212-5.22-14.488-5.22-19.7,0l-7.5,7.44c-2.604,2.6-4.072,6.084-4.072,9.792    c0,3.704,1.424,7.184,4.028,9.792l58.448,58.456c2.596,2.592,6.068,4.028,9.9,4.028c0.024-0.016,0.24,0,0.272,0    c3.712,0,7.192-1.432,9.792-4.028l58.828-58.832c2.6-2.604,4.044-6.088,4.044-9.792c0-3.712-1.44-7.192-4.044-9.796l-7.44-7.44    c-5.216-5.22-14.044-5.22-19.264,0l-21.54,21.868V265.284H425.59l-23.096,23.132c-2.612,2.608-4.048,6.112-4.048,9.82    s1.432,7.192,4.048,9.8l7.44,7.444c5.212,5.224,14.372,5.224,19.584,0l58.452-58.452c2.672-2.664,4.096-6.244,4.028-9.916    C492.07,243.296,490.642,239.728,487.97,237.06z"/>
-                            </g>
-                          </g>
-                          </svg>
-                          `;
-  dragHandle.style.marginRight = "25px";
+  dragHandle.title = "Press & hold, then drag to move";
+  dragHandle.innerHTML = `<svg class="ettpd-drag-handle-icon" style="display:flex;align-items:center;justify-content:center;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <g fill="currentColor">
+      <circle cx="9" cy="8" r="1.1" />
+      <circle cx="9" cy="12" r="1.1" />
+      <circle cx="9" cy="16" r="1.1" />
+      <circle cx="15" cy="8" r="1.1" />
+      <circle cx="15" cy="12" r="1.1" />
+      <circle cx="15" cy="16" r="1.1" />
+    </g>
+  </svg>`;
+  dragHandle.style.marginRight = "0px";
 
   // Create corner selector dropdown
   const cornerSelector = document.createElement("select");
@@ -111,31 +500,53 @@ export function createDownloaderWrapper() {
     (pos) => {
       const opt = document.createElement("option");
       opt.value = pos;
-      opt.textContent = pos ? pos.replace("-", " ") : "⇱ Corners";
+      opt.textContent = pos ? pos.replace("-", " ") : "⇱";
       cornerSelector.appendChild(opt);
     }
   );
 
+  const powerButton = createHeaderPowerButton();
+
   // Create leaderboard icon button
   const leaderboardBtn = document.createElement("button");
-  leaderboardBtn.className = "ettpd-leaderboard-btn";
+  leaderboardBtn.type = "button";
+  leaderboardBtn.className = "ettpd-icon-btn ettpd-leaderboard-btn";
   leaderboardBtn.title = "View Leaderboard";
-  leaderboardBtn.textContent = "📊";
+  leaderboardBtn.setAttribute("aria-label", "View leaderboard");
+  leaderboardBtn.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="4" y="11" width="3" height="7" rx="1.5" fill="currentColor" />
+      <rect x="10.5" y="7" width="3" height="11" rx="1.5" fill="currentColor" />
+      <rect x="17" y="9" width="3" height="9" rx="1.5" fill="currentColor" />
+    </svg>
+  `;
   leaderboardBtn.onclick = showStatsPopUp;
-  leaderboardBtn.style.fontSize = "24px";
 
-  const shareBtn = document.createElement("div");
-  shareBtn.className = "ettpd-share-btn icon-share";
+  const shareBtn = document.createElement("button");
+  shareBtn.type = "button";
+  shareBtn.className = "ettpd-icon-btn ettpd-share-btn";
   shareBtn.title = "Share Extension!";
+  shareBtn.setAttribute("aria-label", "Share extension");
+  shareBtn.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="17" cy="5" r="2.3" />
+        <circle cx="7" cy="12" r="2.3" />
+        <circle cx="17" cy="19" r="2.3" />
+        <path d="M9.3 11l5.4-3.2M9.3 13l5.4 3.2" />
+      </g>
+    </svg>
+  `;
   shareBtn.onclick = showShareOptions;
 
   // Append all UI elements
   const controlBar = document.createElement("div");
   controlBar.className = "ettpd-handle-controls";
   controlBar.appendChild(cornerSelector);
+  controlBar.appendChild(dragHandle);
   controlBar.appendChild(leaderboardBtn);
   controlBar.appendChild(shareBtn);
-  controlBar.appendChild(dragHandle);
+  controlBar.appendChild(powerButton);
   wrapper.appendChild(controlBar);
   if (!wrapper || !wrapper.style) return;
   console.warn(wrapper, "STYLE", wrapper.style);
@@ -174,453 +585,1076 @@ export function createDownloaderWrapper() {
   return wrapper;
 }
 
-export async function showScrapperControls() {
-  const scrapperContainer = document.getElementById(
-    DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER
-  );
-  if (!scrapperContainer) return;
-  scrapperContainer.style.display = AppState.ui.isScrapperBoxOpen
-    ? "flex"
-    : "none";
-  AppState.ui.isPreferenceBoxOpen =
-    scrapperContainer.style.display == "none"
-      ? AppState.ui.isPreferenceBoxOpen
-      : false;
-  if (!scrapperContainer) return;
+/**
+ * Create a container showing resumable downloads for the current user
+ * @param {Object} pageInfo - Page information from isOnProfileOrCollectionPage()
+ * @param {Array} tabOptions - Available tab options
+ * @returns {Promise<HTMLElement|null>} Container element or null if no resumable downloads
+ */
+async function createResumableDownloadsContainer(pageInfo, tabOptions) {
+  try {
+    const username = getCurrentPageUsername();
+    if (!username || username === "😃") {
+      return null;
+    }
 
-  const controls = document.createElement("div");
-  controls.className = "ettpd-scrapper-controls";
+    const allProgress = await getAllProgress();
+    const normalizedUsername = username.toLowerCase().trim();
+    const userProgress = allProgress[normalizedUsername];
 
-  const title = document.createElement("h3");
-  title.textContent = "🧰 Scrapper Controls";
-  title.className = "ettpd-controls-title";
-  controls.appendChild(title);
+    if (!userProgress) {
+      return null;
+    }
 
-  const btnContainer = document.createElement("div");
-  btnContainer.className = "ettpd-tab-buttons";
-
-  // Check if we're on a profile or collection page (synchronous check)
-  const pageInfo = isOnProfileOrCollectionPage();
-
-  const spans = await getTabSpans(30 * 1000); // 30 seconds wait at most
-
-  // Button Generator
-  const tabOptions = [
-    { key: "videos", label: "🎥 Scrape Videos" },
-    { key: "reposts", label: "🔁 Scrape Reposts" },
-    { key: "liked", label: "❤️ Scrape Likes" },
-    { key: "favorites", label: "⭐ Scrape Favorites" },
-    {
-      key: "collection",
-      label: `🗂️ Scrape: ${
-        spans.collection || pageInfo.collectionName || "Collection"
-      }`,
-    },
-  ];
-
-  // Check if scrapping is already ongoing or downloading
-  // Also check for "initiated" stage (after page reload) or if selectedTab is set (scrapping has started)
-  // If selectedTab is set and stage is not "completed", scrapping is active
-  const isScrappingActive =
-    AppState.scrapperDetails.scrappingStage == "ongoing" ||
-    AppState.scrapperDetails.scrappingStage == "downloading" ||
-    AppState.scrapperDetails.scrappingStage == "initiated" ||
-    (AppState.scrapperDetails.selectedTab != null &&
-      AppState.scrapperDetails.scrappingStage != "completed");
-
-  // Only show completion view if scrapping has actually completed AND there was a selected tab
-  // (meaning a scrapping session was actually started)
-  const isScrappingCompleted =
-    AppState.scrapperDetails.scrappingStage == "completed" &&
-    AppState.scrapperDetails.selectedTab != null;
-
-  // If scrapping is active, show progress instead of tabs
-  if (isScrappingActive) {
-    const progressContainer = document.createElement("div");
-    progressContainer.className = "ettpd-scrapper-progress";
-
-    const progressTitle = document.createElement("div");
-    progressTitle.className = "ettpd-scrapper-progress-title";
-    progressTitle.textContent = `📂 ${toTitleCase(
-      AppState.scrapperDetails.selectedTab || "Scrapper"
-    )} Scrapper Active`;
-    progressContainer.appendChild(progressTitle);
-
-    const progressInfo = document.createElement("div");
-    progressInfo.className = "ettpd-scrapper-progress-info";
-    progressInfo.id = "ettpd-scrapper-progress-info";
-
-    // Update progress info
-    const updateProgressInfo = () => {
-      const total = AppState.allDirectLinks.length;
-      const downloaded = AppState.downloadedURLs.length;
-      const batch = AppState.scrapperDetails.currentBatch || 1;
-      const isDownloading = AppState.downloading.isDownloadingAll;
-
-      if (isDownloading && AppState.scrapperDetails.isAutoBatchDownloading) {
-        // Show current batch being downloaded
-        const currentBatch = AppState.scrapperDetails.currentBatch || 1;
-        progressInfo.innerHTML = `
-          <div>⏳ Batch ${currentBatch}: Downloading items...</div>
-          <div>Downloaded: ${downloaded} of ${total} posts</div>
-          <div style="font-size: 11px; color: #666; margin-top: 5px;">Auto-scrolling and downloading in progress</div>
-        `;
-      } else if (total > 0) {
-        progressInfo.innerHTML = `
-          <div>📊 Total discovered: ${total} posts</div>
-          <div>✅ Downloaded: ${downloaded} posts</div>
-        `;
-      } else {
-        progressInfo.innerHTML = `
-          <div>🔍 Discovering posts...</div>
-          <div style="font-size: 11px; color: #666; margin-top: 5px;">Auto-scrolling in progress</div>
-        `;
-      }
+    // Map standard tab keys to display names
+    const standardTabs = {
+      videos: "Videos",
+      reposts: "Reposts",
+      liked: "Likes",
+      favorites: "Favorites",
     };
 
-    updateProgressInfo();
-    progressContainer.appendChild(progressInfo);
+    // Find tabs with existing downloads
+    const resumableTabs = [];
+    for (const [tabKey, videoIds] of Object.entries(userProgress)) {
+      if (Array.isArray(videoIds) && videoIds.length > 0) {
+        // Check if this is a standard tab
+        if (standardTabs[tabKey]) {
+          // Check if this tab is available in tabOptions
+          const tabOption = tabOptions.find((opt) => opt.key === tabKey);
+          if (tabOption) {
+            resumableTabs.push({
+              key: tabKey,
+              label: standardTabs[tabKey],
+              count: videoIds.length,
+              isCollection: false,
+            });
+          }
+        } else {
+          // This is likely a collection (collection name is used as tabKey)
+          // Only show collections when we're on that specific collection page
+          if (!pageInfo.isCollection) {
+            // Skip collections when not on a collection page
+            continue;
+          }
 
-    // Add pause/resume controls
-    const controlsRow = document.createElement("div");
-    controlsRow.style.cssText = `
-      display: flex;
-      gap: 10px;
-      margin-top: 15px;
-      justify-content: center;
-    `;
+          // Check if we have a collection tab option
+          const collectionTabOption = tabOptions.find(
+            (opt) => opt.key === "collection"
+          );
+          if (collectionTabOption && pageInfo.collectionName) {
+            // Decode and format the stored collection name for comparison
+            let storedCollectionName = tabKey;
+            try {
+              // Try to decode if it's URL encoded
+              storedCollectionName = decodeURIComponent(tabKey);
+            } catch (e) {
+              // If decoding fails, use the original tabKey
+              storedCollectionName = tabKey;
+            }
+            // Remove the numeric suffix for comparison (e.g., "Summer of Sports-7394627756635573022" -> "Summer of Sports")
+            storedCollectionName = storedCollectionName.replace(/-\d+$/, "");
 
-    const pauseBtn = document.createElement("button");
-    pauseBtn.className = "ettpd-scrapper-pause";
-    pauseBtn.textContent = AppState.scrapperDetails.paused
-      ? "▶️ Resume"
-      : "⏸️ Pause";
-    pauseBtn.style.cssText = `
-      background: ${AppState.scrapperDetails.paused ? "#007AFF" : "#FF9500"};
-      color: white;
-      border: none;
-      padding: 8px 16px;
-      border-radius: 6px;
-      font-size: 13px;
-      cursor: pointer;
-      font-weight: 500;
-      transition: background 0.2s;
-    `;
+            // Get the current collection name (also remove numeric suffix for comparison)
+            let currentCollectionName = pageInfo.collectionName.replace(
+              /-\d+$/,
+              ""
+            );
 
+            // Only show if this collection matches the current page's collection
+            if (storedCollectionName === currentCollectionName) {
+              // Decode and format the collection name for display
+              let displayName = tabKey;
+              try {
+                displayName = decodeURIComponent(tabKey);
+              } catch (e) {
+                displayName = tabKey;
+              }
+              displayName = displayName.replace(/-\d+$/, "");
+
+              // Skip if it's the generic "collection" string
+              if (displayName && displayName !== "collection") {
+                resumableTabs.push({
+                  key: "collection",
+                  label: displayName, // Use the formatted collection name as label
+                  count: videoIds.length,
+                  isCollection: true,
+                  collectionName: tabKey, // Store the actual collection name (original tabKey)
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (resumableTabs.length === 0) {
+      return null;
+    }
+
+    // Create container
+    const container = document.createElement("div");
+    container.className = "ettpd-resume-downloads-container";
+
+    // Title
+    const title = document.createElement("div");
+    title.className = "ettpd-resume-downloads-title";
+    title.textContent = "Resume Downloads:";
+    container.appendChild(title);
+
+    // List of resumable downloads
+    const list = document.createElement("div");
+    list.className = "ettpd-resume-downloads-list";
+
+    for (const tab of resumableTabs) {
+      const item = document.createElement("div");
+      item.className = "ettpd-resume-download-item";
+
+      const label = document.createElement("span");
+      label.className = "ettpd-resume-download-label";
+      label.textContent = `${tab.label} (saved ${tab.count})`;
+      item.appendChild(label);
+
+      const resumeBtn = document.createElement("button");
+      setButtonWithIcon(resumeBtn, "Resume", "play");
+      resumeBtn.className = "ettpd-pref-btn primary ettpd-resume-downloads-btn";
+
+      resumeBtn.onclick = async () => {
+        // Set the selected tab
+        AppState.scrapperDetails.selectedTab = tab.key;
+        if (tab.isCollection && tab.collectionName) {
+          AppState.scrapperDetails.selectedCollectionName = tab.collectionName;
+        }
+
+        // Start the scrapping process directly
+        await startScrappingProcess(tab.key, pageInfo);
+      };
+
+      item.appendChild(resumeBtn);
+      list.appendChild(item);
+    }
+
+    container.appendChild(list);
+    return container;
+  } catch (err) {
+    console.error("[Resume Downloads] Error creating container:", err);
+    return null;
+  }
+}
+
+/**
+ * Render ultra-compact active scrapping session view
+ * Single-line status with inline pause button
+ */
+function renderActiveScrappingView() {
+  // Check if we're still on the same user's page
+  const currentUsername = getCurrentPageUsername();
+  const originalUsername = AppState.scrapperDetails.originalUsername;
+
+  // If we're on a different user's page, reset the state
+  if (
+    originalUsername !== null &&
+    currentUsername !== originalUsername &&
+    currentUsername !== "😃"
+  ) {
+    // Clear the active state since we're on a different user
+    AppState.scrapperDetails.scrappingStage = null;
+    AppState.scrapperDetails.selectedTab = null;
+    AppState.scrapperDetails.selectedCollectionName = null;
+    AppState.scrapperDetails.originalPath = null;
+    AppState.scrapperDetails.originalUsername = null;
+    AppState.scrapperDetails.originalCollectionName = null;
+
+    localStorage.setItem(
+      STORAGE_KEYS.SCRAPPER_DETAILS,
+      JSON.stringify(AppState.scrapperDetails)
+    );
+
+    // Re-render with stepper view
+    showScrapperControls();
+    return document.createElement("div"); // Return empty container, will be replaced
+  }
+
+  const container = document.createElement("div");
+  container.className = "ettpd-progress-compact";
+  container.id = "ettpd-progress-compact-container";
+
+  // Create single-line status display
+  const statusLine = document.createElement("div");
+  statusLine.className = "ettpd-progress-compact-line";
+  statusLine.style.cssText = `
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+    padding: 4px 8px;
+  `;
+
+  // Left section: Tab name
+  const tabName = document.createElement("span");
+  tabName.className = "ettpd-progress-tab-name";
+  const tabDisplay = toTitleCase(
+    AppState.scrapperDetails.selectedTab || "Scrapper"
+  );
+  tabName.textContent =
+    tabDisplay.length > 12 ? tabDisplay.slice(0, 12) + "..." : tabDisplay;
+  if (tabDisplay.length > 12) {
+    tabName.title = tabDisplay;
+  }
+
+  // Center section: Status info
+  const statusInfo = document.createElement("span");
+  statusInfo.className = "ettpd-progress-status-info";
+  statusInfo.id = "ettpd-progress-status-info";
+
+  // Right section: Pause button
+  const pauseBtn = document.createElement("button");
+  pauseBtn.className = "ettpd-progress-pause-btn";
+  setButtonWithIcon(
+    pauseBtn,
+    "",
+    AppState.scrapperDetails.paused ? "play" : "pause"
+  );
+  pauseBtn.title = AppState.scrapperDetails.paused ? "Resume" : "Pause";
+  pauseBtn.style.cssText = `
+    background: ${AppState.scrapperDetails.paused ? "#007AFF" : "#FF9500"};
+    color: white;
+    border: none;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    height: 20px;
+    min-width: 32px;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  `;
+
+  pauseBtn.onmouseover = () => {
+    pauseBtn.style.background = AppState.scrapperDetails.paused
+      ? "#0056CC"
+      : "#E68500";
+  };
+  pauseBtn.onmouseout = () => {
+    pauseBtn.style.background = AppState.scrapperDetails.paused
+      ? "#007AFF"
+      : "#FF9500";
+  };
+
+  pauseBtn.onclick = () => {
+    AppState.scrapperDetails.paused = !AppState.scrapperDetails.paused;
+    if (AppState.scrapperDetails.paused) {
+      AppState.downloadPreferences.autoScrollMode = "off";
+      setButtonWithIcon(pauseBtn, "", "play");
+      pauseBtn.title = "Resume";
+      pauseBtn.style.background = "#007AFF";
+    } else {
+      AppState.downloadPreferences.autoScrollMode = "always";
+      setButtonWithIcon(pauseBtn, "", "pause");
+      pauseBtn.title = "Pause";
+      pauseBtn.style.background = "#FF9500";
+    }
+    localStorage.setItem(
+      STORAGE_KEYS.SCRAPPER_DETAILS,
+      JSON.stringify(AppState.scrapperDetails)
+    );
     pauseBtn.onmouseover = () => {
       pauseBtn.style.background = AppState.scrapperDetails.paused
         ? "#0056CC"
         : "#E68500";
     };
-    pauseBtn.onmouseout = () => {
-      pauseBtn.style.background = AppState.scrapperDetails.paused
-        ? "#007AFF"
-        : "#FF9500";
-    };
+  };
 
-    pauseBtn.onclick = () => {
-      AppState.scrapperDetails.paused = !AppState.scrapperDetails.paused;
-      if (AppState.scrapperDetails.paused) {
-        // Pause logic
-        AppState.downloadPreferences.autoScrollMode = "off";
-        pauseBtn.textContent = "▶️ Resume";
-        pauseBtn.style.background = "#007AFF";
-        console.log("[Scrapper] Paused");
+  // Cache for previously downloaded videoIds list, scoped to username+tab
+  let cachedPreviouslyDownloadedVideoIds = null;
+  let cachedContextKey = null;
+  let isLoadingPreviouslyDownloadedVideoIds = false;
+
+  // Update status info function
+  const updateStatusInfo = () => {
+    const discovered = AppState.allDirectLinks.length;
+    const currentBatch = AppState.scrapperDetails.currentBatch || 1;
+    const isDownloading = AppState.downloading.isDownloadingAll;
+    const isAutoBatch = AppState.scrapperDetails.isAutoBatchDownloading;
+    const skipDownloaded = AppState.scrapperDetails.skipDownloaded;
+    const isDiscovering = AppState.scrapperDetails.scrappingStage === "ongoing";
+
+    // When skipDownloaded is enabled, load previously downloaded videoIds based on current context
+    const username = AppState.scrapperDetails.originalUsername;
+    const tabName =
+      AppState.scrapperDetails.selectedTab === "collection"
+        ? AppState.scrapperDetails.selectedCollectionName
+        : AppState.scrapperDetails.selectedTab;
+    const contextKey = `${username}:${tabName}`;
+
+    // If context changed, reset cache
+    if (cachedContextKey !== contextKey) {
+      cachedPreviouslyDownloadedVideoIds = null;
+      cachedContextKey = contextKey;
+      isLoadingPreviouslyDownloadedVideoIds = false;
+    }
+
+    // When skipDownloaded is enabled, count discovered items that were previously downloaded
+    // Fall back to session downloads if list is not available yet
+    let downloaded; // A: Count of downloaded items (as they are being discovered)
+    let maxCount; // B: Max of (total previously downloaded ever, discovered items in session)
+
+    if (skipDownloaded) {
+      // Load previously downloaded videoIds list asynchronously if not cached and not already loading
+      if (
+        cachedPreviouslyDownloadedVideoIds === null &&
+        !isLoadingPreviouslyDownloadedVideoIds &&
+        username &&
+        username !== "😃" &&
+        tabName
+      ) {
+        isLoadingPreviouslyDownloadedVideoIds = true;
+        loadProgress(username, tabName)
+          .then((progress) => {
+            cachedPreviouslyDownloadedVideoIds = progress || [];
+            isLoadingPreviouslyDownloadedVideoIds = false;
+            // Update the status display with the new value
+            updateStatusInfo();
+          })
+          .catch(() => {
+            cachedPreviouslyDownloadedVideoIds = [];
+            isLoadingPreviouslyDownloadedVideoIds = false;
+            updateStatusInfo();
+          });
+      }
+
+      // When skipDownloaded is enabled, downloader skips previously downloaded items
+      // So A = items downloaded in this session (session downloads only)
+      downloaded =
+        AppState.downloadedURLs.length ||
+        AppState.scrapperDetails.downloadedInBatches ||
+        0;
+
+      // B = Max of (total previously downloaded ever, discovered items in this session)
+      if (cachedPreviouslyDownloadedVideoIds !== null) {
+        const totalPreviouslyDownloadedCount =
+          cachedPreviouslyDownloadedVideoIds.length;
+        maxCount = Math.max(totalPreviouslyDownloadedCount, discovered);
       } else {
-        // Resume logic
-        AppState.downloadPreferences.autoScrollMode = "always";
-        pauseBtn.textContent = "⏸️ Pause";
-        pauseBtn.style.background = "#FF9500";
-        console.log("[Scrapper] Resumed");
-      }
-      localStorage.setItem(
-        STORAGE_KEYS.SCRAPPER_DETAILS,
-        JSON.stringify(AppState.scrapperDetails)
-      );
-      // Update button hover colors
-      pauseBtn.onmouseover = () => {
-        pauseBtn.style.background = AppState.scrapperDetails.paused
-          ? "#0056CC"
-          : "#E68500";
-      };
-    };
-
-    controlsRow.appendChild(pauseBtn);
-    progressContainer.appendChild(controlsRow);
-
-    // Update progress periodically
-    const progressInterval = setInterval(() => {
-      if (!document.getElementById("ettpd-scrapper-progress-info")) {
-        clearInterval(progressInterval);
-        return;
+        // While loading, use discovered as maxCount
+        maxCount = discovered;
       }
 
-      // Check if scrapping has completed - if so, refresh the controls
-      if (
-        AppState.scrapperDetails.scrappingStage === "completed" &&
-        AppState.ui.isScrapperBoxOpen
-      ) {
-        clearInterval(progressInterval);
-        showScrapperControls();
-        return;
-      }
+      // Ensure A never exceeds B
+      downloaded = Math.min(downloaded, maxCount);
+    } else {
+      // Normal case: count discovered items downloaded in this session
+      const sessionDownloadedUrlsSet = new Set(AppState.downloadedURLs);
+      downloaded = AppState.allDirectLinks.filter((item) =>
+        sessionDownloadedUrlsSet.has(item.url)
+      ).length;
+      // B = discovered items in this session
+      maxCount = discovered;
+      // Ensure A never exceeds discovered
+      downloaded = Math.min(downloaded, discovered);
+    }
 
-      // Update pause button state if it changed externally
-      if (pauseBtn && pauseBtn.textContent) {
-        const shouldBePaused = AppState.scrapperDetails.paused;
-        const isCurrentlyPaused = pauseBtn.textContent.includes("Resume");
-        if (shouldBePaused !== isCurrentlyPaused) {
-          pauseBtn.textContent = shouldBePaused ? "▶️ Resume" : "⏸️ Pause";
-          pauseBtn.style.background = shouldBePaused ? "#007AFF" : "#FF9500";
+    let statusText = "";
+    if (AppState.scrapperDetails.paused) {
+      // When paused, show percentage if skipDownloaded is enabled and discovering
+      if (skipDownloaded && isDiscovering) {
+        let percentage =
+          maxCount > 0 ? Math.round((downloaded / maxCount) * 100) : 0;
+        if (percentage >= 100) {
+          percentage = 99;
         }
+        statusText = `Paused | ${downloaded}/${maxCount} (${percentage}%) discovering...`;
+      } else {
+        statusText = `Paused | ${downloaded}/${discovered}`;
       }
+    } else if (isDownloading && isAutoBatch) {
+      // When downloading in batches
+      let percentage =
+        maxCount > 0 ? Math.round((downloaded / maxCount) * 100) : 0;
 
-      updateProgressInfo();
-    }, 2000);
-
-    btnContainer.appendChild(progressContainer);
-  } else if (isScrappingCompleted) {
-    // Show completion state with continue button
-    const completionContainer = document.createElement("div");
-    completionContainer.className = "ettpd-scrapper-completion";
-
-    const completionTitle = document.createElement("div");
-    completionTitle.className = "ettpd-scrapper-completion-title";
-    completionTitle.textContent = `✅ ${toTitleCase(
-      AppState.scrapperDetails.selectedTab || "Scrapper"
-    )} Scraping Finished`;
-    completionContainer.appendChild(completionTitle);
-
-    const completionInfo = document.createElement("div");
-    completionInfo.className = "ettpd-scrapper-completion-info";
-    const total = AppState.allDirectLinks.length;
-    const downloaded = AppState.downloadedURLs.length;
-    completionInfo.innerHTML = `
-      <div style="margin-bottom: 15px;">
-        <div>📊 Total discovered: ${total} posts</div>
-        <div>✅ Downloaded: ${downloaded} posts</div>
-      </div>
-      <div style="font-size: 12px; color: #666; margin-bottom: 15px; line-height: 1.5;">
-        Auto-scrolling has reached the bottom. If you think there are more items, try manually scrolling down to trigger TikTok's "load more" feature, then click Continue.
-      </div>
-    `;
-    completionContainer.appendChild(completionInfo);
-
-    const continueBtn = document.createElement("button");
-    continueBtn.className = "ettpd-scrapper-continue-btn";
-    continueBtn.textContent = "🔄 Continue";
-    continueBtn.style.cssText = `
-      background: #007AFF;
-      color: white;
-      border: none;
-      padding: 10px 20px;
-      border-radius: 6px;
-      font-size: 14px;
-      cursor: pointer;
-      font-weight: 600;
-      width: 100%;
-      margin-top: 10px;
-      transition: background 0.2s;
-    `;
-
-    continueBtn.onmouseover = () => {
-      continueBtn.style.background = "#0056CC";
-    };
-    continueBtn.onmouseout = () => {
-      continueBtn.style.background = "#007AFF";
-    };
-
-    continueBtn.onclick = () => {
-      // Resume auto-scrolling and batch downloading
-      AppState.scrapperDetails.scrappingStage = "ongoing";
-      AppState.scrapperDetails.isAutoBatchDownloading = false;
-
-      // Resume scrolling if not at bottom
-      if (AppState.downloadPreferences.autoScrollMode === "off") {
-        AppState.downloadPreferences.autoScrollMode = "always";
+      if (skipDownloaded && isDiscovering) {
+        // Still discovering - cap percentage at 99% (never show 100% while discovering)
+        if (percentage >= 100) {
+          percentage = 99;
+        }
+        statusText = `Batch #${currentBatch} | ${downloaded}/${maxCount} (${percentage}%) discovering...`;
+      } else {
+        // Done discovering, show normal progress with percentage
+        statusText = `Batch #${currentBatch} | ${downloaded}/${discovered} (${percentage}%)`;
       }
+    } else if (discovered > 0) {
+      // Not downloading yet, but have discovered items
+      if (skipDownloaded && isDiscovering) {
+        // Still discovering with skipDownloaded enabled - show percentage but cap at 99%
+        let percentage =
+          maxCount > 0 ? Math.round((downloaded / maxCount) * 100) : 0;
+        if (percentage >= 100) {
+          percentage = 99;
+        }
+        statusText = `${downloaded}/${maxCount} (${percentage}%) discovering...`;
+      } else {
+        // Normal display
+        statusText = `${downloaded}/${discovered}`;
+      }
+    } else {
+      statusText = "Discovering...";
+    }
 
-      localStorage.setItem(
-        STORAGE_KEYS.SCRAPPER_DETAILS,
-        JSON.stringify(AppState.scrapperDetails)
-      );
+    statusInfo.textContent = statusText;
+  };
 
-      // Restart batch downloading
-      startAutoBatchDownloads();
+  updateStatusInfo();
 
-      // Refresh the scrapper controls to show progress
+  // Assemble the line
+  statusLine.appendChild(tabName);
+  statusLine.appendChild(statusInfo);
+  statusLine.appendChild(pauseBtn);
+  container.appendChild(statusLine);
+
+  // Update progress periodically
+  const progressInterval = setInterval(() => {
+    if (!document.getElementById("ettpd-progress-compact-container")) {
+      clearInterval(progressInterval);
+      return;
+    }
+
+    // Check if scrapping has completed
+    if (
+      AppState.scrapperDetails.scrappingStage === "completed" &&
+      AppState.ui.isScrapperBoxOpen
+    ) {
+      clearInterval(progressInterval);
       showScrapperControls();
-    };
+      return;
+    }
 
-    // Add CSV download button
-    const csvBtn = document.createElement("button");
-    csvBtn.className = "ettpd-scrapper-continue-btn";
-    csvBtn.textContent = "📥 Download CSV";
-    csvBtn.style.cssText = `
-      background: #f0f0f0;
-      color: #333;
-      border: 1px solid #ddd;
-      padding: 10px 20px;
-      border-radius: 6px;
-      font-size: 14px;
-      cursor: pointer;
-      font-weight: 600;
-      width: 100%;
-      margin-top: 10px;
-      transition: background 0.2s;
-    `;
+    // Update pause button state if changed externally
+    const shouldBePaused = AppState.scrapperDetails.paused;
+    const isCurrentlyPaused =
+      pauseBtn.querySelector("svg") &&
+      pauseBtn
+        .querySelector("svg")
+        .innerHTML.includes('polygon points="5 3 19 12 5 21 5 3"');
+    if (shouldBePaused !== isCurrentlyPaused) {
+      setButtonWithIcon(pauseBtn, "", shouldBePaused ? "play" : "pause");
+      pauseBtn.title = shouldBePaused ? "Resume" : "Pause";
+      pauseBtn.style.background = shouldBePaused ? "#007AFF" : "#FF9500";
+    }
 
-    csvBtn.onmouseover = () => {
-      csvBtn.style.background = "#e0e0e0";
-    };
-    csvBtn.onmouseout = () => {
-      csvBtn.style.background = "#f0f0f0";
-    };
+    updateStatusInfo();
+  }, 2000);
 
-    csvBtn.onclick = () => {
-      // Get all downloaded items by filtering allDirectLinks
-      const allItems = AppState.allDirectLinks || [];
-      const downloadedItems = allItems.filter((item) =>
-        AppState.downloadedURLs.includes(item.url)
+  return container;
+}
+
+/**
+ * Render completed session view
+ */
+async function renderCompletedView() {
+  const completionContainer = document.createElement("div");
+  completionContainer.className = "ettpd-scrapper-completion";
+
+  // Check if we're still on the same user's page
+  const currentUsername = getCurrentPageUsername();
+  const originalUsername = AppState.scrapperDetails.originalUsername;
+
+  // If we're on a different user's page, reset the state and show stepper view instead
+  if (
+    originalUsername !== null &&
+    currentUsername !== originalUsername &&
+    currentUsername !== "😃"
+  ) {
+    // Clear the completed state since we're on a different user
+    AppState.scrapperDetails.scrappingStage = null;
+    AppState.scrapperDetails.selectedTab = null;
+    AppState.scrapperDetails.selectedCollectionName = null;
+    AppState.scrapperDetails.originalPath = null;
+    AppState.scrapperDetails.originalUsername = null;
+    AppState.scrapperDetails.originalCollectionName = null;
+
+    localStorage.setItem(
+      STORAGE_KEYS.SCRAPPER_DETAILS,
+      JSON.stringify(AppState.scrapperDetails)
+    );
+
+    // Re-render with stepper view
+    showScrapperControls();
+    return document.createElement("div"); // Return empty container, will be replaced
+  }
+
+  // Safety check: verify evidence exists (in case validation in showScrapperControls missed something)
+  const selectedTab = AppState.scrapperDetails.selectedTab;
+  const hasEvidenceOfCompletion = selectedTab
+    ? await hasEvidence(currentUsername, selectedTab)
+    : false;
+
+  if (!hasEvidenceOfCompletion) {
+    // No evidence - clear state and show stepper view instead
+    AppState.scrapperDetails.scrappingStage = null;
+    AppState.scrapperDetails.selectedTab = null;
+    AppState.scrapperDetails.selectedCollectionName = null;
+    AppState.scrapperDetails.originalPath = null;
+    AppState.scrapperDetails.originalUsername = null;
+    AppState.scrapperDetails.originalCollectionName = null;
+
+    localStorage.setItem(
+      STORAGE_KEYS.SCRAPPER_DETAILS,
+      JSON.stringify(AppState.scrapperDetails)
+    );
+
+    // Re-render with stepper view
+    showScrapperControls();
+    return document.createElement("div"); // Return empty container, will be replaced
+  }
+
+  const continueBtn = document.createElement("button");
+  continueBtn.className = "ettpd-scrapper-continue-btn";
+  setButtonWithIcon(continueBtn, "Continue Scrapping", "play");
+  continueBtn.style.cssText = `
+    background: #007AFF;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 600;
+    width: 100%;
+    margin-bottom: 8px;
+    transition: background 0.2s;
+  `;
+
+  continueBtn.onmouseover = () => {
+    continueBtn.style.background = "#0056CC";
+  };
+  continueBtn.onmouseout = () => {
+    continueBtn.style.background = "#007AFF";
+  };
+
+  continueBtn.onclick = () => {
+    AppState.scrapperDetails.scrappingStage = "ongoing";
+    AppState.scrapperDetails.paused = false;
+    AppState.downloadPreferences.autoScrollMode = "always";
+    AppState.downloading.isDownloadingAll = false;
+    AppState.downloading.isActive = false;
+    AppState.scrapperDetails.isAutoBatchDownloading = false;
+
+    localStorage.setItem(
+      STORAGE_KEYS.SCRAPPER_DETAILS,
+      JSON.stringify(AppState.scrapperDetails)
+    );
+
+    startAutoBatchDownloads();
+    showScrapperControls();
+  };
+
+  const csvBtn = document.createElement("button");
+  csvBtn.className = "ettpd-scrapper-continue-btn";
+  setButtonWithIcon(csvBtn, "Download CSV", "download");
+  csvBtn.style.cssText = `
+    background: #f0f0f0;
+    color: #333;
+    border: 1px solid #ddd;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 600;
+    width: 100%;
+    margin-bottom: 8px;
+    transition: background 0.2s;
+  `;
+
+  csvBtn.onmouseover = () => {
+    csvBtn.style.background = "#e0e0e0";
+  };
+  csvBtn.onmouseout = () => {
+    csvBtn.style.background = "#f0f0f0";
+  };
+
+  csvBtn.onclick = () => {
+    const allItems = AppState.allDirectLinks || [];
+    const downloadedItems = allItems.filter((item) =>
+      AppState.downloadedURLs.includes(item.url)
+    );
+
+    if (downloadedItems.length === 0) {
+      showToast(
+        "No items to export",
+        "No downloaded items found to export to CSV."
       );
+      return;
+    }
 
-      if (downloadedItems.length === 0) {
-        showAlertModal(
-          "No items to export",
-          "No downloaded items found to export to CSV."
+    saveCSVFile(downloadedItems);
+    showToast(
+      "CSV Export Started",
+      `Exporting ${downloadedItems.length} downloaded items to CSV file.`
+    );
+  };
+
+  const endBtn = document.createElement("button");
+  endBtn.className = "ettpd-scrapper-continue-btn";
+  endBtn.textContent = "End Scrapping";
+  endBtn.style.cssText = `
+    background: #ff3b30;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 600;
+    width: 100%;
+    transition: background 0.2s;
+  `;
+
+  endBtn.onmouseover = () => {
+    endBtn.style.background = "#d32f2f";
+  };
+  endBtn.onmouseout = () => {
+    endBtn.style.background = "#ff3b30";
+  };
+
+  endBtn.onclick = () => {
+    AppState.scrapperDetails.scrappingStage = "completed";
+    AppState.scrapperDetails.isAutoBatchDownloading = false;
+    AppState.scrapperDetails.selectedTab = null;
+    AppState.scrapperDetails.selectedCollectionName = null;
+    AppState.scrapperDetails.paused = false;
+    AppState.downloadPreferences.autoScrollMode = "off";
+    AppState.downloading.isDownloadingAll = false;
+    AppState.downloading.isActive = false;
+    AppState.scrapperDetails.originalPath = null;
+    AppState.scrapperDetails.originalUsername = null;
+    AppState.scrapperDetails.originalCollectionName = null;
+
+    localStorage.setItem(
+      STORAGE_KEYS.SCRAPPER_DETAILS,
+      JSON.stringify(AppState.scrapperDetails)
+    );
+
+    showScrapperControls();
+    updateDownloadButtonLabelSimple();
+  };
+
+  completionContainer.appendChild(continueBtn);
+  completionContainer.appendChild(csvBtn);
+  completionContainer.appendChild(endBtn);
+
+  return completionContainer;
+}
+
+/**
+ * Start the scrapping process for a given tab
+ * @param {string} tabKey - The tab key to start scrapping for
+ * @param {Object} pageInfo - Page information from isOnProfileOrCollectionPage()
+ */
+async function startScrappingProcess(tabKey, pageInfo) {
+  const username = getCurrentPageUsername();
+  const tabName =
+    tabKey === "collection"
+      ? AppState.scrapperDetails.selectedCollectionName ||
+        pageInfo.collectionName ||
+        "collection"
+      : tabKey;
+
+  if (username && username !== "😃") {
+    try {
+      const existingProgress = await loadProgress(username, tabName);
+      if (existingProgress && existingProgress.length > 0) {
+        const userChoice = await showDownloadConfirmationModal(
+          username,
+          tabName,
+          existingProgress.length
         );
-        return;
-      }
 
-      // Generate CSV using existing function
-      saveCSVFile(downloadedItems);
-
-      // Show success message
-      showAlertModal(
-        "CSV Export Started",
-        `Exporting ${downloadedItems.length} downloaded items to CSV file.`
-      );
-    };
-
-    // Add "End Scrapping" button
-    const endBtn = document.createElement("button");
-    endBtn.className = "ettpd-scrapper-continue-btn";
-    endBtn.textContent = "End Scrapping";
-    endBtn.style.cssText = `
-      background: #ff3b30;
-      color: white;
-      border: none;
-      padding: 10px 20px;
-      border-radius: 6px;
-      font-size: 14px;
-      cursor: pointer;
-      font-weight: 600;
-      width: 100%;
-      margin-top: 10px;
-      transition: background 0.2s;
-    `;
-
-    endBtn.onmouseover = () => {
-      endBtn.style.background = "#d32f2f";
-    };
-    endBtn.onmouseout = () => {
-      endBtn.style.background = "#ff3b30";
-    };
-
-    endBtn.onclick = () => {
-      // End scrapping - clear selected tab and reset state
-      AppState.scrapperDetails.scrappingStage = "completed";
-      AppState.scrapperDetails.isAutoBatchDownloading = false;
-      AppState.scrapperDetails.selectedTab = null;
-      AppState.scrapperDetails.selectedCollectionName = null;
-      AppState.scrapperDetails.paused = false;
-
-      // Stop auto-scroll
-      AppState.downloadPreferences.autoScrollMode = "off";
-
-      // Stop any ongoing downloads
-      AppState.downloading.isDownloadingAll = false;
-      AppState.downloading.isActive = false;
-
-      // Clear original path tracking
-      AppState.scrapperDetails.originalPath = null;
-      AppState.scrapperDetails.originalUsername = null;
-      AppState.scrapperDetails.originalCollectionName = null;
-
-      // Save to localStorage
-      localStorage.setItem(
-        STORAGE_KEYS.SCRAPPER_DETAILS,
-        JSON.stringify(AppState.scrapperDetails)
-      );
-
-      // Refresh scrapper controls to show initial state (tabs)
-      showScrapperControls();
-
-      // Update download button state
-      updateDownloadButtonLabelSimple();
-    };
-
-    completionContainer.appendChild(continueBtn);
-    completionContainer.appendChild(csvBtn);
-    completionContainer.appendChild(endBtn);
-    btnContainer.appendChild(completionContainer);
-  } else if (!isScrappingActive) {
-    // Show tabs when scrapping is not active
-    // Double-check that scrapping is not active before showing tabs
-    const createdTabButtons = [];
-
-    tabOptions.forEach(({ key, label }) => {
-      const tabSpan = spans[key];
-      if (
-        !tabSpan ||
-        (typeof tabSpan === "string" && !tabSpan.trim()) ||
-        (typeof tabSpan !== "string" && !tabSpan.offsetParent)
-      ) {
-        return;
-      }
-
-      const btn = document.createElement("button");
-      btn.className = `ettpd-tab-btn ettpd-tab-btn-${key}`;
-      btn.dataset.tabKey = key; // Store key for easy lookup
-      btn.innerHTML = `
-        <span class="ettpd-tab-check" aria-hidden="true">✓</span>
-        <span class="ettpd-tab-label">${label}</span>
-      `;
-      btn.setAttribute("aria-pressed", "false");
-
-      btn.addEventListener("click", () => {
-        // Remove active class from all tab buttons
-        document.querySelectorAll(".ettpd-tab-btn.active").forEach((b) => {
-          b.classList.remove("active");
-          b.setAttribute("aria-pressed", "false");
-        });
-
-        // Set the clicked one as active
-        btn.classList.add("active");
-        btn.setAttribute("aria-pressed", "true");
-        if (key == "collection") {
-          AppState.scrapperDetails.selectedCollectionName =
-            spans.collection || pageInfo.collectionName;
+        if (userChoice === "cancel") {
+          return;
         }
 
-        // Your existing logic
-        showScrapperStateUI(key);
+        AppState.scrapperDetails.skipDownloaded = userChoice === "skip";
+      } else {
+        AppState.scrapperDetails.skipDownloaded = false;
+      }
+    } catch (err) {
+      console.warn("[Scrapper] Failed to check progress:", err);
+      AppState.scrapperDetails.skipDownloaded = false;
+    }
+  } else {
+    AppState.scrapperDetails.skipDownloaded = false;
+  }
+
+  AppState.scrapperDetails.startedAt = Date.now();
+  AppState.scrapperDetails.scrappingStage = "initiated";
+  AppState.scrapperDetails.paused = false;
+  AppState.scrapperDetails.locked = true;
+  AppState.scrapperDetails.originalPath = window.location.pathname;
+  AppState.scrapperDetails.originalUsername = getCurrentPageUsername();
+  if (pageInfo.isCollection) {
+    AppState.scrapperDetails.originalCollectionName = pageInfo.collectionName;
+    // Store collection URL in progress storage for resume functionality
+    const username = getCurrentPageUsername();
+    const collectionName = pageInfo.collectionName;
+    if (username && username !== "😃" && collectionName) {
+      // Get existing progress to preserve videoIds
+      loadProgress(username, collectionName).then((existingVideoIds) => {
+        // Save with collection URL metadata
+        saveProgress(
+          username,
+          collectionName,
+          existingVideoIds || [],
+          window.location.pathname
+        );
       });
+    }
+  }
 
-      btnContainer.appendChild(btn);
-      createdTabButtons.push({ key, btn });
-    });
+  localStorage.setItem(
+    STORAGE_KEYS.SCRAPPER_DETAILS,
+    JSON.stringify(AppState.scrapperDetails)
+  );
 
-    // Check which tabs are available
+  window.location.href = window.location.pathname;
+}
+
+/**
+ * Create stepper view with progressive disclosure
+ * Step 1: Resume downloads (if available)
+ * Step 2: Tab selection (if no tab selected)
+ * Step 3: Start action (after tab selected)
+ */
+async function createStepperView(pageInfo, tabOptions, spans) {
+  const stepperContainer = document.createElement("div");
+  stepperContainer.className = "ettpd-stepper-container";
+
+  // Show warning if not on a profile or collection page
+  if (!pageInfo.isProfile) {
+    const warningContainer = document.createElement("div");
+    warningContainer.className = "ettpd-stepper-warning";
+    warningContainer.style.cssText = `
+      padding: 15px;
+      margin-bottom: 15px;
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 6px;
+      text-align: center;
+    `;
+    const warningText = document.createElement("p");
+    warningText.style.cssText = `
+      margin: 0;
+      font-size: 13px;
+      color: #856404;
+      line-height: 1.5;
+    `;
+    warningText.innerHTML =
+      "<strong>⚠️ Heads up:</strong> Please navigate to a profile or collection page first. If you download from other pages, you may end up downloading random posts. Reload the page if you don't see any tabs.";
+    warningContainer.appendChild(warningText);
+    stepperContainer.appendChild(warningContainer);
+    return stepperContainer;
+  }
+
+  // Stepper indicator
+  const indicator = document.createElement("div");
+  indicator.className = "ettpd-stepper-indicator";
+
+  // Get resumable downloads
+  const resumableContainer = await createResumableDownloadsContainer(
+    pageInfo,
+    tabOptions
+  );
+  const hasResumableDownloads = resumableContainer !== null;
+  const hasSelectedTab = AppState.scrapperDetails.selectedTab !== null;
+
+  // Determine current step
+  let currentStep = 1;
+  const totalSteps = hasResumableDownloads ? 3 : 2;
+
+  if (hasSelectedTab) {
+    // Tab already selected, show start action (step 3 if resumable exists, step 2 if not)
+    currentStep = hasResumableDownloads ? 3 : 2;
+  } else if (hasResumableDownloads) {
+    // Has resumable downloads but no tab selected, show resume step
+    currentStep = 1;
+  } else {
+    // No resumable downloads and no tab selected, show tab selection
+    currentStep = 1; // This will be step 1 of 2 (tab selection)
+  }
+
+  // Update indicator
+  indicator.innerHTML = `
+    <div class="ettpd-stepper-dots">
+      ${Array.from(
+        { length: totalSteps },
+        (_, i) =>
+          `<span class="ettpd-stepper-dot ${
+            i + 1 === currentStep
+              ? "active"
+              : i + 1 < currentStep
+              ? "completed"
+              : ""
+          }"></span>`
+      ).join("")}
+    </div>
+  `;
+  stepperContainer.appendChild(indicator);
+
+  // Step 1: Resume Downloads (only show if no tab selected yet)
+  if (hasResumableDownloads && !hasSelectedTab && currentStep === 1) {
+    const step1 = document.createElement("div");
+    step1.className = "ettpd-stepper-step";
+    step1.appendChild(resumableContainer);
+
+    // Get available tabs from DOM
     const availableTabs = tabOptions.filter(({ key }) => {
       const span = spans[key];
       if (!span) return false;
-
       if (typeof span === "string") {
-        return span.trim().length > 0; // allow non-empty string
+        return span.trim().length > 0;
       }
+      return !!span.offsetParent;
+    });
 
-      return !!span.offsetParent; // DOM element visible
+    // Get list of resumable tab keys
+    const allProgress = await getAllProgress();
+    const currentUsername = getCurrentPageUsername();
+    const normalizedUsername = currentUsername?.toLowerCase().trim();
+    const userProgress = normalizedUsername
+      ? allProgress[normalizedUsername]
+      : null;
+
+    const resumableTabKeys = new Set();
+    if (userProgress) {
+      for (const [tabKey, videoIds] of Object.entries(userProgress)) {
+        if (Array.isArray(videoIds) && videoIds.length > 0) {
+          const standardTabs = ["videos", "reposts", "liked", "favorites"];
+          if (standardTabs.includes(tabKey)) {
+            resumableTabKeys.add(tabKey);
+          } else {
+            // Collection tabs - only add if it matches the current collection name
+            if (pageInfo.isCollection && pageInfo.collectionName) {
+              // Decode and normalize the stored collection name for comparison
+              let storedCollectionName = tabKey;
+              try {
+                storedCollectionName = decodeURIComponent(tabKey);
+              } catch (e) {
+                // If decoding fails, use the original tabKey
+              }
+              // Remove numeric suffix for comparison
+              storedCollectionName = storedCollectionName.replace(/-\d+$/, "");
+
+              // Get the current collection name (also remove numeric suffix for comparison)
+              const currentCollectionName = pageInfo.collectionName.replace(
+                /-\d+$/,
+                ""
+              );
+
+              // Only add if the collection name matches
+              if (storedCollectionName === currentCollectionName) {
+                resumableTabKeys.add("collection");
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Filter out tabs that are already resumable - show only tabs for new downloads
+    const tabsForNewDownloads = availableTabs.filter(
+      (tab) => !resumableTabKeys.has(tab.key)
+    );
+
+    // Show other available tabs for new downloads
+    if (tabsForNewDownloads.length > 0) {
+      const separator = document.createElement("div");
+      separator.style.margin = "16px 0 8px 0";
+      separator.style.paddingTop = "10px";
+      separator.style.borderTop =
+        "1px solid var(--ettpd-border-color, #e0e0e0)";
+
+      const newDownloadsTitle = document.createElement("div");
+      newDownloadsTitle.className = "ettpd-resume-downloads-title";
+      newDownloadsTitle.textContent = "Download Other Tabs:";
+      newDownloadsTitle.style.marginBottom = "10px";
+      separator.appendChild(newDownloadsTitle);
+
+      const tabsGrid = document.createElement("div");
+      tabsGrid.className = "ettpd-tabs-compact";
+
+      tabsForNewDownloads.forEach(({ key, label, icon }) => {
+        const btn = document.createElement("button");
+        btn.className = `ettpd-tab-btn ettpd-tab-btn-${key}`;
+        btn.dataset.tabKey = key;
+        const iconEl = icon ? createIcon(icon, 16).outerHTML : "";
+        btn.innerHTML = `
+          <span class="ettpd-tab-check" aria-hidden="true">✓</span>
+          <span class="ettpd-tab-label">${
+            iconEl
+              ? `<span style="display:inline-block;margin-right:4px;vertical-align:middle;">${iconEl}</span>`
+              : ""
+          }${label}</span>
+        `;
+        btn.setAttribute("aria-pressed", "false");
+
+        btn.addEventListener("click", () => {
+          // Remove active state from other buttons
+          tabsGrid.querySelectorAll(".ettpd-tab-btn.active").forEach((b) => {
+            b.classList.remove("active");
+            b.setAttribute("aria-pressed", "false");
+          });
+
+          btn.classList.add("active");
+          btn.setAttribute("aria-pressed", "true");
+
+          if (key === "collection") {
+            // Use the actual collection name from pageInfo (not spans which might have path issues)
+            AppState.scrapperDetails.selectedCollectionName =
+              pageInfo.collectionName || spans.collection || "Collection";
+          }
+
+          AppState.scrapperDetails.selectedTab = key;
+
+          // Save state
+          localStorage.setItem(
+            STORAGE_KEYS.SCRAPPER_DETAILS,
+            JSON.stringify(AppState.scrapperDetails)
+          );
+
+          // Refresh controls to show Step 3 (start action)
+          showScrapperControls();
+        });
+
+        tabsGrid.appendChild(btn);
+      });
+
+      separator.appendChild(tabsGrid);
+      step1.appendChild(separator);
+    }
+
+    // Show refresh button if not all tabs are available
+    const allTabsAvailable = availableTabs.length === tabOptions.length;
+    if (!allTabsAvailable && pageInfo.isProfile) {
+      const refreshTabsBtn = document.createElement("button");
+      setButtonWithIcon(refreshTabsBtn, "Check for More Tabs", "refresh");
+      refreshTabsBtn.className = "ettpd-refresh-tabs-btn";
+      refreshTabsBtn.style.cssText = `
+        background: #f0f0f0;
+        color: #333;
+        border: 1px solid #ddd;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 13px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: background 0.2s;
+        margin-top: 15px;
+        width: 100%;
+      `;
+      refreshTabsBtn.onmouseover = () => {
+        refreshTabsBtn.style.background = "#e0e0e0";
+      };
+      refreshTabsBtn.onmouseout = () => {
+        refreshTabsBtn.style.background = "#f0f0f0";
+      };
+
+      let isRefreshing = false;
+      refreshTabsBtn.onclick = async () => {
+        if (isRefreshing) return;
+        isRefreshing = true;
+        refreshTabsBtn.disabled = true;
+        updateButtonWithIcon(refreshTabsBtn, "Checking...", "hourglass");
+        refreshTabsBtn.style.background = "#999";
+
+        try {
+          // Re-fetch tabs from DOM
+          const newSpans = await getTabSpans(5000, 100);
+
+          // Check which tabs are now available
+          const newAvailableTabs = tabOptions.filter(({ key }) => {
+            const span = newSpans[key];
+            if (!span) return false;
+            if (typeof span === "string") {
+              return span.trim().length > 0;
+            }
+            return !!span.offsetParent;
+          });
+
+          // If we found more tabs, re-render
+          if (newAvailableTabs.length > availableTabs.length) {
+            updateButtonWithIcon(refreshTabsBtn, "Found More!", "check");
+            setTimeout(() => {
+              showScrapperControls(); // Re-render with new tabs
+            }, 500);
+          } else {
+            updateButtonWithIcon(
+              refreshTabsBtn,
+              "Check for More Tabs",
+              "refresh"
+            );
+            refreshTabsBtn.style.background = "#f0f0f0";
+            // Show a brief message
+            const originalContent = refreshTabsBtn.cloneNode(true);
+            refreshTabsBtn.textContent = "No new tabs found";
+            setTimeout(() => {
+              refreshTabsBtn.replaceWith(originalContent);
+            }, 2000);
+          }
+        } catch (err) {
+          console.error("Error checking for tabs:", err);
+          updateButtonWithIcon(
+            refreshTabsBtn,
+            "Check for More Tabs",
+            "refresh"
+          );
+          refreshTabsBtn.style.background = "#f0f0f0";
+        } finally {
+          isRefreshing = false;
+          refreshTabsBtn.disabled = false;
+        }
+      };
+
+      step1.appendChild(refreshTabsBtn);
+
+      // Auto-click the button after 2 seconds
+      setTimeout(() => {
+        if (
+          refreshTabsBtn &&
+          refreshTabsBtn.offsetParent !== null &&
+          !refreshTabsBtn.disabled
+        ) {
+          refreshTabsBtn.click();
+        }
+      }, 2000);
+    }
+
+    stepperContainer.appendChild(step1);
+  }
+
+  // Step 2: Tab Selection (show if no tab selected)
+  if (
+    !hasSelectedTab &&
+    ((hasResumableDownloads && currentStep === 2) ||
+      (!hasResumableDownloads && currentStep === 1))
+  ) {
+    const step2 = document.createElement("div");
+    step2.className = "ettpd-stepper-step";
+
+    const step2Label = document.createElement("div");
+    step2Label.className = "ettpd-stepper-step-title";
+    step2Label.textContent = "Select Tab:";
+    step2.appendChild(step2Label);
+
+    const tabsGrid = document.createElement("div");
+    tabsGrid.className = "ettpd-tabs-compact";
+
+    const availableTabs = tabOptions.filter(({ key }) => {
+      const span = spans[key];
+      if (!span) return false;
+      if (typeof span === "string") {
+        return span.trim().length > 0;
+      }
+      return !!span.offsetParent;
     });
 
     const tabsAvailable = availableTabs.length > 0;
@@ -629,7 +1663,7 @@ export async function showScrapperControls() {
     // Show refresh button if not all tabs are available (but at least some are)
     if (tabsAvailable && !allTabsAvailable && pageInfo.isProfile) {
       const refreshTabsBtn = document.createElement("button");
-      refreshTabsBtn.textContent = "🔄 Check for More Tabs";
+      setButtonWithIcon(refreshTabsBtn, "Check for More Tabs", "refresh");
       refreshTabsBtn.className = "ettpd-refresh-tabs-btn";
       refreshTabsBtn.style.cssText = `
         background: #f0f0f0;
@@ -656,7 +1690,7 @@ export async function showScrapperControls() {
         if (isRefreshing) return;
         isRefreshing = true;
         refreshTabsBtn.disabled = true;
-        refreshTabsBtn.textContent = "⏳ Checking...";
+        updateButtonWithIcon(refreshTabsBtn, "Checking...", "hourglass");
         refreshTabsBtn.style.background = "#999";
 
         try {
@@ -675,23 +1709,31 @@ export async function showScrapperControls() {
 
           // If we found more tabs, re-render
           if (newAvailableTabs.length > availableTabs.length) {
-            refreshTabsBtn.textContent = "✅ Found More!";
+            updateButtonWithIcon(refreshTabsBtn, "Found More!", "check");
             setTimeout(() => {
               showScrapperControls(); // Re-render with new tabs
             }, 500);
           } else {
-            refreshTabsBtn.textContent = "🔄 Check for More Tabs";
+            updateButtonWithIcon(
+              refreshTabsBtn,
+              "Check for More Tabs",
+              "refresh"
+            );
             refreshTabsBtn.style.background = "#f0f0f0";
             // Show a brief message
-            const originalText = refreshTabsBtn.textContent;
+            const originalContent = refreshTabsBtn.cloneNode(true);
             refreshTabsBtn.textContent = "No new tabs found";
             setTimeout(() => {
-              refreshTabsBtn.textContent = originalText;
+              refreshTabsBtn.replaceWith(originalContent);
             }, 2000);
           }
         } catch (err) {
           console.error("Error checking for tabs:", err);
-          refreshTabsBtn.textContent = "🔄 Check for More Tabs";
+          updateButtonWithIcon(
+            refreshTabsBtn,
+            "Check for More Tabs",
+            "refresh"
+          );
           refreshTabsBtn.style.background = "#f0f0f0";
         } finally {
           isRefreshing = false;
@@ -699,41 +1741,42 @@ export async function showScrapperControls() {
         }
       };
 
-      btnContainer.appendChild(refreshTabsBtn);
+      step2.appendChild(refreshTabsBtn);
+
+      // Auto-click the button after 2 seconds
+      setTimeout(() => {
+        if (
+          refreshTabsBtn &&
+          refreshTabsBtn.offsetParent !== null &&
+          !refreshTabsBtn.disabled
+        ) {
+          refreshTabsBtn.click();
+        }
+      }, 2000);
     }
 
-    // Show message if not on profile/collection page OR if no tabs are available
-    if (!pageInfo.isProfile) {
-      const subtitle = document.createElement("span");
-      subtitle.id = "tab-subtitle";
-      subtitle.className = "ettpd-tab-subtitle";
-      subtitle.innerHTML =
-        "<strong>Heads up:</strong> Please navigate to a profile or collection page first. If you download from other pages, you may end up downloading random posts. Reload the page if you don't see any tabs.";
-      btnContainer.appendChild(subtitle);
-    } else if (!tabsAvailable) {
-      // Show auto-checking message with manual refresh button
-      const subtitle = document.createElement("div");
-      subtitle.id = "tab-subtitle";
-      subtitle.className = "ettpd-tab-subtitle";
-      subtitle.style.cssText = `
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 10px;
+    // Show message if no tabs are available
+    if (!tabsAvailable && pageInfo.isProfile) {
+      const noTabsMessage = document.createElement("div");
+      noTabsMessage.className = "ettpd-stepper-no-tabs";
+      noTabsMessage.style.cssText = `
         padding: 15px;
         text-align: center;
+        background: #f0f0f0;
+        border-radius: 6px;
+        margin-top: 10px;
       `;
 
       const message = document.createElement("div");
       message.style.cssText = `
         font-size: 13px;
         color: #666;
-        margin-bottom: 5px;
+        margin-bottom: 10px;
       `;
       message.innerHTML = "<strong>🔍 Auto-checking for tabs...</strong>";
 
       const refreshBtn = document.createElement("button");
-      refreshBtn.textContent = "🔄 Refresh Tabs";
+      setButtonWithIcon(refreshBtn, "Refresh Tabs", "refresh");
       refreshBtn.style.cssText = `
         background: #007AFF;
         color: white;
@@ -757,7 +1800,7 @@ export async function showScrapperControls() {
         if (isRefreshing) return;
         isRefreshing = true;
         refreshBtn.disabled = true;
-        refreshBtn.textContent = "⏳ Checking...";
+        updateButtonWithIcon(refreshBtn, "Checking...", "hourglass");
         refreshBtn.style.background = "#999";
 
         try {
@@ -777,104 +1820,258 @@ export async function showScrapperControls() {
 
           if (newTabsAvailable) {
             // Tabs found! Re-render the controls
-            refreshBtn.textContent = "✅ Found!";
+            updateButtonWithIcon(refreshBtn, "Found!", "check");
             setTimeout(() => {
               showScrapperControls(); // Re-render with new tabs
             }, 500);
           } else {
-            refreshBtn.textContent = "🔄 Refresh Tabs";
+            updateButtonWithIcon(refreshBtn, "Refresh Tabs", "refresh");
             refreshBtn.style.background = "#007AFF";
             message.innerHTML =
-              "<strong>⚠️ No tabs found yet. Try scrolling the page or wait a moment.</strong>";
+              "<strong>No tabs found yet. Try scrolling the page or wait a moment.</strong>";
           }
         } catch (err) {
           console.error("Error refreshing tabs:", err);
-          refreshBtn.textContent = "🔄 Refresh Tabs";
+          updateButtonWithIcon(refreshBtn, "Refresh Tabs", "refresh");
           refreshBtn.style.background = "#007AFF";
           message.innerHTML =
-            "<strong>❌ Error checking for tabs. Please try again.</strong>";
+            "<strong>Error checking for tabs. Please try again.</strong>";
         } finally {
           isRefreshing = false;
           refreshBtn.disabled = false;
         }
       };
 
-      subtitle.appendChild(message);
-      subtitle.appendChild(refreshBtn);
-      btnContainer.appendChild(subtitle);
+      noTabsMessage.appendChild(message);
+      noTabsMessage.appendChild(refreshBtn);
+      step2.appendChild(noTabsMessage);
+    }
 
-      // Auto-check for tabs periodically
-      let checkCount = 0;
-      const maxAutoChecks = 30; // Check for 30 seconds (30 checks * 1 second)
-      let autoCheckInterval = null;
+    availableTabs.forEach(({ key, label, icon }) => {
+      const btn = document.createElement("button");
+      btn.className = `ettpd-tab-btn ettpd-tab-btn-${key}`;
+      btn.dataset.tabKey = key;
+      const iconEl = icon ? createIcon(icon, 16).outerHTML : "";
+      btn.innerHTML = `
+        <span class="ettpd-tab-check" aria-hidden="true">✓</span>
+        <span class="ettpd-tab-label">${
+          iconEl
+            ? `<span style="display:inline-block;margin-right:4px;vertical-align:middle;">${iconEl}</span>`
+            : ""
+        }${label}</span>
+      `;
+      btn.setAttribute("aria-pressed", "false");
 
-      // Store interval ID on the subtitle element so we can clean it up
-      const startAutoCheck = () => {
-        if (autoCheckInterval) {
-          clearInterval(autoCheckInterval);
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".ettpd-tab-btn.active").forEach((b) => {
+          b.classList.remove("active");
+          b.setAttribute("aria-pressed", "false");
+        });
+
+        btn.classList.add("active");
+        btn.setAttribute("aria-pressed", "true");
+
+        if (key === "collection") {
+          // Use the actual collection name from pageInfo (not spans which might have path issues)
+          AppState.scrapperDetails.selectedCollectionName =
+            pageInfo.collectionName || spans.collection || "Collection";
         }
 
-        autoCheckInterval = setInterval(async () => {
-          // Check if subtitle still exists (controls might have been re-rendered)
-          if (!document.getElementById("tab-subtitle")) {
-            clearInterval(autoCheckInterval);
-            return;
-          }
+        AppState.scrapperDetails.selectedTab = key;
+        showScrapperControls();
+      });
 
-          checkCount++;
+      tabsGrid.appendChild(btn);
+    });
 
-          // Stop checking after max attempts
-          if (checkCount > maxAutoChecks) {
-            clearInterval(autoCheckInterval);
-            if (message && document.getElementById("tab-subtitle")) {
-              message.innerHTML =
-                "<strong>⏱️ Auto-check stopped. Click Refresh Tabs to try again.</strong>";
-            }
-            return;
-          }
-
-          try {
-            const newSpans = await getTabSpans(2000, 100); // Quick check (2 seconds)
-
-            const newTabsAvailable =
-              tabOptions.filter(({ key }) => {
-                const span = newSpans[key];
-                if (!span) return false;
-                if (typeof span === "string") {
-                  return span.trim().length > 0;
-                }
-                return !!span.offsetParent;
-              }).length > 0;
-
-            if (newTabsAvailable) {
-              clearInterval(autoCheckInterval);
-              if (message) {
-                message.innerHTML =
-                  "<strong>✅ Tabs found! Loading...</strong>";
-              }
-              setTimeout(() => {
-                showScrapperControls(); // Re-render with new tabs
-              }, 500);
-            } else if (message && document.getElementById("tab-subtitle")) {
-              message.innerHTML = `<strong>🔍 Auto-checking for tabs... (${checkCount}/${maxAutoChecks})</strong>`;
-            }
-          } catch (err) {
-            console.error("Error in auto-check:", err);
-          }
-        }, 1000); // Check every 1 second
-      };
-
-      startAutoCheck();
-    }
+    step2.appendChild(tabsGrid);
+    stepperContainer.appendChild(step2);
   }
 
-  // Remove any existing subtitle that might be stale
-  {
-    const existingSubtitle = document.getElementById("tab-subtitle");
-    if (existingSubtitle && existingSubtitle.parentElement !== btnContainer) {
-      existingSubtitle.remove();
-    }
+  // Step 3: Start Action
+  if (
+    hasSelectedTab &&
+    (currentStep === 3 || (!hasResumableDownloads && currentStep === 2))
+  ) {
+    const step3 = document.createElement("div");
+    step3.className = "ettpd-stepper-step";
+
+    const selectedTabKey = AppState.scrapperDetails.selectedTab;
+    const selectedTabLabel =
+      tabOptions.find((t) => t.key === selectedTabKey)?.label ||
+      toTitleCase(selectedTabKey);
+
+    const step3Label = document.createElement("div");
+    step3Label.className = "ettpd-stepper-step-title";
+    step3Label.textContent = `Selected: ${selectedTabLabel}`;
+    step3.appendChild(step3Label);
+
+    const actionsRow = document.createElement("div");
+    actionsRow.className = "ettpd-stepper-actions";
+
+    const startBtn = document.createElement("button");
+    startBtn.className = "ettpd-scrapper-start";
+    setButtonWithIcon(startBtn, "Start", "play");
+    startBtn.onclick = async () => {
+      await startScrappingProcess(selectedTabKey, pageInfo);
+    };
+
+    const infoBtn = document.createElement("button");
+    infoBtn.className = "ettpd-scrapper-learn";
+    setButtonWithIcon(infoBtn, "Info", "info");
+    infoBtn.onclick = () => {
+      explainerModal(toTitleCase(selectedTabKey));
+    };
+
+    actionsRow.appendChild(startBtn);
+    actionsRow.appendChild(infoBtn);
+    step3.appendChild(actionsRow);
+    stepperContainer.appendChild(step3);
   }
+
+  return stepperContainer;
+}
+
+/**
+ * Check if there's evidence of a completed scrapping session
+ * Progress-first: checks persisted progress data, then falls back to in-memory items
+ * @param {string} username - The username to check progress for
+ * @param {string} tabName - The tab name to check progress for
+ * @returns {Promise<boolean>} True if evidence exists, false otherwise
+ */
+async function hasEvidence(username, tabName) {
+  if (!username || username === "😃" || !tabName) {
+    return false;
+  }
+
+  try {
+    // Progress-first: check persisted progress data
+    const progress = await loadProgress(username, tabName);
+    if (progress && Array.isArray(progress) && progress.length > 0) {
+      return true;
+    }
+
+    // Fallback: check in-memory items (may be empty after reload)
+    const hasScrappedItems =
+      AppState.allDirectLinks && AppState.allDirectLinks.length > 0;
+    return hasScrappedItems;
+  } catch (err) {
+    console.warn("[hasEvidence] Error checking for evidence:", err);
+    // Fallback to in-memory items on error
+    return AppState.allDirectLinks && AppState.allDirectLinks.length > 0;
+  }
+}
+
+export async function showScrapperControls() {
+  const scrapperContainer = document.getElementById(
+    DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER
+  );
+  if (!scrapperContainer) return;
+  scrapperContainer.style.display = AppState.ui.isScrapperBoxOpen
+    ? "flex"
+    : "none";
+  AppState.ui.isPreferenceBoxOpen =
+    scrapperContainer.style.display == "none"
+      ? AppState.ui.isPreferenceBoxOpen
+      : false;
+  if (!scrapperContainer) return;
+
+  const controls = document.createElement("div");
+  controls.className = "ettpd-scrapper-controls";
+
+  // Check if we're on a profile or collection page (synchronous check)
+  const pageInfo = isOnProfileOrCollectionPage();
+
+  const spans = await getTabSpans(30 * 1000); // 30 seconds wait at most
+
+  // Button Generator
+  const tabOptions = [
+    { key: "videos", label: "Scrape Videos", icon: "video" },
+    { key: "reposts", label: "Scrape Reposts", icon: "repost" },
+    { key: "liked", label: "Scrape Likes", icon: "heart" },
+    { key: "favorites", label: "Scrape Favorites", icon: "star" },
+    {
+      key: "collection",
+      label: `Scrape: ${
+        spans.collection || pageInfo.collectionName || "Collection"
+      }`,
+      icon: "folder",
+    },
+  ];
+
+  // Check if scrapping is already ongoing or downloading
+  // Only consider active if scrappingStage is explicitly one of the active stages
+  const isScrappingActive =
+    AppState.scrapperDetails.scrappingStage == "ongoing" ||
+    AppState.scrapperDetails.scrappingStage == "downloading" ||
+    AppState.scrapperDetails.scrappingStage == "initiated";
+
+  // Only show completion view if scrapping has actually completed AND there was a selected tab
+  // AND we're still on the same user's page AND there's evidence of actual completion
+  const currentUsername = getCurrentPageUsername();
+  const originalUsername = AppState.scrapperDetails.originalUsername;
+  const isOnCorrectUserPage =
+    originalUsername === null ||
+    currentUsername === originalUsername ||
+    currentUsername === "😃";
+
+  // Check for evidence of completed scrapping (progress-first approach)
+  const selectedTab = AppState.scrapperDetails.selectedTab;
+  const hasEvidenceOfCompletion = selectedTab
+    ? await hasEvidence(currentUsername, selectedTab)
+    : false;
+
+  // Clear stale completed state if no evidence exists
+  if (
+    AppState.scrapperDetails.scrappingStage == "completed" &&
+    !hasEvidenceOfCompletion
+  ) {
+    // Stale completed state - clear it
+    AppState.scrapperDetails.scrappingStage = null;
+    AppState.scrapperDetails.selectedTab = null;
+    AppState.scrapperDetails.selectedCollectionName = null;
+    AppState.scrapperDetails.originalPath = null;
+    AppState.scrapperDetails.originalUsername = null;
+    AppState.scrapperDetails.originalCollectionName = null;
+    localStorage.setItem(
+      STORAGE_KEYS.SCRAPPER_DETAILS,
+      JSON.stringify(AppState.scrapperDetails)
+    );
+  }
+
+  const isScrappingCompleted =
+    AppState.scrapperDetails.scrappingStage == "completed" &&
+    selectedTab != null &&
+    isOnCorrectUserPage &&
+    hasEvidenceOfCompletion; // Only show if there's actual evidence
+
+  // State-aware rendering
+  let contentContainer;
+  if (isScrappingActive && isOnCorrectUserPage) {
+    // Ultra-compact active session view
+    contentContainer = renderActiveScrappingView();
+  } else if (isScrappingCompleted) {
+    // Completed session view (only shown when evidence exists)
+    contentContainer = await renderCompletedView();
+  } else {
+    // Stepper view for new/resume flow (or if we're on wrong user page)
+    // If we're on wrong user page, clear the active state first
+    if (isScrappingActive && !isOnCorrectUserPage) {
+      AppState.scrapperDetails.scrappingStage = null;
+      AppState.scrapperDetails.selectedTab = null;
+      AppState.scrapperDetails.selectedCollectionName = null;
+      AppState.scrapperDetails.originalPath = null;
+      AppState.scrapperDetails.originalUsername = null;
+      AppState.scrapperDetails.originalCollectionName = null;
+      localStorage.setItem(
+        STORAGE_KEYS.SCRAPPER_DETAILS,
+        JSON.stringify(AppState.scrapperDetails)
+      );
+    }
+    contentContainer = await createStepperView(pageInfo, tabOptions, spans);
+  }
+
+  controls.appendChild(contentContainer);
 
   // Remove all existing controls and tab buttons
   scrapperContainer
@@ -883,83 +2080,79 @@ export async function showScrapperControls() {
   scrapperContainer
     .querySelectorAll(".ettpd-tab-btn")
     .forEach((el) => el.remove());
+  // Remove resume downloads container if it exists
+  scrapperContainer
+    .querySelectorAll(".ettpd-resume-downloads-container")
+    .forEach((el) => el.remove());
 
   scrapperContainer.appendChild(controls);
-  controls.appendChild(btnContainer);
-
-  // Auto-select the previously chosen tab (or the first available) after controls are in DOM
-  // Only do this if we're showing tabs (not active or completed scrapping)
-  if (!isScrappingActive && !isScrappingCompleted) {
-    const tabButtons = btnContainer.querySelectorAll(".ettpd-tab-btn");
-    if (tabButtons.length > 0) {
-      const savedKey = AppState.scrapperDetails.selectedTab;
-      let defaultBtn = null;
-
-      // Find the button matching saved key using data attribute
-      if (savedKey) {
-        defaultBtn = Array.from(tabButtons).find(
-          (btn) => btn.dataset.tabKey === savedKey
-        );
-      }
-
-      // If no match found, use first button
-      if (!defaultBtn && tabButtons.length > 0) {
-        defaultBtn = tabButtons[0];
-      }
-
-      if (defaultBtn) {
-        // Remove active from all
-        tabButtons.forEach((btn) => {
-          btn.classList.remove("active");
-          btn.setAttribute("aria-pressed", "false");
-        });
-
-        // Set active on default
-        defaultBtn.classList.add("active");
-        defaultBtn.setAttribute("aria-pressed", "true");
-
-        // Get the key from data attribute
-        const tabKey = defaultBtn.dataset.tabKey;
-
-        // Set selected tab and collection name if needed
-        if (tabKey == "collection") {
-          AppState.scrapperDetails.selectedCollectionName =
-            spans.collection || pageInfo.collectionName;
-        }
-
-        // Show the start button container - controls are now in the DOM
-        showScrapperStateUI(tabKey);
-      }
-    }
-  }
 
   // Update download all button state when scrapper controls are shown
   const downloadAllBtn = document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
   if (downloadAllBtn) {
-    updateDownloadAllButtonState(downloadAllBtn);
+    updateDownloadButtonLabelSimple();
+  }
+
+  // Check if username changed and update tracking
+  // Reuse currentUsername from earlier in the function
+  const usernameChanged = currentUsername !== lastTrackedUsername;
+
+  // If username changed and we have an active session for a different user, clear the state
+  if (usernameChanged) {
+    lastTrackedUsername = currentUsername;
+
+    // Clear scrapper state if we're on a different user's page than the original session
+    if (
+      AppState.scrapperDetails.originalUsername !== null &&
+      currentUsername !== AppState.scrapperDetails.originalUsername &&
+      currentUsername !== "😃" // Don't clear if username detection failed
+    ) {
+      // Reset scrapper state since we're on a different user's page
+      AppState.scrapperDetails.selectedTab = null;
+      AppState.scrapperDetails.selectedCollectionName = null;
+      AppState.scrapperDetails.scrappingStage = null;
+      AppState.scrapperDetails.originalPath = null;
+      AppState.scrapperDetails.originalUsername = null;
+      AppState.scrapperDetails.originalCollectionName = null;
+      AppState.scrapperDetails.paused = false;
+      AppState.scrapperDetails.isAutoBatchDownloading = false;
+
+      // Save cleared state
+      localStorage.setItem(
+        STORAGE_KEYS.SCRAPPER_DETAILS,
+        JSON.stringify(AppState.scrapperDetails)
+      );
+
+      // Re-render controls with cleared state
+      showScrapperControls();
+      return;
+    }
   }
 
   // Update message when location changes
   const updateMessageOnLocationChange = () => {
     const pageInfo = isOnProfileOrCollectionPage();
+    const newUsername = getCurrentPageUsername();
+    const usernameChangedNow = newUsername !== lastTrackedUsername;
+
+    // Update tracked username if it changed
+    if (usernameChangedNow) {
+      lastTrackedUsername = newUsername;
+    }
+
     const subtitle = document.getElementById("tab-subtitle");
 
-    if (!subtitle) return;
-
     if (!pageInfo.isProfile) {
-      subtitle.innerHTML =
-        "<strong>Heads up:</strong> Please navigate to a profile or collection page first. If you download from other pages, you may end up downloading random posts. Reload the page if you don't see any tabs.";
+      if (subtitle) {
+        subtitle.innerHTML =
+          "<strong>Heads up:</strong> Please navigate to a profile or collection page first. If you download from other pages, you may end up downloading random posts. Reload the page if you don't see any tabs.";
+      }
+      // Also refresh controls to show warning in stepper view
+      showScrapperControls();
     } else {
-      // On valid page, check if tabs are available
-      const tabsAvailable =
-        btnContainer.querySelectorAll(".ettpd-tab-btn").length > 0;
-      if (!tabsAvailable) {
-        // If tabs aren't available, trigger a refresh of scrapper controls
-        // This will set up the auto-checking mechanism
+      // On valid page, refresh controls if username changed
+      if (usernameChangedNow) {
         showScrapperControls();
-      } else {
-        // Tabs are available, remove the message
-        subtitle.remove();
       }
     }
   };
@@ -968,43 +2161,113 @@ export async function showScrapperControls() {
   window.addEventListener("locationchange", updateMessageOnLocationChange);
   window.addEventListener("popstate", updateMessageOnLocationChange);
 
-  // Also check periodically in case tabs load after initial render
-  let checkCount = 0;
-  const checkInterval = setInterval(() => {
-    if (!document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER)) {
-      clearInterval(checkInterval);
-      return;
-    }
-    updateMessageOnLocationChange();
-
-    // Stop checking after 15 iterations (30 seconds at 2s intervals)
-    checkCount++;
-    if (checkCount >= 15) {
-      clearInterval(checkInterval);
-    }
-  }, 2000);
-
   return controls;
 }
 
+/**
+ * Show a confirmation modal when previous downloads are detected
+ * @param {string} username - The username
+ * @param {string} tabName - The tab name
+ * @param {number} count - Number of previously downloaded items
+ * @returns {Promise<string>} User choice: "redownload", "skip", or "cancel"
+ */
+async function showDownloadConfirmationModal(username, tabName, count) {
+  // Verify we're still on the correct user's page
+  const currentPageUsername = getCurrentPageUsername();
+  if (currentPageUsername !== username && currentPageUsername !== "😃") {
+    // User navigated away, cancel the modal
+    return Promise.resolve("cancel");
+  }
+
+  return new Promise((resolve) => {
+    const contentDiv = document.createElement("div");
+    contentDiv.style.cssText = "padding: 20px; text-align: center;";
+    contentDiv.innerHTML = `
+      <p style="margin-bottom: 15px; font-size: 14px;">
+        You've previously scraped <strong>@${username}</strong>'s <strong>${toTitleCase(
+      tabName
+    )}</strong>.
+      </p>
+      <p style="margin-bottom: 20px; font-size: 14px;">
+        Found <strong>${count}</strong> previously downloaded items.
+      </p>
+      <p style="margin-bottom: 20px; font-size: 13px; color: #666;">
+        What would you like to do?
+      </p>
+    `;
+
+    const buttonContainer = document.createElement("div");
+    buttonContainer.style.cssText =
+      "display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;";
+
+    const redownloadBtn = document.createElement("button");
+    redownloadBtn.className = "ettpd-pref-btn";
+    setButtonWithIcon(redownloadBtn, "Re-download All", "refresh");
+    redownloadBtn.onclick = () => {
+      modal.remove();
+      resolve("redownload");
+    };
+
+    const skipBtn = document.createElement("button");
+    skipBtn.className = "ettpd-pref-btn";
+    setButtonWithIcon(skipBtn, "Skip Downloaded", "skip");
+    skipBtn.onclick = () => {
+      modal.remove();
+      resolve("skip");
+    };
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "ettpd-pref-btn danger";
+    setButtonWithIcon(cancelBtn, "Cancel", "error");
+    cancelBtn.onclick = () => {
+      modal.remove();
+      resolve("cancel");
+    };
+
+    buttonContainer.appendChild(redownloadBtn);
+    buttonContainer.appendChild(skipBtn);
+    buttonContainer.appendChild(cancelBtn);
+
+    const modal = createModal({
+      children: [contentDiv, buttonContainer],
+      onClose: () => resolve("cancel"),
+    });
+  });
+}
+
 function explainerModal(tab) {
-  const description = document.createElement("p");
+  const description = document.createElement("div");
   description.className = "ettpd-scrapper-info";
-  description.innerHTML = `<p class="alert">
-  Clicking <strong>Start</strong> will reload the page and scrape
-  <strong>every post</strong> under your currently selected tab —
-  <strong>@${getCurrentPageUsername()} <em>${tab}</em></strong>.
-</p>
-<blockquote class="black-text" style="margin-bottom: 10px;">
-  If you can't <strong>see</strong> the posts, you can't <strong>download</strong> them. Duh. 😤. <br/> If a tab(likes, reposts, etc) is missing, first click on it or refresh :)
-</blockquote>
-<p class="alert">
-  You can <strong>Pause</strong> anytime or smash <strong>Download Now</strong> to dive in instantly.
-</p>
-<p class="alert">
-  Want full control? Customize where your downloads go by setting up your own
-  <strong>File Path Templates</strong> under <strong>Settings → File Paths</strong>. 🛠️
-</p>`;
+  description.innerHTML = `
+    <div class="alert">
+      <div class="ettpd-scrapper-message-title">
+        💡 Let the Scrapper handle it
+      </div>
+      <div class="ettpd-scrapper-steps">
+        <div class="ettpd-scrapper-message-body">
+          <span class="ettpd-scrapper-message-step">1.</span>
+          <span>Choose a tab above (for example <strong>Scrape Videos</strong>).</span>
+        </div>
+        <div class="ettpd-scrapper-message-body">
+          <span class="ettpd-scrapper-message-step">2.</span>
+          <span>Click <strong>Start</strong> to reload the page and auto-scroll every post under
+          <strong>@${getCurrentPageUsername()} <em>${tab}</em></strong>.</span>
+        </div>
+        <div class="ettpd-scrapper-message-body">
+          <span class="ettpd-scrapper-message-step">3.</span>
+          <span>Use <strong>Pause</strong> or <strong>Download Now</strong> anytime if you want to jump in early.</span>
+        </div>
+      </div>
+    </div>
+    <blockquote class="black-text" style="margin: 10px 0;">
+      If you can't <strong>see</strong> the posts, you can't <strong>download</strong> them. <br/>
+      If a tab (Likes, Reposts, etc.) is missing, click it once or refresh the page.
+    </blockquote>
+    <p class="alert">
+      Want full control? Customize where your downloads go under
+      <strong>Settings → File Paths</strong> with your own <strong>File Path Templates</strong>. 🛠️
+    </p>
+  `;
 
   // Recommended template card with quick apply
   const recommendedCard = document.createElement("div");
@@ -1023,7 +2286,11 @@ function explainerModal(tab) {
     color: var(--ettpd-text-primary, #333);
     margin-bottom: 8px;
   `;
-  recommendedLabel.textContent = "✨ Recommended Template";
+  recommendedLabel.textContent = "";
+  const sparklesIcon = createIcon("sparkles", 16);
+  sparklesIcon.style.marginRight = "4px";
+  recommendedLabel.appendChild(sparklesIcon);
+  recommendedLabel.appendChild(document.createTextNode("Recommended Template"));
 
   const recommendedExample = document.createElement("div");
   recommendedExample.style.cssText = `
@@ -1037,7 +2304,7 @@ function explainerModal(tab) {
 
   const applyBtn = document.createElement("button");
   applyBtn.className = "ettpd-action-btn primary";
-  applyBtn.textContent = "✨ Use This Template";
+  setButtonWithIcon(applyBtn, "Use This Template", "sparkles");
   applyBtn.style.cssText = `
     width: 100%;
     margin-bottom: 0;
@@ -1068,7 +2335,13 @@ function explainerModal(tab) {
     saveSelectedTemplate();
 
     // Show success message instead of opening another modal
-    successMessage.textContent = "✅ Template applied successfully!";
+    successMessage.textContent = "";
+    const checkIcon = createIcon("check", 16);
+    checkIcon.style.marginRight = "4px";
+    successMessage.appendChild(checkIcon);
+    successMessage.appendChild(
+      document.createTextNode("Template applied successfully!")
+    );
     successMessage.style.display = "block";
     applyBtn.disabled = true;
     applyBtn.style.opacity = "0.7";
@@ -1082,7 +2355,7 @@ function explainerModal(tab) {
   // Configure button - secondary action
   const configBtn = document.createElement("button");
   configBtn.className = "ettpd-action-btn secondary";
-  configBtn.textContent = "⚙️ Customize File Paths";
+  setButtonWithIcon(configBtn, "Customize File Paths", "settings");
   configBtn.style.cssText = `
     width: 100%;
   `;
@@ -1105,18 +2378,16 @@ function explainerModal(tab) {
   closeBtn.textContent = "✕ Close";
   closeBtn.style.cssText = `
     width: 100%;
-    margin-top: 8px;
   `;
-  closeBtn.onclick = () => {
-    const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
-    if (overlay) overlay.remove();
-  };
-
   actionsContainer.appendChild(closeBtn);
 
-  createModal({
+  const overlay = createModal({
     children: [description, actionsContainer],
   });
+
+  closeBtn.onclick = () => {
+    overlay?.remove();
+  };
 }
 
 function showScrapperStateUI(tabKey) {
@@ -1148,28 +2419,15 @@ function showScrapperStateUI(tabKey) {
   // startBtn.disabled =
   //   AppState.scrapperDetails.scrappingStage == "ongoing" ||
   //   AppState.scrapperDetails.scrappingStage == "downloading";
-  startBtn.onclick = () => {
+  startBtn.onclick = async () => {
     console.log(`[Scrapper] Starting download for "${tabKey}"`);
-    AppState.scrapperDetails.startedAt = Date.now();
+
+    // Set the selected tab
     AppState.scrapperDetails.selectedTab = tabKey;
-    AppState.scrapperDetails.scrappingStage = "initiated";
-    AppState.scrapperDetails.paused = false;
-    AppState.scrapperDetails.locked = true;
 
-    // Store original path and username to detect navigation away
+    // Get page info and start the scrapping process
     const pageInfo = isOnProfileOrCollectionPage();
-    AppState.scrapperDetails.originalPath = window.location.pathname;
-    AppState.scrapperDetails.originalUsername = getCurrentPageUsername();
-    if (pageInfo.isCollection) {
-      AppState.scrapperDetails.originalCollectionName = pageInfo.collectionName;
-    }
-
-    localStorage.setItem(
-      STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
-    );
-    // Start scraping logic here
-    window.location.href = window.location.pathname;
+    await startScrappingProcess(tabKey, pageInfo);
   };
 
   const pauseBtn = document.createElement("button");
@@ -1186,18 +2444,18 @@ function showScrapperStateUI(tabKey) {
     if (AppState.scrapperDetails.paused) {
       // Pause logic
       AppState.downloadPreferences.autoScrollMode = "off";
-      pauseBtn.textContent = "▶️ Resume";
+      setButtonWithIcon(pauseBtn, "Resume", "play");
       console.log(`[Scrapper] Paused "${tabKey}"`);
     } else {
       // Resume logic
       AppState.downloadPreferences.autoScrollMode = "always";
-      pauseBtn.textContent = "⏸️ Pause";
+      setButtonWithIcon(pauseBtn, "Pause", "pause");
       console.log(`[Scrapper] Resumed "${tabKey}"`);
     }
   };
   const learnBtn = document.createElement("button");
   learnBtn.className = "ettpd-scrapper-learn";
-  learnBtn.textContent = "ℹ️ Info";
+  setButtonWithIcon(learnBtn, "Info", "info");
   learnBtn.style.fontSize = "12px";
   learnBtn.onclick = () => {
     console.log(`[Scrapper] Showing explainer for "${tabKey}"`);
@@ -1247,12 +2505,32 @@ function createDownloadAllButton() {
   const btn = document.createElement("button");
   btn.id = DOM_IDS.DOWNLOAD_ALL_BUTTON;
   btn.className = "ettpd-btn download-all-btn";
-  btn.textContent = "⬇️ Download";
+  setButtonWithIcon(btn, "Download", "down");
   btn.disabled = true;
   btn.onclick = (e) => {
     e.stopPropagation();
     if (btn.disabled) return;
     downloadAllLinks(btn);
+  };
+
+  const pauseBtn = document.createElement("button");
+  pauseBtn.id = DOM_IDS.DOWNLOAD_ALL_BUTTON + "-pause";
+  pauseBtn.className = "ettpd-btn download-all-btn-pause";
+  setButtonWithIcon(pauseBtn, "Pause", "stop");
+  pauseBtn.disabled = true;
+  pauseBtn.style.display = "none";
+  pauseBtn.title = "Pause downloading";
+  pauseBtn.onclick = (e) => {
+    e.stopPropagation();
+    if (!AppState.downloading.isDownloadingAll) return;
+    AppState.downloading.pausedAll = !AppState.downloading.pausedAll;
+    if (AppState.downloading.pausedAll) {
+      setButtonWithIcon(pauseBtn, "Resume", "play");
+      pauseBtn.title = "Resume downloading";
+    } else {
+      setButtonWithIcon(pauseBtn, "Pause", "stop");
+      pauseBtn.title = "Pause downloading";
+    }
   };
 
   const message = document.createElement("div");
@@ -1274,6 +2552,7 @@ function createDownloadAllButton() {
   message.style.lineHeight = "1.5";
 
   container.appendChild(btn);
+  container.appendChild(pauseBtn);
   container.appendChild(message);
 
   return container;
@@ -1314,6 +2593,9 @@ function updateDownloadAllButtonState(btn, items = []) {
   const message = container
     ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-message")
     : null;
+  const pauseBtn = container
+    ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-pause")
+    : null;
 
   if (!actualBtn) return;
 
@@ -1327,6 +2609,7 @@ function updateDownloadAllButtonState(btn, items = []) {
   if (scrapperBoxOpen && !scrappingAbandoned) {
     if (isScrappingActive || scrapperSelectedNotStarted) {
       actualBtn.style.display = "none";
+      if (pauseBtn) pauseBtn.style.display = "none";
       if (message) message.style.display = "block";
       return;
     }
@@ -1344,6 +2627,7 @@ function updateDownloadAllButtonState(btn, items = []) {
   if (scrapperSelectedNotStarted) {
     // Hide button and show message when scrapper is selected but not started
     actualBtn.style.display = "none";
+    if (pauseBtn) pauseBtn.style.display = "none";
     if (message) message.style.display = "block";
     return;
   }
@@ -1355,31 +2639,66 @@ function updateDownloadAllButtonState(btn, items = []) {
   const total = items.length || AppState.allDirectLinks.length;
   const done = AppState.downloadedURLs.length;
   const isDownloading = AppState.downloading.isDownloadingAll;
+  const isPausedAll = AppState.downloading.pausedAll;
 
   if (!total) {
-    actualBtn.textContent = "🚫 Nothing to download";
+    setButtonWithIcon(actualBtn, "Nothing to download", "stop");
     actualBtn.disabled = true;
+    if (pauseBtn) {
+      pauseBtn.style.display = "none";
+      pauseBtn.disabled = true;
+    }
     return;
   }
 
   if (isDownloading) {
     if (done < total) {
-      actualBtn.textContent = `⏳ Downloading ${done} of ${total} post${
-        total !== 1 ? "s" : ""
-      }…`;
+      actualBtn.textContent = "";
+      const hourglassIcon = createIcon("hourglass", 16);
+      hourglassIcon.style.marginRight = "4px";
+      actualBtn.appendChild(hourglassIcon);
+      actualBtn.appendChild(
+        document.createTextNode(
+          `Downloading ${done} of ${total} post${total !== 1 ? "s" : ""}…`
+        )
+      );
     } else {
-      actualBtn.textContent = `✅ All ${total} post${
-        total !== 1 ? "s" : ""
-      } downloaded`;
+      actualBtn.textContent = "";
+      const checkIcon = createIcon("check", 16);
+      checkIcon.style.marginRight = "4px";
+      actualBtn.appendChild(checkIcon);
+      actualBtn.appendChild(
+        document.createTextNode(
+          `All ${total} post${total !== 1 ? "s" : ""} downloaded`
+        )
+      );
     }
     actualBtn.disabled = true;
+    if (pauseBtn) {
+      pauseBtn.style.display = "inline-flex";
+      pauseBtn.disabled = false;
+      setButtonWithIcon(
+        pauseBtn,
+        isPausedAll ? "Resume" : "Pause",
+        isPausedAll ? "play" : "stop"
+      );
+      pauseBtn.title = isPausedAll ? "Resume downloading" : "Pause downloading";
+    }
     return;
   }
 
-  actualBtn.textContent = `⬇️ Download ${
-    total > 1 ? `all ${total}` : "1"
-  } post${total !== 1 ? "s" : ""}`;
+  setButtonWithIcon(
+    actualBtn,
+    `Download ${total > 1 ? `all ${total}` : "1"} post${
+      total !== 1 ? "s" : ""
+    }`,
+    "down"
+  );
   actualBtn.disabled = false;
+  if (pauseBtn) {
+    pauseBtn.style.display = "none";
+    pauseBtn.disabled = true;
+  }
 }
 
 export function updateDownloadButtonLabel(btnElement, text) {
@@ -1397,29 +2716,45 @@ export function updateDownloadButtonLabelSimple() {
   const downloadAllBtn = document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
   if (!downloadAllBtn) return;
 
+  const scrappingStage = AppState.scrapperDetails.scrappingStage;
+  const scrapperBoxOpen = AppState.ui.isScrapperBoxOpen;
+  const selectedTab = AppState.scrapperDetails.selectedTab;
+
+  // Check if scrapping is actually active (ongoing or downloading)
+  const isScrappingActive =
+    scrappingStage === "ongoing" || scrappingStage === "downloading";
+
   // Check if scrapper is selected but not started - hide button in this case
   const scrapperSelectedNotStarted =
-    AppState.scrapperDetails.selectedTab &&
-    AppState.scrapperDetails.scrappingStage !== "ongoing" &&
-    AppState.scrapperDetails.scrappingStage !== "downloading" &&
-    AppState.scrapperDetails.scrappingStage !== "completed";
+    selectedTab &&
+    scrappingStage !== "ongoing" &&
+    scrappingStage !== "downloading" &&
+    scrappingStage !== "completed";
 
   const container = downloadAllBtn.parentElement;
   const message = container
     ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-message")
     : null;
+  const pauseBtn = container
+    ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-pause")
+    : null;
 
   // Show container
   if (container) container.style.display = "block";
 
-  if (scrapperSelectedNotStarted) {
-    // Hide button and show message when scrapper is selected but not started
-    downloadAllBtn.style.display = "none";
-    if (message) message.style.display = "block";
-    return;
+  // Hide button when:
+  // 1. Scrapper box is open AND scrapping is active (ongoing/downloading), OR
+  // 2. Scrapper box is open AND a tab is selected but not started
+  if (scrapperBoxOpen) {
+    if (isScrappingActive || scrapperSelectedNotStarted) {
+      downloadAllBtn.style.display = "none";
+      if (pauseBtn) pauseBtn.style.display = "none";
+      if (message) message.style.display = "block";
+      return;
+    }
   }
 
-  // Show button and hide message (when scrapping is ongoing or not using scrapper)
+  // Show button and hide message (when scrapping is not active or not using scrapper)
   downloadAllBtn.style.display = "block";
   if (message) message.style.display = "none";
 
@@ -1441,28 +2776,72 @@ export function updateDownloadButtonLabelSimple() {
       downloadAllBtn.textContent = `Downloading item ${currentItem} of ${total} items discovered`;
     }
     downloadAllBtn.disabled = true;
+    if (pauseBtn) {
+      pauseBtn.style.display = "none";
+      pauseBtn.disabled = true;
+    }
     return;
   }
 
   if (!total) {
-    downloadAllBtn.textContent = "🚫 Nothing to download";
+    setButtonWithIcon(downloadAllBtn, "Nothing to download", "stop");
     downloadAllBtn.disabled = true;
+    if (pauseBtn) {
+      pauseBtn.style.display = "none";
+      pauseBtn.disabled = true;
+    }
   } else if (isDownloading) {
     if (done < total) {
-      downloadAllBtn.textContent = `⏳ Downloading ${done} of ${total} Post${
-        total !== 1 ? "s" : ""
-      }…`;
+      downloadAllBtn.textContent = "";
+      const hourglassIcon2 = createIcon("hourglass", 16);
+      hourglassIcon2.style.marginRight = "4px";
+      downloadAllBtn.appendChild(hourglassIcon2);
+      downloadAllBtn.appendChild(
+        document.createTextNode(
+          `Downloading ${done} of ${total} Post${total !== 1 ? "s" : ""}…`
+        )
+      );
       downloadAllBtn.disabled = true;
+      if (pauseBtn) {
+        pauseBtn.style.display = "inline-flex";
+        pauseBtn.disabled = false;
+        setButtonWithIcon(
+          pauseBtn,
+          AppState.downloading.pausedAll ? "Resume" : "Pause",
+          AppState.downloading.pausedAll ? "play" : "stop"
+        );
+        pauseBtn.title = AppState.downloading.pausedAll
+          ? "Resume downloading"
+          : "Pause downloading";
+      }
     } else {
-      downloadAllBtn.textContent = `✅ Downloaded all ${total} Post${
-        total !== 1 ? "s" : ""
-      }`;
+      downloadAllBtn.textContent = "";
+      const checkIcon2 = createIcon("check", 16);
+      checkIcon2.style.marginRight = "4px";
+      downloadAllBtn.appendChild(checkIcon2);
+      downloadAllBtn.appendChild(
+        document.createTextNode(
+          `Downloaded all ${total} Post${total !== 1 ? "s" : ""}`
+        )
+      );
+      if (pauseBtn) {
+        pauseBtn.style.display = "none";
+        pauseBtn.disabled = true;
+      }
     }
   } else {
-    downloadAllBtn.textContent = `⬇️ Download ${
-      total > 1 ? "All " + total : "1"
-    } Post${total !== 1 ? "s" : ""}`;
+    setButtonWithIcon(
+      downloadAllBtn,
+      `Download ${total > 1 ? "All " + total : "1"} Post${
+        total !== 1 ? "s" : ""
+      }`,
+      "down"
+    );
     downloadAllBtn.disabled = false;
+    if (pauseBtn) {
+      pauseBtn.style.display = "none";
+      pauseBtn.disabled = true;
+    }
   }
 }
 
@@ -1475,6 +2854,7 @@ function createCurrentVideoButton() {
   btn.style.width = "100%";
   btn.style.marginBottom = "5px";
   btn.style.marginTop = "10px";
+  btn.style.display = "none"; // Hidden by default, shown when there's a current item
   return btn;
 }
 
@@ -1486,11 +2866,16 @@ function updateCurrentVideoButton(btn, items = []) {
   );
 
   if (!currentMedia) {
+    // Hide the button when there's no current item
+    btn.style.display = "none";
     btn.disabled = true;
     btn.textContent = "Download Current";
     btn.onclick = () => {};
     return;
   }
+
+  // Show the button when there's a current item
+  btn.style.display = "block";
 
   btn.disabled = false;
   btn.textContent = currentMedia.isImage
@@ -1503,14 +2888,26 @@ function updateCurrentVideoButton(btn, items = []) {
     btn.onclick = async (e) => {
       e?.stopPropagation?.();
       btn.disabled = true;
-      const originalText = btn.textContent;
-      btn.textContent = "⏳ Downloading...";
+      const originalContent = btn.cloneNode(true);
+      btn.textContent = "";
+      const downloadingIcon = createIcon("hourglass", 16);
+      downloadingIcon.style.marginRight = "4px";
+      btn.appendChild(downloadingIcon);
+      btn.appendChild(document.createTextNode("Downloading..."));
       try {
         await downloadSingleMedia(currentMedia);
-        btn.textContent = "✅ Done!";
+        btn.textContent = "";
+        const doneIcon = createIcon("check", 16);
+        doneIcon.style.marginRight = "4px";
+        btn.appendChild(doneIcon);
+        btn.appendChild(document.createTextNode("Done!"));
       } catch (err) {
         console.warn("Download current failed", err);
-        btn.textContent = "❌ Failed";
+        btn.textContent = "";
+        const failedIcon = createIcon("error", 16);
+        failedIcon.style.marginRight = "4px";
+        btn.appendChild(failedIcon);
+        btn.appendChild(document.createTextNode("Failed"));
       } finally {
         setTimeout(() => {
           btn.disabled = false;
@@ -1653,7 +3050,7 @@ export function createControlButtons(preferencesBox) {
   // --- User Posts Button ---
   const userPostsBtn = document.createElement("button");
   userPostsBtn.className = "ettpd-settings-toggle";
-  userPostsBtn.textContent = "🥹 Scrapper";
+  setButtonWithIcon(userPostsBtn, "Scrapper", "folder");
   userPostsBtn.title =
     "Download/Archive likes, reposts, favorites or collections";
   userPostsBtn.style.flex = "1";
@@ -1824,22 +3221,48 @@ function renderMediaList(listEl, items = []) {
   const fragment = document.createDocumentFragment();
   const orderedItems = [...items].reverse();
 
+   const currentVideoId = document.location.pathname.split("/")[3];
+   let hasMarkedCurrent = false;
+
   orderedItems.forEach((media) => {
     const key = media.videoId || media.id;
     if (!key) return;
     const entryHash = getMediaEntryHash(media);
 
+     const shouldMarkAsCurrent =
+       !hasMarkedCurrent && currentVideoId && currentVideoId === media?.videoId;
+
     let node = existingNodes.get(key);
 
     if (node && node.dataset.entryHash === entryHash) {
       existingNodes.delete(key);
+      const authorWrapper = node.querySelector(".ettpd-author-wrapper");
+      if (authorWrapper) {
+        const existingCurrent = authorWrapper.querySelector(
+          '.ettpd-emoji[data-role="current-video"]'
+        );
+        if (existingCurrent) existingCurrent.remove();
+        if (shouldMarkAsCurrent) {
+          const liveEmoji = document.createElement("span");
+          liveEmoji.title = "Currently playing video";
+          liveEmoji.className = "ettpd-emoji";
+          liveEmoji.dataset.role = "current-video";
+          const playIcon = createIcon("play", 14);
+          liveEmoji.appendChild(playIcon);
+          authorWrapper.insertBefore(liveEmoji, authorWrapper.firstChild);
+        }
+      }
     } else {
       if (node) {
         existingNodes.delete(key);
         node.remove();
       }
-      node = buildMediaListItem(media);
+      node = buildMediaListItem(media, { markAsCurrent: shouldMarkAsCurrent });
       node.dataset.entryHash = entryHash;
+    }
+
+    if (shouldMarkAsCurrent) {
+      hasMarkedCurrent = true;
     }
 
     node.dataset.videoId = key;
@@ -1873,12 +3296,11 @@ function getMediaEntryHash(media) {
   return parts.join("|");
 }
 
-function buildMediaListItem(media) {
+function buildMediaListItem(media, options = {}) {
+  const { markAsCurrent = false } = options;
   const item = document.createElement("li");
   item.className = "ettpd-li";
   item.dataset.videoId = media.videoId || media.id || "";
-
-  const currentVideoId = document.location.pathname.split("/")[3];
 
   const textContainer = document.createElement("div");
   textContainer.className = "ettpd-text-container";
@@ -1886,19 +3308,22 @@ function buildMediaListItem(media) {
   const authorWrapper = document.createElement("div");
   authorWrapper.className = "ettpd-author-wrapper";
 
-  if (currentVideoId && currentVideoId === media?.videoId) {
+  if (markAsCurrent) {
     const liveEmoji = document.createElement("span");
-    liveEmoji.textContent = "▶️";
     liveEmoji.title = "Currently playing video";
     liveEmoji.className = "ettpd-emoji";
+    liveEmoji.dataset.role = "current-video";
+    const playIcon = createIcon("play", 14);
+    liveEmoji.appendChild(playIcon);
     authorWrapper.appendChild(liveEmoji);
   }
 
   if (media?.downloaderHasLowConfidence) {
     const lowConfidenceEmoji = document.createElement("span");
-    lowConfidenceEmoji.textContent = "🤷‍♂️";
     lowConfidenceEmoji.title = "Low confidence data";
     lowConfidenceEmoji.className = "ettpd-emoji";
+    const infoIcon = createIcon("info", 14);
+    lowConfidenceEmoji.appendChild(infoIcon);
     authorWrapper.appendChild(lowConfidenceEmoji);
   }
 
@@ -1927,12 +3352,26 @@ function buildMediaListItem(media) {
     fullDesc.length > 100 ? fullDesc.slice(0, 100) + "..." : fullDesc;
   let expanded = false;
   descSpan.innerText = shortDesc;
-  descSpan.style.cursor = fullDesc.length > 100 ? "pointer" : "default";
-  descSpan.style.textDecoration = fullDesc.length > 100 ? "underline" : "none";
-  descSpan.title = fullDesc.length > 100 ? "Expandable" : "Description";
+
+  if (fullDesc.length > 100) {
+    descSpan.classList.add("ettpd-desc-expandable");
+    descSpan.style.cursor = "pointer";
+    descSpan.title = "Click to expand/collapse";
+  } else {
+    descSpan.style.cursor = "default";
+    descSpan.title = "Description";
+  }
   descSpan.onclick = () => {
     expanded = !expanded;
     descSpan.innerText = expanded ? fullDesc : shortDesc;
+    // Remove expandable styling when expanded, add it back when collapsed
+    if (expanded) {
+      descSpan.classList.remove("ettpd-desc-expandable");
+      descSpan.classList.add("ettpd-desc-expanded");
+    } else {
+      descSpan.classList.remove("ettpd-desc-expanded");
+      descSpan.classList.add("ettpd-desc-expandable");
+    }
   };
 
   textContainer.append(authorWrapper, descSpan);
@@ -1958,7 +3397,7 @@ function buildMediaListItem(media) {
     const tiktokBtn = document.createElement("span");
     tiktokBtnContainer.appendChild(tiktokBtn);
     downloadAllBtnContainer.appendChild(tiktokBtnContainer);
-    downloadAllBtn.textContent = "⬇️ Download All Images";
+    setButtonWithIcon(downloadAllBtn, "Download All Images", "down");
     downloadAllBtn.className = "ettpd-download-btn";
     downloadAllBtn.style.marginBottom = "10px";
     downloadAllBtn.style.marginTop = "5px";
@@ -1990,8 +3429,12 @@ function buildMediaListItem(media) {
       downloadBtn.onclick = async (e) => {
         e.stopPropagation();
 
-        const originalText = downloadBtn.textContent;
-        downloadBtn.textContent = "⏳ Downloading...";
+        const originalContent = downloadBtn.cloneNode(true);
+        downloadBtn.textContent = "";
+        const downloadingIcon3 = createIcon("hourglass", 16);
+        downloadingIcon3.style.marginRight = "4px";
+        downloadBtn.appendChild(downloadingIcon3);
+        downloadBtn.appendChild(document.createTextNode("Downloading..."));
 
         const delayBeforeStart = 600;
         const minDisplayAfter = 1000;
@@ -2006,9 +3449,13 @@ function buildMediaListItem(media) {
           const remaining = Math.max(0, minDisplayAfter - elapsed);
 
           setTimeout(() => {
-            downloadBtn.textContent = "✅ Done!";
+            downloadBtn.textContent = "";
+            const doneIcon3 = createIcon("check", 16);
+            doneIcon3.style.marginRight = "4px";
+            downloadBtn.appendChild(doneIcon3);
+            downloadBtn.appendChild(document.createTextNode("Done!"));
             setTimeout(() => {
-              downloadBtn.textContent = originalText;
+              downloadBtn.replaceWith(originalContent.cloneNode(true));
             }, 3000);
           }, remaining);
         } catch (err) {
@@ -2017,9 +3464,13 @@ function buildMediaListItem(media) {
           const remaining = Math.max(0, minDisplayAfter - elapsed);
 
           setTimeout(() => {
-            downloadBtn.textContent = "❌ Failed!";
+            downloadBtn.textContent = "";
+            const failedIcon3 = createIcon("error", 16);
+            failedIcon3.style.marginRight = "4px";
+            downloadBtn.appendChild(failedIcon3);
+            downloadBtn.appendChild(document.createTextNode("Failed!"));
             setTimeout(() => {
-              downloadBtn.textContent = originalText;
+              downloadBtn.replaceWith(originalContent.cloneNode(true));
             }, 3000);
           }, remaining);
         }
@@ -2063,8 +3514,12 @@ function buildMediaListItem(media) {
     downloadBtn.onclick = async (e) => {
       e.stopPropagation();
 
-      const originalText = downloadBtn.textContent;
-      downloadBtn.textContent = "⏳ Downloading...";
+      const originalContent2 = downloadBtn.cloneNode(true);
+      downloadBtn.textContent = "";
+      const downloadingIcon4 = createIcon("hourglass", 16);
+      downloadingIcon4.style.marginRight = "4px";
+      downloadBtn.appendChild(downloadingIcon4);
+      downloadBtn.appendChild(document.createTextNode("Downloading..."));
       const delayBeforeStart = 600;
       const minDisplayAfter = 1000;
       const startedAt = Date.now();
@@ -2078,9 +3533,13 @@ function buildMediaListItem(media) {
         const remaining = Math.max(0, minDisplayAfter - elapsed);
 
         setTimeout(() => {
-          downloadBtn.textContent = "✅ Done!";
+          downloadBtn.textContent = "";
+          const doneIcon4 = createIcon("check", 16);
+          doneIcon4.style.marginRight = "4px";
+          downloadBtn.appendChild(doneIcon4);
+          downloadBtn.appendChild(document.createTextNode("Done!"));
           setTimeout(() => {
-            downloadBtn.textContent = originalText;
+            downloadBtn.replaceWith(originalContent2.cloneNode(true));
           }, 3000);
         }, remaining);
       } catch (err) {
@@ -2089,9 +3548,13 @@ function buildMediaListItem(media) {
         const remaining = Math.max(0, minDisplayAfter - elapsed);
 
         setTimeout(() => {
-          downloadBtn.textContent = "❌ Failed!";
+          downloadBtn.textContent = "";
+          const failedIcon4 = createIcon("error", 16);
+          failedIcon4.style.marginRight = "4px";
+          downloadBtn.appendChild(failedIcon4);
+          downloadBtn.appendChild(document.createTextNode("Failed!"));
           setTimeout(() => {
-            downloadBtn.textContent = originalText;
+            downloadBtn.replaceWith(originalContent2.cloneNode(true));
           }, 3000);
         }, remaining);
       }
@@ -2350,8 +3813,13 @@ export function hideDownloader() {
   const showBtn = document.createElement("button");
   showBtn.id = DOM_IDS.SHOW_DOWNLOADER;
   showBtn.className = "ettpd-show-btn";
+  showBtn.title = "Drag to move me anywhere";
+  showBtn.setAttribute(
+    "aria-label",
+    "Open downloader (drag to move me anywhere)"
+  );
 
-  // Create SVG download icon
+  // Create SVG drag-handle + download icon
   const svgIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svgIcon.setAttribute("width", "16");
   svgIcon.setAttribute("height", "16");
@@ -2364,29 +3832,45 @@ export function hideDownloader() {
   svgIcon.style.verticalAlign = "middle";
   svgIcon.style.marginRight = "4px";
 
-  const path1 = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path1.setAttribute("d", "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4");
-  svgIcon.appendChild(path1);
+  // Drag dots (grip) to hint draggability
+  const dragGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  dragGroup.setAttribute("fill", "currentColor");
+  [
+    [9, 7],
+    [9, 11],
+    [9, 15],
+    [13, 7],
+    [13, 11],
+    [13, 15],
+  ].forEach(([cx, cy]) => {
+    const dot = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "circle"
+    );
+    dot.setAttribute("cx", String(cx));
+    dot.setAttribute("cy", String(cy));
+    dot.setAttribute("r", "0.7");
+    dragGroup.appendChild(dot);
+  });
+  svgIcon.appendChild(dragGroup);
 
-  const polyline = document.createElementNS(
-    "http://www.w3.org/2000/svg",
-    "polyline"
-  );
-  polyline.setAttribute("points", "7 10 12 15 17 10");
-  svgIcon.appendChild(polyline);
-
-  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-  line.setAttribute("x1", "12");
-  line.setAttribute("y1", "15");
-  line.setAttribute("x2", "12");
-  line.setAttribute("y2", "3");
-  svgIcon.appendChild(line);
-
-  // Set button content - small text with icon
+  // Set button content - icon + label
   showBtn.appendChild(svgIcon);
   const textSpan = document.createElement("span");
   textSpan.textContent = "Open";
   showBtn.appendChild(textSpan);
+
+  // One-time attention animation on first render
+  if (!AppState.ui.hasSeenShowButtonHint) {
+    showBtn.classList.add("ettpd-show-btn-pop");
+    AppState.ui.hasSeenShowButtonHint = true;
+    try {
+      localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_HINT_SEEN, "true");
+    } catch {}
+    setTimeout(() => {
+      showBtn.classList.remove("ettpd-show-btn-pop");
+    }, 900);
+  }
 
   // Apply theme class
   if (getResolvedThemeMode() === "dark") {
@@ -2460,9 +3944,6 @@ export function hideDownloader() {
       }
     }, 50);
   });
-
-  // Make draggable
-  makeShowButtonDraggable(showBtn);
 
   // Make draggable
   makeShowButtonDraggable(showBtn);
@@ -2557,7 +4038,11 @@ export function showRateUsPopUpLegacy() {
 
 export function showStatsPopUp() {
   if (AppState.downloading.isDownloadingAll || AppState.downloading.isActive) {
-    return showAlertModal("Wait for the download to be over or refresh 🙂");
+    showToast(
+      "Download in progress",
+      "Wait for the download to be over or refresh 🙂"
+    );
+    return;
   }
 
   if (AppState.downloadedURLs.length || AppState.sessionHasConfirmedDownloads) {
@@ -2572,14 +4057,18 @@ export function showStatsPopUp() {
   tabNav.className = "ettpd-tab-nav";
 
   const tabs = [
-    { key: "downloads", label: "⬇️ Downloads" },
-    { key: "recommendations", label: "📣 Recommendations" },
+    { key: "downloads", label: "Downloads", icon: "down" },
+    { key: "recommendations", label: "Recommendations", icon: "star" },
   ];
 
-  const tabButtons = tabs.map(({ key, label }) => {
+  const tabButtons = tabs.map(({ key, label, icon }) => {
     const btn = document.createElement("button");
     btn.className = "ettpd-tab-btn";
-    btn.textContent = label;
+    if (icon) {
+      setButtonWithIcon(btn, label, icon);
+    } else {
+      btn.textContent = label;
+    }
     btn.dataset.key = key;
     return btn;
   });
@@ -2695,7 +4184,7 @@ export function showStatsPopUp() {
     "https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg";
   rateBtn.target = "_blank";
   rateBtn.className = "ettpd-modal-button";
-  rateBtn.textContent = "⭐ Rate Us";
+  setButtonWithIcon(rateBtn, "Rate Us", "star");
 
   const coffeeBtn = document.createElement("a");
   coffeeBtn.href = "https://linktr.ee/aimuhire";
@@ -2747,7 +4236,7 @@ export function showStatsPopUp() {
     };
     AppState.currentTierProgress = { downloads: 0, recommendations: 0 };
 
-    showAlertModal("✅ All leaderboard data has been reset.");
+    showToast("Success", "✅ All leaderboard data has been reset.");
     document.getElementById(DOM_IDS.MODAL_CONTAINER)?.remove();
     displayFoundUrls({ forced: true });
   });
@@ -2987,9 +4476,9 @@ export function createFilenameTemplateModal() {
           <ul class="ettpd-template-list">
             <li><strong>Extensions</strong>: auto-added (<code>.jpeg</code> / <code>.mp4</code>).</li>
             <li><strong>Numbering</strong>: <code>{sequenceNumber}</code> only on multi-image unless forced with <code>{sequenceNumber|required}</code>.</li>
-            <li><strong>Length</strong>: trim with <code>{desc:40|no-desc}</code> or any field.</li>
+            <li><strong>Length</strong>: trim with <code>{desc:40|no-desc}</code> or any field. Use negative numbers for last N chars: <code>{videoId:-4}</code> takes last 4 characters.</li>
             <li><strong>Paths</strong>: keep them relative; no leading <code>/</code> or <code>..</code>.</li>
-            <li><strong>Ads & media</strong>: <code>{ad}</code> adds “ad”; <code>{mediaType}</code> is <em>image</em>/<em>video</em>.</li>
+            <li><strong>Ads & media</strong>: <code>{ad}</code> adds "ad"; <code>{mediaType}</code> is <em>image</em>/<em>video</em>.</li>
             <li><strong>Context</strong>: <code>{tabName}</code> follows the scrapper tab (Video, Reposts, Liked, Favorited).</li>
           </ul>
         </details>
@@ -3123,7 +4612,7 @@ export function createFilenameTemplateModal() {
 
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "ettpd-pref-btn danger";
-  deleteBtn.textContent = "🗑️ Delete Template";
+  setButtonWithIcon(deleteBtn, "Delete Template", "delete");
   deleteBtn.style = "margin-right:15px;";
 
   // Utility: sanitize
@@ -3154,7 +4643,11 @@ export function createFilenameTemplateModal() {
     const errors = validatePathTemplate(tpl);
 
     if (errors.length) {
-      error.textContent = "⚠️ " + errors.join("; ");
+      error.textContent = "";
+      const warningIcon = createIcon("warning", 16);
+      warningIcon.style.marginRight = "4px";
+      error.appendChild(warningIcon);
+      error.appendChild(document.createTextNode(errors.join("; ")));
       preview.textContent = "";
       return;
     }
@@ -3162,7 +4655,7 @@ export function createFilenameTemplateModal() {
     error.textContent = "";
 
     const sample = {
-      videoId: "abc123",
+      videoId: "7557564294825626893",
       authorId: "user456",
       authorUsername: "coolguy",
       authorNickname: "coolguy",
@@ -3186,8 +4679,15 @@ export function createFilenameTemplateModal() {
         .replace(/[^\p{L}\p{N}_-]+/gu, "-")
         .slice(0, 100);
 
+    // Special sanitize for descriptions - respects maxLen from template
+    const sanitizeDesc = (val, maxLen = 100) => {
+      const str = (val ?? "").toString();
+      const sanitized = str.replace(/[^\p{L}\p{N}_\-.]+/gu, "-");
+      return sanitized.length > maxLen ? sanitized.slice(0, maxLen) : sanitized;
+    };
+
     const getFieldMaxLength = (fieldName) => {
-      const regex = new RegExp(`\\{${fieldName}:(\\d+)`);
+      const regex = new RegExp(`\\{${fieldName}:(-?\\d+)`);
       const match = tpl.match(regex);
       return match ? Number(match[1]) : undefined;
     };
@@ -3201,8 +4701,9 @@ export function createFilenameTemplateModal() {
       videoId: sanitize(sample.videoId),
       authorUsername: sanitize(sample.authorId),
       authorNickname: sanitize(sample.authorNickname),
-      desc: sanitize(
-        sample.desc?.slice(0, isDescMaxLenDefined ? descMaxLen : 40)
+      desc: sanitizeDesc(
+        sample.desc,
+        isDescMaxLenDefined ? (descMaxLen > 0 ? descMaxLen : 100) : 100
       ),
       createTime: sample.createTime,
       musicTitle: sanitize(sample.musicTitle),
@@ -3289,10 +4790,30 @@ export function createFilenameTemplateModal() {
   // Save & Apply
   saveBtn.onclick = async () => {
     renderPreviewAndErrors();
-    if (error.textContent) return showAlertModal("Fix errors before saving.");
-    if (!labelInput.value.trim()) return showAlertModal("Please enter a name.");
+    if (error.textContent) {
+      showToast("Error", "Fix errors before saving.");
+      return;
+    }
+    if (!labelInput.value.trim()) {
+      showToast("Error", "Please enter a name.");
+      return;
+    }
+
+    const trimmedLabel = labelInput.value.trim();
+    const recommendedTemplate = getRecommendedPresetTemplate();
+
+    // Warn user if they're using the recommended template name
+    if (recommendedTemplate && trimmedLabel === recommendedTemplate.label) {
+      showToast(
+        "⚠️ Template Name Warning",
+        `The name "${trimmedLabel}" will be automatically updated on next reload. Please rename your template to avoid automatic overrides.`,
+        8000
+      );
+      // Still allow saving, but warn them
+    }
+
     const newTpl = {
-      label: labelInput.value.trim(),
+      label: trimmedLabel,
       template: inputPathTemplate.value.trim(),
     };
     const updated = templates.filter((t) => t.label !== newTpl.label);
@@ -3346,11 +4867,15 @@ export function createFilenameTemplateModal() {
   // Delete Handler
   deleteBtn.onclick = async () => {
     const val = comboSelect.value;
-    if (!val) return showAlertModal("Select a user template to delete.");
+    if (!val) {
+      showToast("Error", "Select a user template to delete.");
+      return;
+    }
     const [type, idxStr] = val.split("-");
     const idx = parseInt(idxStr, 10);
     if (type !== "user") {
-      return showAlertModal("Cannot delete built-in presets.");
+      showToast("Error", "Cannot delete built-in presets.");
+      return;
     }
     const removed = templates.splice(idx, 1)[0];
     saveTemplates(templates);
@@ -3422,16 +4947,12 @@ export function createPreferencesBox() {
 
   // 🔄 Create button container
   const btnContainer = document.createElement("div");
-  btnContainer.style.display = "flex";
-  btnContainer.style.flexWrap = "wrap";
-  btnContainer.style.gap = "8px";
-  btnContainer.style.justifyContent = "space-around";
-  btnContainer.style.marginTop = "10px";
+  btnContainer.className = "ettpd-options-buttons";
 
   // 🔄 Reset Downloader button
   const resetBtn = document.createElement("button");
   resetBtn.className = "ettpd-pref-btn danger";
-  resetBtn.textContent = "🔄 Factory Reset";
+  setButtonWithIcon(resetBtn, "Factory Reset", "refresh");
   resetBtn.onclick = async (e) => {
     e.stopPropagation();
     resetAppStateToDefaults();
@@ -3454,7 +4975,10 @@ export function createPreferencesBox() {
       AppState.downloading.isActive ||
       AppState.downloading.isDownloadingAll
     ) {
-      showAlertModal("Please wait for the download to be over or refresh!");
+      showToast(
+        "Download in progress",
+        "Please wait for the download to be over or refresh!"
+      );
       return;
     }
     AppState.downloadedURLs = [];
@@ -3464,8 +4988,9 @@ export function createPreferencesBox() {
     AppState.displayedState.path = window.location.pathname;
     AppState.ui.isPreferenceBoxOpen = false;
     AppState.ui.isScrapperBoxOpen = false;
-    showAlertModal(
-      "🔄 All set! The download list now shows only the posts visible on the main screen — nothing from the sidebar.<br><br>💡 <b>Tip:</b> To scrape this page, scroll all the way down, then click <b>Download All</b> once you're happy with your list."
+    showToast(
+      "🔄 All set!",
+      "The download list now shows only the posts visible on the main screen — nothing from the sidebar.<br><br>💡 <b>Tip:</b> To scrape this page, scroll all the way down, then click <b>Download All</b> once you're happy with your list."
     );
 
     setTimeout(() => {
@@ -3479,42 +5004,6 @@ export function createPreferencesBox() {
 
   // Append container wherever it needs to go
   // Example: parentEl.appendChild(btnContainer);
-
-  // Filters (as checkboxes)
-  const filtersLabel = document.createElement("div");
-  filtersLabel.className = "ettpd-pref-label";
-  filtersLabel.textContent = "Filters:";
-
-  const currentUserCheckbox = createCheckbox(
-    `👤 Current User Only (${
-      getCurrentPageUsername() !== "😃"
-        ? "@" + getCurrentPageUsername()
-        : "Go to a user page!"
-    })`,
-    "filterUsername",
-    (e) => {
-      const checkbox = e.target;
-      if (
-        getCurrentPageUsername() === "😃" &&
-        !AppState.filters.currentProfile
-      ) {
-        e?.stopPropagation();
-        e?.preventDefault();
-
-        // Revert the checkbox state visually
-        checkbox.checked = false;
-
-        showAlertModal(
-          "This feature only works when you are on a user page :) 👀 Psst… The Scrapper's the glow-up. This legacy mode is giving 2019 vibes."
-        );
-        return;
-      }
-
-      // Toggle state only when valid
-      AppState.filters.currentProfile = checkbox.checked;
-    },
-    AppState.filters.currentProfile
-  );
 
   // Advanced checkboxes
   const advancedLabel = document.createElement("div");
@@ -3772,55 +5261,17 @@ export function createPreferencesBox() {
             toggle.classList.add("ettpd-power-toggle-off");
             toggleIcon.textContent = "🔌";
 
-            // Refresh all TikTok tabs
-            try {
-              if (typeof chrome !== "undefined" && chrome.tabs) {
-                const tabs = await new Promise((resolve) => {
-                  chrome.tabs.query({ url: "*://*.tiktok.com/*" }, resolve);
-                });
-
-                if (tabs && tabs.length > 0) {
-                  console.log("[EXT_POWER] reloading TikTok tabs:", tabs.length);
-                  tabs.forEach((tab) => {
-                    if (tab.id) {
-                      chrome.tabs.reload(tab.id);
-                    }
-                  });
-                  showFeedback(
-                    `Extension disabled. Refreshed ${tabs.length} TikTok tab${
-                      tabs.length !== 1 ? "s" : ""
-                    }.`
-                  );
-                } else {
-                  showFeedback(
-                    "Extension disabled. Reload the page for changes to take effect."
-                  );
-                  console.log("[EXT_POWER] no TikTok tabs found on disable");
-                }
-              } else {
-                // Fallback: reload current page
-                showFeedback(
-                  "Extension disabled. Reload the page for changes to take effect."
-                );
-                setTimeout(() => {
-                  window.location.reload();
-                }, 1500);
-                console.log("[EXT_POWER] disable fallback: no chrome.tabs");
-              }
-            } catch (err) {
-              console.warn("Failed to refresh tabs:", err);
-              showFeedback(
-                "Extension disabled. Reload the page for changes to take effect."
-              );
-              // Fallback: reload current page
-              setTimeout(() => {
-                window.location.reload();
-              }, 1500);
-              console.log("[EXT_POWER] disable error", err);
-            }
+            showFeedback(
+              "Extension disabled. Reloading the page to stop the downloader..."
+            );
 
             const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
             if (overlay) overlay.remove();
+            setTimeout(() => {
+              try {
+                window.location.reload();
+              } catch {}
+            }, 300);
             resolve(true);
           };
 
@@ -3850,8 +5301,6 @@ export function createPreferencesBox() {
 
     return container;
   }
-
-  const powerToggle = createPowerToggle();
 
   const autoScrollSettingUI = createScrollModeSelector();
 
@@ -3897,7 +5346,7 @@ export function createPreferencesBox() {
       } else {
         AppState[stateKey] = checkbox.checked;
       }
-      showFeedback(`${label} saved! ☑️`);
+      showFeedback(`${label} saved!`);
     };
 
     const span = document.createElement("span");
@@ -3921,9 +5370,9 @@ export function createPreferencesBox() {
     select.name = "scrollMode";
     select.className = "ettpd-select";
     const options = [
-      { value: "onVideoEnd", label: "🔁 On Video End" },
-      { value: "always", label: "🔄 Anytime (Load More)" },
-      { value: "off", label: "📴 Off" },
+      { value: "onVideoEnd", label: "On Video End", icon: "repost" },
+      { value: "always", label: "Anytime (Load More)", icon: "refresh" },
+      { value: "off", label: "Off", icon: "stop" },
     ];
 
     options.forEach(({ value, label }) => {
@@ -3958,15 +5407,12 @@ export function createPreferencesBox() {
   };
 
   preferencesBox.append(
-    filtersLabel,
-    currentUserCheckbox,
     advancedLabel,
     skipFailedCheckbox,
     skipAdsCheckbox,
     includeCSVFile,
     disableConfetti,
     themeToggle,
-    powerToggle,
     autoScrollSettingUI,
     prefLabel,
     templateEditorBtn,
@@ -3979,7 +5425,7 @@ export function createPreferencesBox() {
 export function createSettingsToggle(preferencesBox) {
   const settingsBtn = document.createElement("button");
   settingsBtn.className = "ettpd-settings-toggle";
-  settingsBtn.textContent = "⚙️ Settings";
+  setButtonWithIcon(settingsBtn, "Settings", "settings");
   settingsBtn.title = "Click to toggle settings";
   settingsBtn.onclick = (e) => {
     e.stopPropagation();
@@ -4013,7 +5459,6 @@ export function createSettingsToggle(preferencesBox) {
           DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER
         ).style.display = AppState.ui.isScrapperBoxOpen ? "flex" : "none";
 
-      settingsBtn.textContent = "⚙️ Close";
       settingsBtn.classList.add("ettpd-settings-open");
 
       // Update Scrapper button state
@@ -4024,7 +5469,6 @@ export function createSettingsToggle(preferencesBox) {
         }
       });
     } else {
-      settingsBtn.textContent = "⚙️ Settings";
       settingsBtn.classList.remove("ettpd-settings-open");
     }
   }
@@ -4165,7 +5609,11 @@ function createDownloadButton({
           imageIndex: photoIndex,
         })
       );
-      btn.textContent = "✅ Saved";
+      btn.textContent = "";
+      const savedIcon = createIcon("check", 16);
+      savedIcon.style.marginRight = "4px";
+      btn.appendChild(savedIcon);
+      btn.appendChild(document.createTextNode("Saved"));
       showCelebration(
         "downloads",
         getRandomDownloadSuccessMessage(isImage ? "photo" : "video")
@@ -4857,3 +6305,79 @@ function getVisibleImageVidPlayer() {
 
   return container;
 }
+
+// Listen for resume download messages from popup
+window.addEventListener("message", (event) => {
+  // Only accept messages from the same window
+  if (event.source !== window) return;
+
+  const data = event.data;
+  if (data?.type === "RESUME_DOWNLOAD") {
+    const { payload } = data;
+    const { username, tabName, isCollection, collectionUrl } = payload || {};
+    console.log("[Resume Download] Received resume request:", {
+      username,
+      tabName,
+      isCollection,
+      collectionUrl,
+    });
+
+    // If we have a collection URL and we're not on that page, navigate to it
+    if (
+      isCollection &&
+      collectionUrl &&
+      window.location.pathname !== collectionUrl
+    ) {
+      console.log(
+        "[Resume Download] Navigating to collection URL:",
+        collectionUrl
+      );
+
+      // Set the state before navigation so it persists after page reload
+      AppState.scrapperDetails.selectedTab = "collection";
+      AppState.scrapperDetails.selectedCollectionName = tabName;
+      AppState.scrapperDetails.originalUsername = username;
+      AppState.scrapperDetails.scrappingStage = "initiated";
+      localStorage.setItem(
+        STORAGE_KEYS.SCRAPPER_DETAILS,
+        JSON.stringify(AppState.scrapperDetails)
+      );
+
+      window.location.href = `https://www.tiktok.com${collectionUrl}`;
+      // The scrapping will be triggered after navigation via polling mechanism
+      return;
+    }
+
+    // Use handler for business logic
+    const result = handleResumeDownload(username, tabName, isCollection);
+
+    if (!result.success) {
+      console.warn("[Resume Download]", result.error);
+      showToast(
+        "Resume Failed",
+        result.needsNavigation
+          ? `Please navigate to @${username}'s profile first.`
+          : result.error
+      );
+      return;
+    }
+
+    // Set the selected tab in AppState before starting scrapping
+    AppState.scrapperDetails.selectedTab = result.tabKey;
+    if (isCollection && result.collectionName) {
+      AppState.scrapperDetails.selectedCollectionName = result.collectionName;
+    }
+
+    // Persist state to localStorage
+    localStorage.setItem(
+      STORAGE_KEYS.SCRAPPER_DETAILS,
+      JSON.stringify(AppState.scrapperDetails)
+    );
+
+    // Start the scrapping process (UI action)
+    startScrappingProcess(result.tabKey, result.pageInfo).catch((err) => {
+      console.error("[Resume Download] Failed to start:", err);
+      showToast("Resume Failed", "Failed to start download process.");
+    });
+  }
+});

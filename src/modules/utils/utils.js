@@ -15,6 +15,12 @@ import {
   HYPE_TEMPLATES,
 } from "../state/constants.js";
 import {
+  appendVideoId,
+  hasVideoId,
+  hasVideoIdInCache,
+  loadProgressObject,
+} from "../storage/progress.js";
+import {
   updateDownloaderList,
   hideDownloader,
   showMorpheusRateUsPage,
@@ -23,13 +29,22 @@ import {
   showStatsSpan,
   createDownloaderWrapper,
   createModal,
+  showToast,
+  createIcon,
 } from "../downloader/ui.js";
 
 // Extract username from URL path
 export function getCurrentPageUsername() {
   const parts = window.location.pathname.split("/");
   const at = parts.find((p) => p.startsWith("@"));
-  return at ? at.slice(1) : "😃";
+  const username = at ? at.slice(1) : "😃";
+  console.log("[Username Detection] getCurrentPageUsername:", {
+    pathname: window.location.pathname,
+    parts,
+    foundAt: at,
+    username,
+  });
+  return username;
 }
 
 /**
@@ -39,8 +54,9 @@ export function getCurrentPageUsername() {
 export function isOnProfileOrCollectionPage() {
   const path = window.location.pathname;
 
-  // Check if it's a profile page: /@username or /@username/
-  const isProfile = /^\/@[^/]+\/?$/.test(path);
+  // Check if it's a profile page: /@username (with optional trailing slash or additional path segments)
+  // This matches /@username, /@username/, /@username/video/123, etc.
+  const isProfile = /^\/@[^/]+/.test(path);
 
   // Check if it's a collection page: /@username/collection/collection-name
   const collectionMatch = path.match(/\/@[^/]+\/collection\/([^/]+)/);
@@ -61,6 +77,87 @@ export function isOnProfileOrCollectionPage() {
     isCollection,
     collectionName,
   };
+}
+
+/**
+ * Detect the current tab name from page context
+ * @returns {string} Tab name (videos, reposts, liked, favorites, or collection name)
+ */
+export function detectCurrentTabName() {
+  // First check if scrapper has selected tab
+  if (AppState.scrapperDetails.selectedTab) {
+    // If it's a collection tab, use the actual collection name
+    if (AppState.scrapperDetails.selectedTab === "collection") {
+      const collectionName =
+        AppState.scrapperDetails.selectedCollectionName ||
+        (() => {
+          const pageInfo = isOnProfileOrCollectionPage();
+          return pageInfo.collectionName;
+        })();
+      if (collectionName) {
+        console.log(
+          "[Tab Detection] Using collection name:",
+          collectionName
+        );
+        return collectionName;
+      }
+    }
+    console.log(
+      "[Tab Detection] Using scrapper selectedTab:",
+      AppState.scrapperDetails.selectedTab
+    );
+    return AppState.scrapperDetails.selectedTab;
+  }
+
+  // Check for collection page
+  const pageInfo = isOnProfileOrCollectionPage();
+  if (pageInfo.isCollection && pageInfo.collectionName) {
+    console.log(
+      "[Tab Detection] Using collection name:",
+      pageInfo.collectionName
+    );
+    return pageInfo.collectionName;
+  }
+
+  // Try to detect from URL or active tab
+  const path = window.location.pathname;
+
+  // Check for collection in URL
+  const collectionMatch = path.match(/\/@[^/]+\/collection\/([^/]+)/);
+  if (collectionMatch) {
+    try {
+      const raw = decodeURIComponent(collectionMatch[1]);
+      const collectionName = raw.replace(/-\d+$/, "");
+      console.log(
+        "[Tab Detection] Detected collection from URL:",
+        collectionName
+      );
+      return collectionName;
+    } catch (e) {
+      console.warn("Failed to decode collection name:", e);
+    }
+  }
+
+  // Check for liked tab (if user is on their own profile)
+  try {
+    const likedTab = getLikedTab();
+    if (likedTab && likedTab.offsetParent) {
+      console.log("[Tab Detection] Detected liked tab");
+      return "liked";
+    }
+  } catch (e) {
+    // Ignore errors
+  }
+
+  // Default to videos for profile pages
+  if (pageInfo.isProfile) {
+    console.log("[Tab Detection] Defaulting to videos for profile page");
+    return "videos";
+  }
+
+  // Fallback
+  console.log("[Tab Detection] Fallback to videos");
+  return "videos";
 }
 
 // Simple hash by concatenating IDs
@@ -282,6 +379,16 @@ export function getDownloadFilePath(
         .replace(/[^\p{L}\p{N}_\-.]+/gu, "-")
         .slice(0, 100);
 
+    // Special sanitize for descriptions - handles Chinese/non-UTF-8 characters
+    // Respects maxLen from template or uses a reasonable default (100)
+    const sanitizeDesc = (val, maxLen = 100) => {
+      const str = (val ?? "").toString();
+      // Replace invalid characters but preserve Chinese/Unicode characters
+      const sanitized = str.replace(/[^\p{L}\p{N}_\-.]+/gu, "-");
+      // Use maxLen from template or default to 100 characters
+      return sanitized.length > maxLen ? sanitized.slice(0, maxLen) : sanitized;
+    };
+
     const formattedDate = (date) => {
       if (!date || typeof date != "object") return;
       return (
@@ -301,12 +408,14 @@ export function getDownloadFilePath(
     const isMultiImage = media?.imagePostImages?.length > 1;
     const descMaxLen = getFieldMaxLength(template, "desc");
     const isDescMaxLenDefined = descMaxLen !== undefined;
+    const rawVideoId = sanitize(media.videoId || media.id);
     const fieldValues = {
-      videoId: sanitize(media.videoId || media.id),
+      videoId: rawVideoId,
       authorUsername: media.authorId,
       authorNickname: sanitize(media.authorNickname),
-      desc: sanitize(
-        media.desc?.slice(0, isDescMaxLenDefined ? descMaxLen : 40)
+      desc: sanitizeDesc(
+        media.desc,
+        isDescMaxLenDefined ? descMaxLen : 100
       ),
       musicTitle: sanitize(media.musicTitle),
       musicAuthor: sanitize(media.musicAuthor),
@@ -358,9 +467,9 @@ export const applyTemplate = (
   const tplHasTabName = /\{tabName(?:[:|}])/.test(tpl);
 
   return tpl.replace(
-    /\{(\w+)(?::(\d+))?(?:\|([^}]+))?\}/g,
+    /\{(\w+)(?::(-?\d+))?(?:\|([^}]+))?\}/g,
     (_, key, maxLenRaw, fallbackRaw) => {
-      const maxLen = Number(maxLenRaw) || undefined;
+      const maxLen = maxLenRaw ? Number(maxLenRaw) : undefined;
       const isRequiredSequence =
         key === "sequenceNumber" && fallbackRaw === "required";
 
@@ -415,7 +524,14 @@ export const applyTemplate = (
       if (val == null || val === "") {
         val = fallbackRaw ?? `missing-${key}`;
       }
-      if (maxLen) val = val.slice(0, maxLen);
+      // Support negative maxLen to take last N characters (e.g., {videoId:-4} for last 4 chars)
+      if (maxLen !== undefined) {
+        if (maxLen < 0) {
+          val = val.slice(maxLen); // Negative slice takes from end
+        } else {
+          val = val.slice(0, maxLen);
+        }
+      }
       return val;
     }
   );
@@ -1019,10 +1135,14 @@ export async function downloadAllPostImagesHandler(e, media) {
     if (e) e.stopPropagation();
 
     const downloadAllBtn = e?.currentTarget;
-    let originalText;
+    let originalContent;
     if (downloadAllBtn) {
-      originalText = downloadAllBtn.textContent;
-      downloadAllBtn.textContent = "⏳ Downloading...";
+      originalContent = downloadAllBtn.cloneNode(true);
+      downloadAllBtn.textContent = "";
+      const downloadingIcon5 = createIcon("hourglass", 16);
+      downloadingIcon5.style.marginRight = "4px";
+      downloadAllBtn.appendChild(downloadingIcon5);
+      downloadAllBtn.appendChild(document.createTextNode("Downloading..."));
       downloadAllBtn.disabled = true;
 
       AppState.downloading.isActive = true;
@@ -1038,14 +1158,25 @@ export async function downloadAllPostImagesHandler(e, media) {
           media.imagePostImages.length
         );
         try {
-          if (downloadAllBtn)
-            downloadAllBtn.textContent = `⏳ Downloading ${i}/${media.imagePostImages.length}...`;
+          if (downloadAllBtn) {
+            downloadAllBtn.textContent = "";
+            const downloadingIcon6 = createIcon("hourglass", 16);
+            downloadingIcon6.style.marginRight = "4px";
+            downloadAllBtn.appendChild(downloadingIcon6);
+            downloadAllBtn.appendChild(document.createTextNode(`Downloading ${i}/${media.imagePostImages.length}...`));
+          }
+          // downloadSingleMedia will track the download automatically
           await downloadSingleMedia(media, { imageIndex: i });
           successfulDownloads += 1;
         } catch (err) {
           console.error(`Download failed for image ${i}`, err);
-          if (downloadAllBtn)
-            downloadAllBtn.textContent = `⏳ Failed at ${i}/${media.imagePostImages.length}...`;
+          if (downloadAllBtn) {
+            downloadAllBtn.textContent = "";
+            const failedIcon5 = createIcon("error", 16);
+            failedIcon5.style.marginRight = "4px";
+            downloadAllBtn.appendChild(failedIcon5);
+            downloadAllBtn.appendChild(document.createTextNode(`Failed at ${i}/${media.imagePostImages.length}...`));
+          }
           await sleep(2000);
         }
       }
@@ -1062,10 +1193,16 @@ export async function downloadAllPostImagesHandler(e, media) {
       if (downloadAllBtn) {
         AppState.downloading.isActive = false;
         AppState.downloading.isDownloadingAll = false;
-        downloadAllBtn.textContent = "✅ All Done!";
+        downloadAllBtn.textContent = "";
+        const doneIcon5 = createIcon("check", 16);
+        doneIcon5.style.marginRight = "4px";
+        downloadAllBtn.appendChild(doneIcon5);
+        downloadAllBtn.appendChild(document.createTextNode("All Done!"));
         setTimeout(() => {
-          downloadAllBtn.textContent = originalText;
-          downloadAllBtn.disabled = false;
+          if (downloadAllBtn && originalContent) {
+            downloadAllBtn.textContent = originalContent.textContent || originalContent.innerText || "";
+            downloadAllBtn.disabled = false;
+          }
           displayFoundUrls({ forced: true });
           resolve();
         }, 3000);
@@ -1084,12 +1221,135 @@ export async function downloadSingleMedia(
     imageIndex,
   });
 
+  // Check if we should skip this download (if skipDownloaded is enabled)
+  // This ensures we don't download videos that already exist, even when called directly
+  const shouldSkipDownloaded = AppState.scrapperDetails.skipDownloaded;
+  if (shouldSkipDownloaded) {
+    try {
+      const videoId = media.id || media.videoId;
+      if (videoId) {
+        const username = getCurrentPageUsername();
+        // Use the stored selectedTab from scrapperDetails, or fall back to detectCurrentTabName
+        let tabName =
+          AppState.scrapperDetails.selectedTab || detectCurrentTabName();
+
+        // Handle collection tab name
+        if (
+          tabName === "collection" &&
+          AppState.scrapperDetails.selectedCollectionName
+        ) {
+          tabName = AppState.scrapperDetails.selectedCollectionName;
+        }
+
+        if (username && username !== "😃" && tabName) {
+          // For images, check the specific image index
+          if (media.isImage && media.imagePostImages?.length > 0) {
+            const exists = await hasVideoId(
+              username,
+              tabName,
+              videoId,
+              imageIndex
+            );
+            if (exists) {
+              console.log(
+                "[Download] Skipping download - video already exists:",
+                {
+                  videoId,
+                  username,
+                  tabName,
+                  imageIndex,
+                }
+              );
+              return; // Skip download
+            }
+          } else {
+            // For videos, check with null imageIndex
+            const exists = await hasVideoId(username, tabName, videoId, null);
+            if (exists) {
+              console.log(
+                "[Download] Skipping download - video already exists:",
+                {
+                  videoId,
+                  username,
+                  tabName,
+                }
+              );
+              return; // Skip download
+            }
+          }
+        }
+      }
+    } catch (checkErr) {
+      console.warn(
+        "[Download] Failed to check if video should be skipped:",
+        checkErr
+      );
+      // Continue with download if check fails (fail open)
+    }
+  }
+
   const filename = getDownloadFilePath(media, { imageIndex });
   try {
     let url = media.url;
     if (media.isImage && media.imagePostImages)
       url = media.imagePostImages[imageIndex];
     await downloadURLToDisk(url, filename);
+
+    // Track download progress
+    try {
+      const videoId = media.id || media.videoId;
+      console.log(
+        "[Download Tracking] downloadSingleMedia - tracking download:",
+        {
+          videoId,
+          mediaId: media.id,
+          mediaVideoId: media.videoId,
+          isImage: media.isImage,
+          imageIndex,
+          mediaKeys: Object.keys(media),
+        }
+      );
+
+      if (videoId) {
+        const username = getCurrentPageUsername();
+        const tabName = detectCurrentTabName();
+        console.log("[Download Tracking] Extracted context:", {
+          username,
+          tabName,
+          videoId,
+        });
+
+        if (username && username !== "😃" && tabName) {
+          console.log("[Download Tracking] Calling appendVideoId with:", {
+            username,
+            tabName,
+            videoId,
+            imageIndex: media.isImage ? imageIndex : null,
+          });
+          await appendVideoId(
+            username,
+            tabName,
+            videoId,
+            media.isImage ? imageIndex : null
+          );
+        } else {
+          console.warn(
+            "[Download Tracking] Skipping tracking - invalid context:",
+            {
+              username,
+              tabName,
+              usernameValid: username && username !== "😃",
+              tabNameValid: !!tabName,
+            }
+          );
+        }
+      } else {
+        console.warn("[Download Tracking] No videoId found in media object");
+      }
+    } catch (trackErr) {
+      console.warn("[Progress Tracking] Failed to track download:", trackErr);
+    }
+
     if (!AppState.downloading.isDownloadingAll) {
       showCelebration(
         "downloads",
@@ -1127,14 +1387,17 @@ export async function downloadBatch(items, batchNumber) {
 
       const media = items[i];
 
-      // Skip if already downloaded
+      // Skip if saved in this session
       if (AppState.downloadedURLs.includes(media.url)) {
         console.log(
-          `[Batch ${batchNumber}] Item ${i + 1} already downloaded:`,
+          `[Batch ${batchNumber}] Item ${i + 1} saved (session):`,
           media.videoId
         );
         continue;
       }
+
+      // Note: Skip check for already-downloaded items is now handled in downloadSingleMedia
+      // before calling downloadURLToDisk, so we don't need to check here
 
       AppState.downloadedURLs.push(media.url);
 
@@ -1300,14 +1563,40 @@ function uuid() {
 }
 
 function postBlobDownloadRequest({ id, blobUrl, filename, showFolderPicker }) {
-  console.error("File name", filename);
+  // Log filename for debugging (using console.log instead of console.error for non-errors)
+  if (AppState?.debug?.active) {
+    console.log("[Download] Requesting download with filename:", {
+      filename,
+      length: filename?.length,
+      hasUnicode: /[^\x00-\x7F]/.test(filename || ""),
+      sanitized: filename?.replace(/[{}]/g, ""),
+    });
+  }
+
+  // Validate filename before sending
+  if (!filename || typeof filename !== "string" || !filename.trim()) {
+    const err = new Error(
+      `Invalid filename provided to postBlobDownloadRequest: ${typeof filename} - "${filename}"`
+    );
+    err.code = "ERR_INVALID_FILENAME";
+    console.error("[Download] ❌ Invalid filename:", {
+      filename,
+      type: typeof filename,
+      trimmed: filename?.trim(),
+      error: err.message,
+    });
+    throw err;
+  }
+
+  const sanitizedFilename = filename.replace(/[{}]/g, "");
+
   window.postMessage(
     {
       type: "BLOB_DOWNLOAD_REQUEST",
       id,
       payload: {
         blobUrl,
-        filename: filename.replace(/[{}]/g, ""),
+        filename: sanitizedFilename,
         showFolderPicker: !!showFolderPicker,
       },
     },
@@ -1453,7 +1742,8 @@ Tip: You can skip failed downloads automatically for the rest of this session.`,
         "Skip Failed Downloads",
         () => {
           AppState.downloadPreferences.skipFailedDownloads = true;
-          showAlertModal(
+          showToast(
+            "Settings updated",
             "✅ Failed downloads will now be skipped for this session."
           );
         }
@@ -1522,21 +1812,7 @@ export function displayFoundUrls({ forced } = {}) {
       return;
     }
 
-    let items = [];
-    if (AppState.filters.currentProfile && getCurrentPageUsername() != "😃") {
-      items = Object.values(AppState.allItemsEverSeen)
-        .flat()
-        .filter(
-          (it) =>
-            it.author === getCurrentPageUsername() ||
-            it.author?.uniqueId === getCurrentPageUsername()
-        );
-    } else {
-      items = Object.values(AppState.allItemsEverSeen).flat();
-    }
-    if (getCurrentPageUsername() === "😃") {
-      AppState.filters.currentProfile = false;
-    }
+    const items = Object.values(AppState.allItemsEverSeen).flat();
     const hashToDisplay = getDisplayedItemsHash(items);
     const path = window.location.pathname;
     if (
@@ -1652,28 +1928,40 @@ export async function downloadAllLinks(mainBtn) {
 
   AppState.downloading.isActive = true;
   AppState.downloading.isDownloadingAll = true;
+   AppState.downloading.pausedAll = false;
   AppState.downloadPreferences.autoScrollMode = "off"; // Turn off scroll for now.
 
   const links = AppState.allDirectLinks || [];
   let newVideoDownloadedCount = 0;
   let hasImage = false;
+
   try {
     console.log("DEBUG_DL_ALLA before loop ", links.length);
     for (let i = 0; i < links.length; i++) {
-      // Only respect pause state for automatic scrapper downloads, not user-triggered ones
+      // Respect pause state:
       if (!isUserTriggered) {
+        // Scrapper auto-batch pause
         while (AppState.scrapperDetails.paused) await sleep(800);
+      } else {
+        // Manual "Download All" pause
+        while (AppState.downloading.pausedAll) await sleep(800);
       }
 
       const media = links[i];
+
+      // Skip if saved in this session
       if (AppState.downloadedURLs.includes(media.url)) {
         console.log(
-          "DEBUG_DL_ALLA inside loop url already downloaded for",
+          "DEBUG_DL_ALLA inside loop url saved for",
           media.videoId,
           media.isImage
         );
         continue;
       }
+
+      // Note: Skip check for already-downloaded items is now handled in downloadSingleMedia
+      // before calling downloadURLToDisk, so we don't need to check here
+
       AppState.downloadedURLs.push(media.url);
 
       try {
@@ -1701,6 +1989,7 @@ export async function downloadAllLinks(mainBtn) {
 
     AppState.downloading.isActive = false;
     AppState.downloading.isDownloadingAll = false;
+    AppState.downloading.pausedAll = false;
   } catch (error) {
     if (newVideoDownloadedCount) {
       updateAllTimeDownloadsAndLeaderBoard(AppState.displayedState.itemsHash);
@@ -1710,6 +1999,7 @@ export async function downloadAllLinks(mainBtn) {
 
     AppState.downloading.isActive = false;
     AppState.downloading.isDownloadingAll = false;
+    AppState.downloading.pausedAll = false;
     if (AppState.debug.active) console.warn(error);
   }
 
@@ -1748,6 +2038,7 @@ export async function downloadAllLinks(mainBtn) {
   }
   AppState.downloading.isDownloadingAll = false;
   AppState.downloading.isActive = false;
+  AppState.downloading.pausedAll = false;
   const showRateDonateOn = shouldShowRateDonatePopup();
   if (showRateDonateOn) {
     setTimeout(() => {
@@ -1800,6 +2091,62 @@ export function saveSelectedTemplate() {
     STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE,
     JSON.stringify(AppState.downloadPreferences.fullPathTemplate)
   );
+}
+
+/**
+ * Check if the active template is the recommended one and upgrade it if needed
+ * This ensures users get the latest recommended template features automatically
+ */
+export function checkAndUpgradeRecommendedTemplate() {
+  try {
+    const activeTemplate = AppState.downloadPreferences.fullPathTemplate;
+    const recommendedTemplate = getRecommendedPresetTemplate();
+
+    // Only proceed if the active template is the recommended one (by label)
+    if (!activeTemplate || !recommendedTemplate) return false;
+    if (activeTemplate.label !== recommendedTemplate.label) return false;
+
+    // Check if the template string matches (if it does, no upgrade needed)
+    if (activeTemplate.template === recommendedTemplate.template) return false;
+
+    // Template needs upgrade - update it
+    const updatedTemplate = {
+      ...recommendedTemplate,
+      // Preserve any custom properties the user might have added
+      ...activeTemplate,
+      // But override with the latest template and example
+      template: recommendedTemplate.template,
+      example: recommendedTemplate.example,
+    };
+
+    // Update AppState
+    AppState.downloadPreferences.fullPathTemplate = updatedTemplate;
+
+    // Update in saved templates if it exists there
+    const savedTemplates = getSavedTemplates();
+    const templateIndex = savedTemplates.findIndex(
+      (t) => t.label === recommendedTemplate.label
+    );
+    if (templateIndex !== -1) {
+      savedTemplates[templateIndex] = updatedTemplate;
+      saveTemplates(savedTemplates);
+    }
+
+    // Save the selected template
+    saveSelectedTemplate();
+
+    // Show toast notification
+    showToast(
+      "Template Upgraded",
+      `Your active template "${recommendedTemplate.label}" has been updated to the latest version.`,
+      6000
+    );
+
+    return true;
+  } catch (error) {
+    console.error("Error upgrading recommended template:", error);
+    return false;
+  }
 }
 
 export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
@@ -2825,24 +3172,27 @@ export function showAlertModal(message, actionText = "OK", onAction = null) {
       textContent: actionText,
     });
 
-    actionBtn.addEventListener("click", () => {
-      if (typeof onAction === "function") {
-        try {
-          onAction();
-          return resolve(false);
-        } catch (e) {
-          console.warn("Action callback failed:", e);
-        }
-      }
-      resolve(true);
-    });
-
-    createModal({
+    const modal = createModal({
       children: [
         alertDiv,
         onAction ? actionBtn : document.createElement("span"),
       ],
       onClose: () => resolve(false), // resolve false if closed without clicking button
+    });
+
+    actionBtn.addEventListener("click", () => {
+      if (typeof onAction === "function") {
+        try {
+          onAction();
+        } catch (e) {
+          console.warn("Action callback failed:", e);
+        }
+      }
+      // Close the modal when action button is clicked
+      if (modal && modal.parentNode) {
+        modal.remove();
+      }
+      resolve(true);
     });
   });
 }

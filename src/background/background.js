@@ -2,7 +2,23 @@
 const AppStateETTVD = globalThis?.AppStateETTVD || { debug: { active: false } };
 if (globalThis) globalThis.AppStateETTVD = AppStateETTVD;
 
-const DEBUG = () => !!(AppStateETTVD?.debug?.active);
+const DEBUG = () => !!AppStateETTVD?.debug?.active;
+const EXTENSION_ENABLED_KEY = "tik.tok::extensionEnabled";
+const PROGRESS_KEY = "tik.tok::downloadProgress";
+
+// Seed enabled flag on install if missing
+chrome.runtime.onInstalled.addListener(async () => {
+  try {
+    const existing = await idbDataGet(EXTENSION_ENABLED_KEY);
+    if (existing === undefined || existing === null) {
+      await idbDataSet(EXTENSION_ENABLED_KEY, "true");
+      if (DEBUG())
+        console.log("[COM_EXT] seeded enabled=true on install (IDB)");
+    }
+  } catch (err) {
+    console.warn("[COM_EXT] seed failed", err);
+  }
+});
 
 function sendOnceFactory(sendResponse) {
   let sent = false;
@@ -24,8 +40,10 @@ function makeError(code, message, extra = {}) {
 
 // Optional: simple browser detector (useful for debug logs)
 function detectBrowser() {
-  if (typeof browser !== "undefined" && typeof browser.runtime !== "undefined") return "firefox";
-  if (typeof chrome !== "undefined" && typeof chrome.runtime !== "undefined") return "chrome";
+  if (typeof browser !== "undefined" && typeof browser.runtime !== "undefined")
+    return "firefox";
+  if (typeof chrome !== "undefined" && typeof chrome.runtime !== "undefined")
+    return "chrome";
   return "unknown";
 }
 
@@ -34,7 +52,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const respond = sendOnceFactory(sendResponse);
   let watchdogId = null;
 
-  if (DEBUG()) console.info("BACKGROUND onMessage:", action, "from", detectBrowser());
+  if (DEBUG())
+    console.info("BACKGROUND onMessage:", action, "from", detectBrowser());
 
   function finish(result) {
     if (watchdogId) clearTimeout(watchdogId);
@@ -44,29 +63,213 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Keep channel open for async branches
   const KEEP_ALIVE = true;
 
+  if (action === "getState") {
+    (async () => {
+      try {
+        const val = await idbDataGet(EXTENSION_ENABLED_KEY);
+        const enabled = !(val === "false" || val === false);
+        if (DEBUG())
+          console.log("[COM_EXT] background getState ->", enabled, "raw:", val);
+        finish({ enabled });
+      } catch (err) {
+        console.warn("[COM_EXT] getState failed", err);
+        finish({ enabled: true });
+      }
+    })();
+    return KEEP_ALIVE;
+  }
+
+  if (action === "toggleState") {
+    const enabled = !!message?.enabled;
+    (async () => {
+      try {
+        await idbDataSet(EXTENSION_ENABLED_KEY, enabled ? "true" : "false");
+
+        // Also mirror state into chrome.storage for cross-context updates
+        try {
+          if (chrome.storage && chrome.storage.local) {
+            chrome.storage.local.set(
+              { [EXTENSION_ENABLED_KEY]: enabled ? "true" : "false" },
+              () => {
+                if (chrome.runtime?.lastError && DEBUG()) {
+                  console.warn(
+                    "[COM_EXT] storage.set error (non-fatal):",
+                    chrome.runtime.lastError
+                  );
+                }
+              }
+            );
+          }
+        } catch (err) {
+          if (DEBUG())
+            console.warn("[COM_EXT] storage.set failed (non-fatal):", err);
+        }
+
+        if (DEBUG())
+          console.log("[COM_EXT] background toggleState ->", enabled);
+
+        const broadcastMsg = { action: "stateBroadcast", enabled };
+
+        // Broadcast via runtime.sendMessage for popup and all listeners
+        try {
+          chrome.runtime.sendMessage(broadcastMsg, () => {
+            // Ignore errors - some listeners might not be ready
+            if (chrome.runtime.lastError && DEBUG()) {
+              console.log(
+                "[COM_EXT] runtime.sendMessage error (expected):",
+                chrome.runtime.lastError.message
+              );
+            }
+          });
+        } catch (err) {
+          if (DEBUG())
+            console.warn("[COM_EXT] runtime.sendMessage failed", err);
+        }
+
+        finish({ success: true, enabled });
+      } catch (err) {
+        console.warn("[COM_EXT] toggleState failed", err);
+        finish({ success: false, error: String(err) });
+      }
+    })();
+    return KEEP_ALIVE;
+  }
+
+  if (action === "getProgress") {
+    (async () => {
+      try {
+        const data = (await idbDataGet(PROGRESS_KEY)) || {};
+        if (DEBUG()) console.log("[COM_EXT] background getProgress", data);
+        finish({ success: true, progress: data });
+      } catch (err) {
+        console.warn("[COM_EXT] getProgress failed", err);
+        finish({ success: false, error: String(err) });
+      }
+    })();
+    return KEEP_ALIVE;
+  }
+
+  if (action === "setProgress") {
+    (async () => {
+      try {
+        const progress = message?.progress || {};
+        await idbDataSet(PROGRESS_KEY, progress);
+        if (DEBUG())
+          console.log("[COM_EXT] background setProgress saved", progress);
+        finish({ success: true });
+      } catch (err) {
+        console.warn("[COM_EXT] setProgress failed", err);
+        finish({ success: false, error: String(err) });
+      }
+    })();
+    return KEEP_ALIVE;
+  }
+
+  if (action === "clearProgress") {
+    (async () => {
+      try {
+        await idbDataSet(PROGRESS_KEY, {});
+        if (DEBUG()) console.log("[COM_EXT] background clearProgress");
+        finish({ success: true });
+      } catch (err) {
+        console.warn("[COM_EXT] clearProgress failed", err);
+        finish({ success: false, error: String(err) });
+      }
+    })();
+    return KEEP_ALIVE;
+  }
+
+  if (action === "getCollectionUrl") {
+    (async () => {
+      try {
+        const { username, tabName } = message || {};
+        if (!username || !tabName) {
+          finish({ success: false, error: "Missing username or tabName" });
+          return;
+        }
+
+        const progress = (await idbDataGet(PROGRESS_KEY)) || {};
+        const normalizedUsername = username.toLowerCase().trim();
+        const metadataKey = `_${tabName}_url`;
+        const collectionUrl =
+          progress[normalizedUsername]?._metadata?.[metadataKey] || null;
+
+        if (DEBUG())
+          console.log("[COM_EXT] background getCollectionUrl", {
+            username: normalizedUsername,
+            tabName,
+            collectionUrl,
+          });
+        finish({ success: true, collectionUrl });
+      } catch (err) {
+        console.warn("[COM_EXT] getCollectionUrl failed", err);
+        finish({ success: false, error: String(err) });
+      }
+    })();
+    return KEEP_ALIVE;
+  }
+
   // ---- download via ArrayBuffer (works in both Chrome and Firefox) ----
   if (action === "downloadArrayBuffer") {
     try {
       const payload = message?.payload ?? {};
       const { buffer, filename, showFolderPicker } = payload;
 
-      if (!(buffer instanceof ArrayBuffer) && !(buffer?.buffer instanceof ArrayBuffer)) {
-        return finish(makeError("ERR_INVALID_BUFFER", "payload.buffer must be an ArrayBuffer"));
+      if (
+        !(buffer instanceof ArrayBuffer) &&
+        !(buffer?.buffer instanceof ArrayBuffer)
+      ) {
+        return finish(
+          makeError(
+            "ERR_INVALID_BUFFER",
+            "payload.buffer must be an ArrayBuffer"
+          )
+        );
       }
       if (typeof filename !== "string" || !filename.trim()) {
-        return finish(makeError("ERR_INVALID_FILENAME", "A non-empty filename string is required."));
+        const errorMsg = `Invalid filename in downloadArrayBuffer: expected non-empty string, got ${typeof filename}${
+          filename
+            ? ` (length: ${filename.length}, contains: "${String(
+                filename
+              ).slice(0, 50)}")`
+            : ""
+        }`;
+        console.error(
+          "[Background] ❌ Filename validation failed (ArrayBuffer):",
+          {
+            filename,
+            type: typeof filename,
+            trimmed: filename?.trim(),
+            error: errorMsg,
+          }
+        );
+        return finish(makeError("ERR_INVALID_FILENAME", errorMsg));
       }
       if (showFolderPicker != null && typeof showFolderPicker !== "boolean") {
-        return finish(makeError("ERR_INVALID_SAVEAS_FLAG", "showFolderPicker must be a boolean when provided."));
+        return finish(
+          makeError(
+            "ERR_INVALID_SAVEAS_FLAG",
+            "showFolderPicker must be a boolean when provided."
+          )
+        );
       }
 
-      const blob = new Blob([buffer instanceof ArrayBuffer ? buffer : buffer.buffer]);
+      const blob = new Blob([
+        buffer instanceof ArrayBuffer ? buffer : buffer.buffer,
+      ]);
       const objUrl = URL.createObjectURL(blob);
 
       // Watchdog in case the downloads callback never fires
       watchdogId = setTimeout(() => {
-        try { URL.revokeObjectURL(objUrl); } catch {}
-        finish(makeError("ERR_DOWNLOAD_TIMEOUT", "Timed out waiting for chrome.downloads.download callback (20s)."));
+        try {
+          URL.revokeObjectURL(objUrl);
+        } catch {}
+        finish(
+          makeError(
+            "ERR_DOWNLOAD_TIMEOUT",
+            "Timed out waiting for chrome.downloads.download callback (20s)."
+          )
+        );
       }, 20000);
 
       if (DEBUG()) console.info("DOWNLOAD (ArrayBuffer) →", filename);
@@ -82,19 +285,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const lastErr = chrome.runtime.lastError;
 
           if (lastErr) {
-            try { URL.revokeObjectURL(objUrl); } catch {}
-            return finish(makeError("ERR_CHROME_DOWNLOADS", lastErr.message || "Download failed"));
+            try {
+              URL.revokeObjectURL(objUrl);
+            } catch {}
+            const errorMsg = `Chrome downloads API error: ${
+              lastErr.message || "Download failed"
+            }${filename ? ` (filename: "${filename.slice(0, 100)}")` : ""}`;
+            console.error(
+              "[Background] ❌ Chrome downloads.download failed (ArrayBuffer):",
+              {
+                error: lastErr.message,
+                filename,
+                filenameLength: filename?.length,
+                hasUnicode: filename ? /[^\x00-\x7F]/.test(filename) : false,
+              }
+            );
+            return finish(makeError("ERR_CHROME_DOWNLOADS", errorMsg));
           }
 
           if (typeof downloadId !== "number") {
-            try { URL.revokeObjectURL(objUrl); } catch {}
-            return finish(makeError("ERR_NO_DOWNLOAD_ID", "chrome.downloads.download did not return a downloadId."));
+            try {
+              URL.revokeObjectURL(objUrl);
+            } catch {}
+            return finish(
+              makeError(
+                "ERR_NO_DOWNLOAD_ID",
+                "chrome.downloads.download did not return a downloadId."
+              )
+            );
           }
 
           // Revoke our background-owned blob URL shortly after success
           setTimeout(() => {
-            try { URL.revokeObjectURL(objUrl); } catch (e) {
-              if (DEBUG()) console.warn("revokeObjectURL (ArrayBuffer) failed:", e);
+            try {
+              URL.revokeObjectURL(objUrl);
+            } catch (e) {
+              if (DEBUG())
+                console.warn("revokeObjectURL (ArrayBuffer) failed:", e);
             }
           }, 5000);
 
@@ -116,23 +343,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       if (typeof blobUrl !== "string" || !blobUrl.startsWith("blob:")) {
         return finish(
-          makeError("ERR_INVALID_BLOB_URL", "Invalid blob URL. Expected a 'blob:' URL string.", {
-            received: typeof blobUrl === "string" ? blobUrl.slice(0, 64) : typeof blobUrl,
-          })
+          makeError(
+            "ERR_INVALID_BLOB_URL",
+            "Invalid blob URL. Expected a 'blob:' URL string.",
+            {
+              received:
+                typeof blobUrl === "string"
+                  ? blobUrl.slice(0, 64)
+                  : typeof blobUrl,
+            }
+          )
         );
       }
       if (typeof filename !== "string" || !filename.trim()) {
-        return finish(makeError("ERR_INVALID_FILENAME", "A non-empty filename string is required."));
+        const errorMsg = `Invalid filename in downloadBlobUrl: expected non-empty string, got ${typeof filename}${
+          filename
+            ? ` (length: ${filename.length}, contains: "${String(
+                filename
+              ).slice(0, 50)}")`
+            : ""
+        }`;
+        console.error("[Background] ❌ Filename validation failed (BlobUrl):", {
+          filename,
+          type: typeof filename,
+          trimmed: filename?.trim(),
+          error: errorMsg,
+        });
+        return finish(makeError("ERR_INVALID_FILENAME", errorMsg));
       }
       if (showFolderPicker != null && typeof showFolderPicker !== "boolean") {
-        return finish(makeError("ERR_INVALID_SAVEAS_FLAG", "showFolderPicker must be a boolean when provided."));
+        return finish(
+          makeError(
+            "ERR_INVALID_SAVEAS_FLAG",
+            "showFolderPicker must be a boolean when provided."
+          )
+        );
       }
 
       // Note: This blob URL belongs to the page context; background CAN’T revoke it.
       // We simply attempt the download; if Firefox or Chrome rejects, the caller can fallback.
 
       watchdogId = setTimeout(() => {
-        finish(makeError("ERR_DOWNLOAD_TIMEOUT", "Timed out waiting for chrome.downloads.download callback (20s)."));
+        finish(
+          makeError(
+            "ERR_DOWNLOAD_TIMEOUT",
+            "Timed out waiting for chrome.downloads.download callback (20s)."
+          )
+        );
       }, 20000);
 
       if (DEBUG()) console.info("DOWNLOAD (blob URL) →", filename);
@@ -153,18 +410,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
           if (lastErr) {
             // Surface precise error so the content script can decide to fallback
-            return finish(makeError("ERR_CHROME_DOWNLOADS", lastErr.message || "Download failed"));
+            const errorMsg = `Chrome downloads API error: ${
+              lastErr.message || "Download failed"
+            }${filename ? ` (filename: "${filename.slice(0, 100)}")` : ""}`;
+            console.error(
+              "[Background] ❌ Chrome downloads.download failed (BlobUrl):",
+              {
+                error: lastErr.message,
+                filename,
+                filenameLength: filename?.length,
+                hasUnicode: filename ? /[^\x00-\x7F]/.test(filename) : false,
+              }
+            );
+            return finish(makeError("ERR_CHROME_DOWNLOADS", errorMsg));
           }
 
           if (typeof downloadId !== "number") {
-            return finish(makeError("ERR_NO_DOWNLOAD_ID", "chrome.downloads.download did not return a downloadId."));
+            return finish(
+              makeError(
+                "ERR_NO_DOWNLOAD_ID",
+                "chrome.downloads.download did not return a downloadId."
+              )
+            );
           }
 
           finish({ success: true, downloadId });
         }
       );
     } catch (e) {
-      finish(makeError("ERR_HANDLER_THROW", e?.message || String(e), { stack: e?.stack }));
+      finish(
+        makeError("ERR_HANDLER_THROW", e?.message || String(e), {
+          stack: e?.stack,
+        })
+      );
     }
 
     return KEEP_ALIVE;
@@ -174,7 +452,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-if (DEBUG()) console.log("✅ Background loaded (cross-browser downloads enabled)");
+if (DEBUG())
+  console.log("✅ Background loaded (cross-browser downloads enabled)");
 
 // background.js (MV3) — no chrome.storage, uses IndexedDB
 
@@ -200,9 +479,9 @@ const STORAGE_KEYS = {
 };
 
 /* -------------------- tiny IndexedDB KV -------------------- */
-function openDB() {
+function openDB(name = "uninstall-meta") {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open("uninstall-meta", 1);
+    const req = indexedDB.open(name, 1);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv");
@@ -213,7 +492,7 @@ function openDB() {
 }
 
 async function idbGet(key) {
-  const db = await openDB();
+  const db = await openDB("uninstall-meta");
   return new Promise((resolve, reject) => {
     const tx = db.transaction("kv", "readonly");
     const store = tx.objectStore("kv");
@@ -224,7 +503,29 @@ async function idbGet(key) {
 }
 
 async function idbSet(key, value) {
-  const db = await openDB();
+  const db = await openDB("uninstall-meta");
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("kv", "readwrite");
+    const store = tx.objectStore("kv");
+    const r = store.put(value, key);
+    r.onsuccess = () => resolve();
+    r.onerror = () => reject(r.error);
+  });
+}
+
+async function idbDataGet(key) {
+  const db = await openDB("ettvd-data");
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("kv", "readonly");
+    const store = tx.objectStore("kv");
+    const r = store.get(key);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+
+async function idbDataSet(key, value) {
+  const db = await openDB("ettvd-data");
   return new Promise((resolve, reject) => {
     const tx = db.transaction("kv", "readwrite");
     const store = tx.objectStore("kv");

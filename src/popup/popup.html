@@ -32,7 +32,9 @@
         </div>
         <div class="state-actions">
           <button id="turnOnBtn" class="btn primary">⚡ Turn On</button>
-          <button id="turnOffInfo" class="btn secondary" disabled>Disabled</button>
+          <button id="turnOffInfo" class="btn secondary" disabled>
+            Disabled
+          </button>
         </div>
         <p class="footnote">
           After turning on, refresh any open TikTok tabs for changes to take
@@ -52,6 +54,13 @@
             <button type="submit" id="startBtn" class="btn primary">Go</button>
           </form>
           <div class="pill">Pro tip: open a profile first</div>
+          <button
+            id="pastDownloadsBtn"
+            class="btn secondary"
+            style="width: 100%"
+          >
+            📥 Past Downloads
+          </button>
         </div>
 
         <div class="grid two-col">
@@ -107,14 +116,24 @@
       </section>
     </div>
 
-    <!-- Force Reset Button -->
-    <button
-      id="forceResetBtn"
-      class="force-reset-btn"
-      title="Force reset: Enable extension and open downloader"
+    <!-- Past Downloads Modal -->
+    <div
+      id="pastDownloadsModal"
+      class="past-downloads-modal"
+      style="display: none"
     >
-      🔄
-    </button>
+      <div class="past-downloads-content">
+        <div class="past-downloads-header">
+          <h2>📥 Past Downloads</h2>
+          <button id="closePastDownloadsBtn" class="close-btn">×</button>
+        </div>
+        <div id="pastDownloadsContent" class="past-downloads-body">
+          <p style="text-align: center; color: #666; padding: 20px">
+            Loading downloads history...
+          </p>
+        </div>
+      </div>
+    </div>
 
     <script src="./popup.bundle.js"></script>
   </body>

@@ -11,6 +11,8 @@ import {
   updateDownloadButtonLabelSimple,
   showScrapperControls,
   getResolvedThemeMode,
+  showToast,
+  setButtonWithIcon,
 } from "../downloader/ui.js";
 import {
   getCurrentPageUsername,
@@ -28,7 +30,6 @@ import {
   // buildMediaObjectFromRaw,
   showCelebration,
   toTitleCase,
-  showAlertModal,
   findFiberItemById,
   getClosestPlayingVideoId,
   makeOverlay,
@@ -132,8 +133,8 @@ function checkScrapperPathChange() {
     );
 
     // Show notification to user
-    showAlertModal(
-      "⚠️ Scrapping Abandoned",
+    showToast(
+      "Scrapping Abandoned",
       `You navigated away from the original target (${
         details.originalUsername || details.originalPath
       }). Auto-scrolling and automatic downloads have been stopped. You can manually download items if needed.`
@@ -432,7 +433,9 @@ async function performScrollBackAndRetry() {
 export function startAutoBatchDownloads() {
   // Check if extension is disabled before starting batch downloads
   if (!isExtensionEnabled()) {
-    console.log("[Extension] Extension is disabled. Auto-batch downloads not started.");
+    console.log(
+      "[Extension] Extension is disabled. Auto-batch downloads not started."
+    );
     return;
   }
 
@@ -516,7 +519,7 @@ export function startAutoBatchDownloads() {
         `[AutoBatch] Checking for items. Total: ${allItems.length}, Downloaded: ${AppState.downloadedURLs.length}`
       );
 
-      // Filter out already downloaded items
+      // Filter out saved items
       const undownloadedItems = allItems.filter(
         (item) => !AppState.downloadedURLs.includes(item.url)
       );
@@ -732,7 +735,7 @@ function showScrapperCompletionModal() {
 
   // Add CSV download button
   const csvBtn = document.createElement("button");
-  csvBtn.textContent = "📥 Download CSV";
+  setButtonWithIcon(csvBtn, "Download CSV", "download");
   csvBtn.className = "ettpd-modal-button secondary";
 
   csvBtn.onclick = () => {
@@ -743,7 +746,7 @@ function showScrapperCompletionModal() {
     );
 
     if (downloadedItems.length === 0) {
-      showAlertModal(
+      showToast(
         "No items to export",
         "No downloaded items found to export to CSV."
       );
@@ -754,7 +757,7 @@ function showScrapperCompletionModal() {
     saveCSVFile(downloadedItems);
 
     // Show success message
-    showAlertModal(
+    showToast(
       "CSV Export Started",
       `Exporting ${downloadedItems.length} downloaded items to CSV file.`
     );
@@ -871,11 +874,49 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
         STORAGE_KEYS.SCRAPPER_DETAILS,
         JSON.stringify(AppState.scrapperDetails)
       );
+
       let listToScrape;
       if (AppState.scrapperDetails.selectedTab != "collection") {
-        listToScrape = (await getTabSpans(30 * 1000))[
-          AppState.scrapperDetails.selectedTab
-        ];
+        // Try to find the tab with a longer timeout for better reliability
+        const tabSpans = await getTabSpans(30 * 1000);
+        const selectedTabKey = AppState.scrapperDetails.selectedTab;
+        listToScrape = tabSpans[selectedTabKey];
+
+        // If tab not found, log detailed info and prevent downloads
+        if (!listToScrape) {
+          console.error(
+            "[Tab Error] Tab not found:",
+            selectedTabKey,
+            "Available tabs:",
+            Object.keys(tabSpans).filter((k) => tabSpans[k] !== null)
+          );
+
+          // Store the tab name for error message before clearing
+          const missingTabName = toTitleCase(selectedTabKey || "unknown");
+
+          // Reset scrapping stage to prevent downloads
+          AppState.scrapperDetails.scrappingStage = null;
+          AppState.scrapperDetails.selectedTab = null;
+          AppState.scrapperDetails.selectedCollectionName = null;
+          localStorage.setItem(
+            STORAGE_KEYS.SCRAPPER_DETAILS,
+            JSON.stringify(AppState.scrapperDetails)
+          );
+
+          showToast(
+            "Tab not found",
+            missingTabName +
+              ". Please ensure the tab is visible on the page and try again."
+          );
+
+          // Refresh controls to show stepper view
+          if (AppState.ui.isScrapperBoxOpen) {
+            showScrapperControls();
+          }
+
+          // Don't proceed with downloads
+          return;
+        }
       }
 
       // Reset posts and links
@@ -883,16 +924,10 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
       AppState.allItemsEverSeen = {};
       AppState.displayedState.itemsHash = "";
       AppState.displayedState.path = "";
+
+      // Click the tab to navigate to it
       listToScrape?.click();
-      if (
-        !listToScrape &&
-        AppState.scrapperDetails.selectedTab != "collection"
-      ) {
-        showAlertModal(
-          "Something unexpected happened tab not found: " +
-            toTitleCase(AppState.scrapperDetails.selectedTab || "ew")
-        );
-      }
+
       AppState.downloadPreferences.autoScrollMode = "always";
 
       // Start automatic batch downloading after a short delay to ensure state is set

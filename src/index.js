@@ -4,7 +4,7 @@ import {
   startPolling,
 } from "./modules/polling/polling.js";
 import AppState from "./modules/state/state.js";
-import { displayFoundUrls } from "./modules/utils/utils.js";
+import { displayFoundUrls, checkAndUpgradeRecommendedTemplate } from "./modules/utils/utils.js";
 import { isExtensionEnabledSync } from "./modules/utils/extensionState.js";
 import { hideDownloader } from "./modules/downloader/ui.js";
 import { DOM_IDS } from "./modules/state/constants.js";
@@ -24,6 +24,10 @@ setTimeout(async () => {
     hideDownloader();
     return;
   }
+
+  // Check and upgrade recommended template if needed
+  // This runs on every initialization to ensure users get the latest template
+  checkAndUpgradeRecommendedTemplate();
 
   // Awful initial poll mechanism. Injecting on time seems to not be efficient.
   [1, 3, 5, 10, 15, 20, 30, 60, 180].forEach((sec) =>

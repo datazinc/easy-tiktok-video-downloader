@@ -1,6 +1,11 @@
 /* popup.css */
 :root {
-  --popup-bg-primary: radial-gradient(circle at 20% 20%, #ffe1e8, #e4f1ff 40%, #eef2ff);
+  --popup-bg-primary: radial-gradient(
+    circle at 20% 20%,
+    #ffe1e8,
+    #e4f1ff 40%,
+    #eef2ff
+  );
   --popup-bg-secondary: #ffffff;
   --popup-bg-tertiary: #f5f7fb;
   --popup-text-primary: #0f172a;
@@ -13,7 +18,12 @@
 }
 
 .theme-dark {
-  --popup-bg-primary: radial-gradient(circle at 25% 20%, #1f2937, #0f172a 55%, #0b1220);
+  --popup-bg-primary: radial-gradient(
+    circle at 25% 20%,
+    #1f2937,
+    #0f172a 55%,
+    #0b1220
+  );
   --popup-bg-secondary: #0f172a;
   --popup-bg-tertiary: #111827;
   --popup-text-primary: #e2e8f0;
@@ -81,15 +91,20 @@ h2 {
 
 .subtitle {
   font-size: 14px;
-  margin: 0;
+  margin: 4px 0 0;
   color: var(--popup-text-secondary);
 }
 
 .state-card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 18px;
+  gap: 16px;
+  padding: 22px 20px;
+  align-items: flex-start;
+}
+
+#disabled-state {
+  gap: 18px;
 }
 
 .state-icon {
@@ -115,7 +130,11 @@ h2 {
 }
 
 .btn.primary {
-  background: linear-gradient(135deg, var(--popup-accent), var(--popup-accent-strong));
+  background: linear-gradient(
+    135deg,
+    var(--popup-accent),
+    var(--popup-accent-strong)
+  );
   color: #fff;
   box-shadow: 0 14px 32px var(--popup-shadow);
 }
@@ -136,9 +155,16 @@ h2 {
   box-shadow: none;
 }
 
+.btn.ghost {
+  background: transparent;
+  color: var(--popup-text-primary);
+  border: 1px solid var(--popup-border);
+  box-shadow: none;
+}
+
 .state-actions {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
   align-items: center;
 }
@@ -250,7 +276,7 @@ input:focus {
 }
 
 .footnote {
-  margin: 0;
+  margin: 4px 0 0;
   font-size: 12px;
   color: var(--popup-text-secondary);
 }
@@ -297,4 +323,217 @@ footer a {
 
 .force-reset-btn:active {
   transform: scale(0.95);
+}
+
+/* Past Downloads Modal */
+.past-downloads-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 20px;
+}
+
+.past-downloads-content {
+  background: var(--popup-bg-secondary);
+  border: 1px solid var(--popup-border);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 600px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 48px var(--popup-shadow);
+}
+
+.past-downloads-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--popup-border);
+}
+
+.past-downloads-header h2 {
+  margin: 0;
+  font-size: 20px;
+  color: var(--popup-text-primary);
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: var(--popup-text-secondary);
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.2s ease;
+}
+
+.close-btn:hover {
+  background: var(--popup-bg-tertiary);
+}
+
+.past-downloads-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.past-downloads-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.past-downloads-user {
+  margin-bottom: 0;
+  padding: 14px;
+  background: var(--popup-bg-tertiary);
+  border: 1px solid var(--popup-border);
+  border-radius: 12px;
+  box-shadow: 0 10px 26px var(--popup-shadow);
+}
+
+.past-downloads-user-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.past-downloads-username {
+  font-weight: 700;
+  color: var(--popup-text-primary);
+}
+
+.past-downloads-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.past-downloads-tab {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--popup-bg-secondary);
+  border: 1px solid var(--popup-border);
+  border-radius: 10px;
+  transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+  box-shadow: 0 8px 18px var(--popup-shadow);
+}
+
+.past-downloads-tab:hover {
+  background: var(--popup-bg-tertiary) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px var(--popup-shadow);
+}
+
+.theme-dark .past-downloads-tab:hover {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+.past-downloads-tab-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.past-downloads-tab-label {
+  font-weight: 700;
+  color: var(--popup-text-primary);
+}
+
+.past-downloads-tab-count {
+  font-size: 12px;
+  color: var(--popup-text-secondary);
+}
+
+.past-downloads-tab-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.clear-user-btn,
+.clear-tab-btn,
+.download-csv-btn,
+.resume-download-btn {
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--popup-border);
+  background: var(--popup-bg-secondary);
+  color: var(--popup-text-primary);
+  font-weight: 600;
+  font-size: 12px;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease,
+    color 0.2s ease;
+  white-space: nowrap;
+}
+
+.download-csv-btn {
+  background: linear-gradient(135deg, #007AFF, #0056CC);
+  color: #fff;
+  border-color: transparent;
+}
+
+.resume-download-btn {
+  background: linear-gradient(135deg, #34C759, #28A745);
+  color: #fff;
+  border-color: transparent;
+}
+
+.clear-user-btn:hover,
+.clear-tab-btn:hover,
+.download-csv-btn:hover,
+.resume-download-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px var(--popup-shadow);
+  background: var(--popup-bg-tertiary);
+}
+
+.download-csv-btn:hover {
+  background: linear-gradient(135deg, #0056CC, #0040A0);
+}
+
+.resume-download-btn:hover {
+  background: linear-gradient(135deg, #28A745, #1E7E34);
+}
+
+.clear-user-btn:active,
+.clear-tab-btn:active,
+.download-csv-btn:active,
+.resume-download-btn:active {
+  transform: scale(0.98);
+}
+
+.past-downloads-footer {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--popup-border);
+  text-align: center;
+}
+
+.btn.danger {
+  background: linear-gradient(135deg, #f04438, #ff5c8a);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 14px 32px var(--popup-shadow);
 }

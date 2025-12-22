@@ -49,6 +49,10 @@ function safeParseScrapperDetails(jsonValue, fallback = {}) {
         : parsed.scrappingStage,
 
     paused: typeof parsed.paused === "boolean" ? parsed.paused : false,
+    skipDownloaded:
+      typeof parsed.skipDownloaded === "boolean"
+        ? parsed.skipDownloaded
+        : false,
     startedAt: fixDate(parsed.startedAt),
     lastSuccessfullScrollAt: fixDate(parsed.lastSuccessfullScrollAt),
     selectedTab:
@@ -113,7 +117,6 @@ const AppState = {
     path: "",
   },
   filters: {
-    currentProfile: false,
     likedVideos: false,
     favoriteVideos: false,
     state: "INIT",
@@ -155,6 +158,7 @@ const AppState = {
   downloading: {
     isActive: false,
     isDownloadingAll: false,
+    pausedAll: false,
   },
   ui: {
     downloaderPositionType:
@@ -172,7 +176,10 @@ const AppState = {
     ),
     isRatePopupOpen: false,
     isDragging: false,
-    themeMode: getStringOrNull(STORAGE_KEYS.THEME_MODE) || "dark",
+    hasSeenShowButtonHint: getBooleanFromStorage(
+      STORAGE_KEYS.SHOW_BUTTON_HINT_SEEN
+    ),
+    themeMode: getStringOrNull(STORAGE_KEYS.THEME_MODE) || "system",
     autoSwipeConfigurations: {
       nextClickTimeout: null,
       countdownInterval: null,
@@ -217,6 +224,7 @@ const AppState = {
       downloadedInBatches: 0,
       currentBatch: 0,
       isAutoBatchDownloading: false,
+      skipDownloaded: false,
     }
   ),
 };
@@ -246,7 +254,6 @@ export function resetAppStateToDefaults() {
     path: "",
   };
   AppState.filters = {
-    currentProfile: false,
     likedVideos: false,
     favoriteVideos: false,
     state: "INIT",
@@ -257,6 +264,7 @@ export function resetAppStateToDefaults() {
   AppState.downloading = {
     isActive: false,
     isDownloadingAll: false,
+    pausedAll: false,
   };
   AppState.ui = {
     downloaderPositionType: null,
@@ -265,6 +273,7 @@ export function resetAppStateToDefaults() {
     isDownloaderClosed: false,
     isRatePopupOpen: false,
     isDragging: false,
+    hasSeenShowButtonHint: false,
     themeMode: "dark",
     autoSwipeConfigurations: {
       nextClickTimeout: null,
