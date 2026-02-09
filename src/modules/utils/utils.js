@@ -54,9 +54,15 @@ export function getCurrentPageUsername() {
 export function isOnProfileOrCollectionPage() {
   const path = window.location.pathname;
 
-  // Check if it's a profile page: /@username (with optional trailing slash or additional path segments)
-  // This matches /@username, /@username/, /@username/video/123, etc.
-  const isProfile = /^\/@[^/]+/.test(path);
+  // Check if it's a profile page: /@username with optional trailing slash
+  // Only match the profile root, NOT sub-paths like /video/, /live/, /photo/, etc.
+  // Also allow known profile tab paths: /@username, /@username/, /@username/collection/...
+  const profileMatch = path.match(/^\/@([^/]+)(\/.*)?$/);
+  const subPath = profileMatch?.[2] || "";
+  // Valid profile sub-paths are: none, /, or /collection/...
+  // Invalid: /video/..., /live/..., /photo/..., etc.
+  const invalidSubPaths = /^\/(video|live|photo|playlist)\//;
+  const isProfile = !!profileMatch && !invalidSubPaths.test(subPath);
 
   // Check if it's a collection page: /@username/collection/collection-name
   const collectionMatch = path.match(/\/@[^/]+\/collection\/([^/]+)/);
@@ -381,12 +387,32 @@ export function getDownloadFilePath(
 
     // Special sanitize for descriptions - handles Chinese/non-UTF-8 characters
     // Respects maxLen from template or uses a reasonable default (100)
+    // Also preserves hashtags (#) which are commonly used in TikTok descriptions
     const sanitizeDesc = (val, maxLen = 100) => {
       const str = (val ?? "").toString();
-      // Replace invalid characters but preserve Chinese/Unicode characters
-      const sanitized = str.replace(/[^\p{L}\p{N}_\-.]+/gu, "-");
+      // Replace invalid characters but preserve Chinese/Unicode characters and hashtags
+      const sanitized = str.replace(/[^\p{L}\p{N}_\-.#]+/gu, "-");
       // Use maxLen from template or default to 100 characters
       return sanitized.length > maxLen ? sanitized.slice(0, maxLen) : sanitized;
+    };
+
+    // Special sanitize for hashtags - preserves the "#" symbol
+    const sanitizeHashtag = (val) => {
+      const str = (val ?? "").toString();
+      // Replace invalid filename characters but preserve #, alphanumeric, _, -, and .
+      // Process character by character: preserve allowed chars and #, replace others with dash
+      const sanitized = str
+        .split("")
+        .map((char) => {
+          // Allow letters, numbers, underscore, dash, dot, and # symbol
+          if (/[\p{L}\p{N}_\-.]/u.test(char) || char === "#") {
+            return char;
+          }
+          return "-";
+        })
+        .join("")
+        .replace(/-+/g, "-"); // Collapse multiple dashes
+      return sanitized.slice(0, 100);
     };
 
     const formattedDate = (date) => {
@@ -422,8 +448,13 @@ export function getDownloadFilePath(
       views: sanitize(media.views),
       duration: sanitize(media.duration),
       hashtags: (media?.hashtags || [])
-        .map((tag) => sanitize(tag.name || tag))
-        .join("-"),
+        .map((tag) => {
+          const tagName = tag.name || tag;
+          // Add "#" prefix if it doesn't already start with "#"
+          const prefixedTag = tagName.startsWith("#") ? tagName : `#${tagName}`;
+          return sanitizeHashtag(prefixedTag);
+        })
+        .join(""),
       createTime: sanitize(
         media.createTime ? formattedDate(media.createTime) : "-"
       ),
@@ -559,18 +590,45 @@ export const cleanupPath = (path) =>
     .replace(/^\/+|\/+$/g, "");
 
 export function getSrcById(id) {
+  // Helper to extract video URL from various item structures
+  const extractVideoUrl = (item) => {
+    if (!item) return null;
+
+    // 1) Standard: item.video.playAddr
+    if (item.video?.playAddr?.startsWith?.("http")) {
+      return item.video.playAddr;
+    }
+
+    // 2) Stories/Alternative: item.video.downloadAddr
+    if (item.video?.downloadAddr?.startsWith?.("http")) {
+      return item.video.downloadAddr;
+    }
+
+    // 3) Direct URL on item (some fiber structures)
+    if (item.url?.startsWith?.("http")) {
+      return item.url;
+    }
+
+    // 4) Nested bitrateInfo structure
+    const bitrateUrl = item.video?.bitrateInfo?.[0]?.PlayAddr?.UrlList?.[0];
+    if (bitrateUrl?.startsWith?.("http")) {
+      return bitrateUrl;
+    }
+
+    // 5) Stories: imagePost structure for slideshows
+    if (item.imagePost?.images?.[0]?.imageURL?.urlList?.[0]) {
+      return item.imagePost.images[0].imageURL.urlList[0];
+    }
+
+    return null;
+  };
+
   try {
     const item = Object.values(AppState.allItemsEverSeen)
       .flat()
       .find((item) => item.id == id);
-    if (
-      item &&
-      item.video &&
-      item.video.playAddr &&
-      item.video.playAddr.startsWith("http")
-    ) {
-      return item.video.playAddr;
-    }
+    const url = extractVideoUrl(item);
+    if (url) return url;
   } catch (error) {
     if (AppState.debug.active)
       console.warn("Error in getting src by id (AppState)", error);
@@ -581,7 +639,8 @@ export function getSrcById(id) {
     const videoDetail = defaultScope?.["webapp.video-detail"];
     const videoItem = videoDetail?.itemInfo?.itemStruct;
     if (videoItem?.id == id) {
-      return videoItem.video.playAddr;
+      const url = extractVideoUrl(videoItem);
+      if (url) return url;
     }
   } catch (error) {
     if (AppState.debug.active)
@@ -598,19 +657,19 @@ export function getSrcById(id) {
       const fiberNode = offsetParent[fiberKey];
       const fiberItem = fiberNode?.child?.pendingProps;
       if (AppState.debug.active) console.log("Fiber Item:", fiberItem?.id, id);
-      // Check if the fiber
 
-      if (fiberItem?.id == id && fiberItem && fiberItem.url) {
-        return fiberItem.url;
-      } else {
-        if (AppState.debug.active)
-          console.warn(
-            "reactFiber No valid video source found in fiber item",
-            fiberItem.id,
-            id,
-            fiberItem,
-            fiberItem.url
-          );
+      if (fiberItem?.id == id) {
+        const url = extractVideoUrl(fiberItem);
+        if (url) return url;
+      }
+
+      if (AppState.debug.active && fiberItem?.id == id) {
+        console.warn(
+          "reactFiber No valid video source found in fiber item",
+          fiberItem.id,
+          id,
+          fiberItem
+        );
       }
     }
   } catch (error) {
@@ -620,6 +679,69 @@ export function getSrcById(id) {
         error
       );
   }
+
+  // Stories fallback: try to get from DivStoriesPlayer containers
+  try {
+    // Traverse fiber structure to find item data
+    const findItemInObject = (obj, depth = 0, maxDepth = 10) => {
+      if (!obj || typeof obj !== "object" || depth > maxDepth) return null;
+
+      // Check if this object itself looks like an item
+      if (
+        typeof obj.id === "string" &&
+        obj.id.length > 5 &&
+        (obj.video || obj.imagePost || obj.author || obj.desc !== undefined)
+      ) {
+        return obj;
+      }
+
+      // Check for .item property
+      if (obj.item && typeof obj.item === "object" && typeof obj.item.id === "string") {
+        return obj.item;
+      }
+
+      // Recurse into props
+      if (obj.props) {
+        const found = findItemInObject(obj.props, depth + 1, maxDepth);
+        if (found) return found;
+      }
+
+      // Recurse into children
+      if (Array.isArray(obj.children)) {
+        for (const child of obj.children) {
+          const found = findItemInObject(child, depth + 1, maxDepth);
+          if (found) return found;
+        } 
+      } else if (obj.children && typeof obj.children === "object") {
+        const found = findItemInObject(obj.children, depth + 1, maxDepth);
+        if (found) return found;
+      }
+
+      return null;
+    };
+
+    const storiesContainers = document.querySelectorAll('[class*="DivStoriesPlayer"]');
+    for (const container of storiesContainers) {
+      const fiberKey = Object.keys(container).find((k) =>
+        k.startsWith("__reactFiber$")
+      );
+      if (!fiberKey) continue;
+
+      const fiber = container[fiberKey];
+      const storyItem =
+        findItemInObject(fiber?.pendingProps) ||
+        findItemInObject(fiber?.memoizedProps);
+
+      if (storyItem?.id == id) {
+        const url = extractVideoUrl(storyItem);
+        if (url) return url;
+      }
+    }
+  } catch (error) {
+    if (AppState.debug.active)
+      console.warn("Error in getting src by id (Stories)", error);
+  }
+
   if (AppState.debug.active)
     console.warn("reactFiber No valid video source found for ID:", id);
   return null;
@@ -1075,15 +1197,39 @@ export function buildVideoLinkMeta(media, index) {
       ?.map((sub) => sub?.LanguageCodeName)
       .filter(Boolean) || [];
 
+  // Extract video URL from various possible locations (including Stories)
+  const extractUrl = () => {
+    // Standard playAddr
+    if (media?.video?.playAddr?.startsWith?.("http")) {
+      return media.video.playAddr;
+    }
+    // Check AppState for cached playAddr
+    const cachedItem = AppState.allItemsEverSeen[media?.id];
+    if (cachedItem?.video?.playAddr?.startsWith?.("http")) {
+      return cachedItem.video.playAddr;
+    }
+    // Stories/Alternative: downloadAddr
+    if (media?.video?.downloadAddr?.startsWith?.("http")) {
+      return media.video.downloadAddr;
+    }
+    // Direct URL on media (some fiber structures)
+    if (media?.url?.startsWith?.("http")) {
+      return media.url;
+    }
+    // Nested bitrateInfo structure
+    const bitrateUrl = media?.video?.bitrateInfo?.[0]?.PlayAddr?.UrlList?.[0];
+    if (bitrateUrl?.startsWith?.("http")) {
+      return bitrateUrl;
+    }
+    // Fallback to cover images
+    return media?.video?.originCover || media?.video?.cover;
+  };
+
   return {
     // Super required
     index,
     videoId: media?.id,
-    url:
-      media?.video?.playAddr ||
-      AppState.allItemsEverSeen[media?.id]?.video?.playAddr ||
-      media?.video?.originCover ||
-      media?.video?.cover,
+    url: extractUrl(),
     authorId:
       typeof media?.author == "string"
         ? media?.author
@@ -1676,15 +1822,27 @@ export async function downloadURLToDisk(url, filename, options = {}) {
       }
 
       const blobUrl = URL.createObjectURL(blob);
-      const id = uuid();
 
+      // Check if we should use native download (chrome.downloads with saveAs: false)
+      const useNativeDownload = AppState?.downloadPreferences?.useNativeDownload;
+      const shouldUseNative = 
+        useNativeDownload === true || 
+        (useNativeDownload === null && detectBrowserType() === "brave");
+
+      // Use chrome.downloads API (with saveAs: false when native download is enabled)
+      const id = uuid();
       try {
         // ask background to save to disk
+        // When native download is enabled, force saveAs: false to prevent save dialog
+        const showFolderPicker = shouldUseNative 
+          ? false 
+          : AppState?.downloadPreferences?.showFolderPicker;
+        
         postBlobDownloadRequest({
           id,
           blobUrl,
           filename,
-          showFolderPicker: AppState?.downloadPreferences?.showFolderPicker,
+          showFolderPicker,
         });
 
         const res = await waitForBlobDownloadResponse(id, 25000);
@@ -1905,6 +2063,18 @@ export function displayFoundUrls({ forced } = {}) {
     }
   } catch (err) {
     console.warn("Display found urls crashed =============== ", err);
+    // Fallback: ensure at least the "Open" button is visible so the UI is never
+    // completely invisible when the extension is enabled.
+    if (
+      !document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER) &&
+      !document.getElementById(DOM_IDS.SHOW_DOWNLOADER)
+    ) {
+      try {
+        hideDownloader();
+      } catch (fallbackErr) {
+        console.warn("Fallback hideDownloader also failed", fallbackErr);
+      }
+    }
   }
 }
 
@@ -2873,24 +3043,24 @@ function shouldShowRateDonatePopup() {
   // 1. Never shown before → show immediately
   if (!lastShownAt) return true;
 
-  // 2. Skip if rated in the last 14 days
-  const ratedCooldownMs = 14 * 24 * 60 * 60 * 1000;
+  // 2. Skip if rated in the last 90 days
+  const ratedCooldownMs = 90 * 24 * 60 * 60 * 1000;
   if (lastRatedAt && now - lastRatedAt < ratedCooldownMs) {
     return false;
   }
 
-  // 3. Skip if donated in the last 30 days
-  const donatedCooldownMs = 30 * 24 * 60 * 60 * 1000;
+  // 3. Skip if donated in the last 90 days
+  const donatedCooldownMs = 90 * 24 * 60 * 60 * 1000;
   if (lastDonatedAt && now - lastDonatedAt < donatedCooldownMs) {
     return false;
   }
 
-  // 4. Determine base cooldown by how many times it's been shown
+  // 4. Determine base cooldown by how many times it's been shown (dismissed)
   const cooldownDays = (() => {
-    if (shownCount <= 1) return 1;
-    if (shownCount === 2) return 3;
-    if (shownCount <= 4) return 7;
-    return 14;
+    if (shownCount <= 1) return 3;
+    if (shownCount === 2) return 7;
+    if (shownCount <= 4) return 14;
+    return 30;
   })();
 
   const cooldownMs = cooldownDays * 24 * 60 * 60 * 1000;
@@ -3055,8 +3225,14 @@ export function getRenderedPostsMetadata() {
     return null;
   };
 
+  // Get regular video containers
   const containers = Array.from(
     document.querySelectorAll('[class*="DivPlayerContainer"]')
+  );
+
+  // Get Stories containers (different class pattern)
+  const storiesContainers = Array.from(
+    document.querySelectorAll('[class*="DivStoriesPlayer"]')
   );
 
   const pickBestItemFromChildren = (children) => {
@@ -3149,6 +3325,78 @@ export function getRenderedPostsMetadata() {
     })
     .filter(Boolean);
 
+  // Traverse fiber structure to find item data (Stories have varying paths)
+  const findItemInObject = (obj, depth = 0, maxDepth = 10) => {
+    if (!obj || typeof obj !== "object" || depth > maxDepth) return null;
+
+    // Check if this object itself looks like an item (has id and media properties)
+    if (
+      typeof obj.id === "string" &&
+      obj.id.length > 5 &&
+      (obj.video || obj.imagePost || obj.author || obj.desc !== undefined)
+    ) {
+      return obj;
+    }
+
+    // Check for .item property
+    if (obj.item && typeof obj.item === "object" && typeof obj.item.id === "string") {
+      return obj.item;
+    }
+
+    // Recurse into props
+    if (obj.props) {
+      const found = findItemInObject(obj.props, depth + 1, maxDepth);
+      if (found) return found;
+    }
+
+    // Recurse into children (array or single)
+    if (Array.isArray(obj.children)) {
+      for (const child of obj.children) {
+        const found = findItemInObject(child, depth + 1, maxDepth);
+        if (found) return found;
+      }
+    } else if (obj.children && typeof obj.children === "object") {
+      const found = findItemInObject(obj.children, depth + 1, maxDepth);
+      if (found) return found;
+    }
+
+    return null;
+  };
+
+  // Extract Stories media by traversing fiber structure
+  const storiesPosts = storiesContainers
+    .map((el) => {
+      const fiber = getFiber(el);
+      if (!fiber) return null;
+
+      // Search in pendingProps first, then memoizedProps
+      let media = findItemInObject(fiber?.pendingProps);
+      if (!media) {
+        media = findItemInObject(fiber?.memoizedProps);
+      }
+
+      if (media?.id) {
+        media.isStory = true;
+        if (!media.authorId) {
+          const u = getUsernameNear(el);
+          if (u) media.authorId = u;
+        }
+        return media;
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+
+  // Merge and dedupe by id
+  const seenIds = new Set(posts.map((p) => String(p.id)));
+  for (const story of storiesPosts) {
+    if (story?.id && !seenIds.has(String(story.id))) {
+      posts.push(story);
+      seenIds.add(String(story.id));
+    }
+  }
+
   return posts;
 }
 
@@ -3194,6 +3442,170 @@ export function showAlertModal(message, actionText = "OK", onAction = null) {
       }
       resolve(true);
     });
+  });
+}
+
+/**
+ * Detect the browser type based on user agent and browser-specific properties
+ * @returns {string} Browser type: "chrome", "brave", "firefox", "edge", "opera", "safari", or "unknown"
+ */
+export function detectBrowserType() {
+  const ua = navigator.userAgent;
+
+  // Brave has a special property (must check first)
+  if (navigator.brave && typeof navigator.brave.isBrave === "function") {
+    return "brave";
+  }
+
+  // Firefox
+  if (ua.includes("Firefox")) return "firefox";
+
+  // Edge (must check before Chrome since Edge includes "Chrome" in UA)
+  if (ua.includes("Edg/")) return "edge";
+
+  // Opera (must check before Chrome since Opera includes "Chrome" in UA)
+  if (ua.includes("OPR/") || ua.includes("Opera")) return "opera";
+
+  // Chrome (must check after others since many browsers include "Chrome")
+  if (ua.includes("Chrome") && !ua.includes("Edg/") && !ua.includes("OPR/")) {
+    return "chrome";
+  }
+
+  // Safari (must check after Chrome since Safari includes "Chrome" in UA)
+  if (ua.includes("Safari") && !ua.includes("Chrome")) return "safari";
+
+  return "unknown";
+}
+
+/**
+ * Show browser compatibility alert modal with "Never show again" option
+ * Only shows for non-Chrome browsers and if not previously dismissed
+ */
+export function showBrowserCompatibilityAlert() {
+  // Check if already dismissed
+  try {
+    const dismissed = localStorage.getItem(STORAGE_KEYS.BROWSER_COMPAT_ALERT_DISMISSED);
+    if (dismissed === "true") {
+      return; // User has dismissed this alert
+    }
+  } catch (e) {
+    console.warn("Failed to check browser compat alert dismissal:", e);
+  }
+
+  // Detect browser type
+  const browserType = detectBrowserType();
+
+  // Only show for non-Chrome browsers
+  if (browserType === "chrome") {
+    return;
+  }
+
+  // Build message based on browser type
+  let title = "Browser Compatibility";
+  let message = "";
+
+  if (browserType === "brave") {
+    message = `
+      <div style="margin-bottom: 16px;">
+        <p style="margin-bottom: 12px; line-height: 1.6;">
+          Optimized for Chrome. Due to a Brave browser limitation, you may be prompted to manually save every video.
+        </p>
+        <p style="line-height: 1.6;">
+          For a faster, automated experience, we recommend using Chrome while we work on a solution.
+        </p>
+      </div>
+    `;
+  } else {
+    message = `
+      <div style="margin-bottom: 16px;">
+        <p style="margin-bottom: 12px; line-height: 1.6;">
+          This extension was developed and tested for Chrome. Some features may not work correctly on your current browser.
+        </p>
+        <p style="line-height: 1.6;">
+          For the best experience, we recommend using Chrome.
+        </p>
+      </div>
+    `;
+  }
+
+  // Create modal content
+  const contentDiv = document.createElement("div");
+  contentDiv.style.padding = "20px";
+  contentDiv.style.maxWidth = "500px";
+
+  // Title
+  const titleEl = document.createElement("h3");
+  titleEl.textContent = title;
+  titleEl.style.margin = "0 0 16px 0";
+  titleEl.style.fontSize = "1.2em";
+  titleEl.style.fontWeight = "600";
+  contentDiv.appendChild(titleEl);
+
+  // Message
+  const messageEl = document.createElement("div");
+  messageEl.innerHTML = message;
+  contentDiv.appendChild(messageEl);
+
+  // Checkbox container
+  const checkboxContainer = document.createElement("div");
+  checkboxContainer.style.marginTop = "20px";
+  checkboxContainer.style.display = "flex";
+  checkboxContainer.style.alignItems = "center";
+  checkboxContainer.style.gap = "8px";
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.id = "browser-compat-never-show";
+  checkbox.style.cursor = "pointer";
+
+  const checkboxLabel = document.createElement("label");
+  checkboxLabel.htmlFor = "browser-compat-never-show";
+  checkboxLabel.textContent = "Never show this again";
+  checkboxLabel.style.cursor = "pointer";
+  checkboxLabel.style.userSelect = "none";
+
+  checkboxContainer.appendChild(checkbox);
+  checkboxContainer.appendChild(checkboxLabel);
+  contentDiv.appendChild(checkboxContainer);
+
+  // Button container
+  const buttonContainer = document.createElement("div");
+  buttonContainer.style.marginTop = "20px";
+  buttonContainer.style.display = "flex";
+  buttonContainer.style.justifyContent = "flex-end";
+  buttonContainer.style.gap = "10px";
+
+  const okBtn = document.createElement("button");
+  okBtn.className = "ettpd-action-btn";
+  okBtn.textContent = "OK, I understand";
+  okBtn.style.padding = "8px 16px";
+
+  okBtn.addEventListener("click", () => {
+    // Save dismissal preference if checkbox is checked
+    if (checkbox.checked) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.BROWSER_COMPAT_ALERT_DISMISSED, "true");
+      } catch (e) {
+        console.warn("Failed to save browser compat alert dismissal:", e);
+      }
+    }
+
+    // Close modal
+    const modal = document.getElementById(DOM_IDS.MODAL_CONTAINER);
+    if (modal) {
+      modal.remove();
+    }
+  });
+
+  buttonContainer.appendChild(okBtn);
+  contentDiv.appendChild(buttonContainer);
+
+  // Create and show modal
+  createModal({
+    children: [contentDiv],
+    onClose: () => {
+      // If user closes via X button, don't save preference
+    },
   });
 }
 

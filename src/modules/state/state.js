@@ -105,6 +105,19 @@ function getStringOrNull(key) {
   }
 }
 
+function getBooleanOrNull(key, fallback = null) {
+  try {
+    const value = localStorage.getItem(key);
+    if (value === null) return fallback;
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return fallback; // invalid value, return fallback
+  } catch (e) {
+    console.warn(`Failed to read boolean/null from localStorage for key ${key}:`, e);
+    return fallback;
+  }
+}
+
 const AppState = {
   debug: {
     active: true,
@@ -179,6 +192,9 @@ const AppState = {
     hasSeenShowButtonHint: getBooleanFromStorage(
       STORAGE_KEYS.SHOW_BUTTON_HINT_SEEN
     ),
+    hasSeenFilePathHint: getBooleanFromStorage(
+      STORAGE_KEYS.FILE_PATH_HINT_SEEN
+    ),
     themeMode: getStringOrNull(STORAGE_KEYS.THEME_MODE) || "system",
     autoSwipeConfigurations: {
       nextClickTimeout: null,
@@ -200,6 +216,8 @@ const AppState = {
     disableConfetti: getBooleanFromStorage(
       STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI
     ),
+    useNativeDownload: getBooleanOrNull(STORAGE_KEYS.USE_NATIVE_DOWNLOAD, null),
+    // null = auto (use native for Brave), true = always native, false = always chrome.downloads
   },
   rateDonate: safeParseRateDonateDates(
     localStorage.getItem(STORAGE_KEYS.RATE_DONATE_DATA),
@@ -243,6 +261,7 @@ export function resetAppStateToDefaults() {
   localStorage.removeItem(STORAGE_KEYS.FULL_PATH_TEMPLATES);
   localStorage.removeItem(STORAGE_KEYS.SHOW_FOLDER_PICKER);
   localStorage.removeItem(STORAGE_KEYS.THEME_MODE);
+  localStorage.removeItem(STORAGE_KEYS.FILE_PATH_HINT_SEEN);
 
   // Reset AppState
   AppState.debug.active = false;
@@ -274,6 +293,7 @@ export function resetAppStateToDefaults() {
     isRatePopupOpen: false,
     isDragging: false,
     hasSeenShowButtonHint: false,
+    hasSeenFilePathHint: false,
     themeMode: "dark",
     autoSwipeConfigurations: {
       nextClickTimeout: null,

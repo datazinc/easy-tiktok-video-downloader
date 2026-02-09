@@ -152,8 +152,8 @@
   color: var(--ettpd-text-secondary);
   opacity: 0.85;
 }
-.ettpd-corner-select:hover,
-.ettpd-corner-select:focus {
+.ettpd-corner-select-wrapper:hover .ettpd-corner-toggle,
+.ettpd-corner-toggle:focus-visible {
   border-color: var(--ettpd-text-primary);
 }
 .ettpd-drag-handle:hover {
@@ -175,26 +175,77 @@
   color: var(--ettpd-text-primary);
 }
 
-.ettpd-corner-select {
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  background: var(--ettpd-bg-secondary);
-  color: var(--ettpd-text-primary);
-  border: 1px solid var(--ettpd-border-color);
-  border-radius: 999px;
-  font-size: 12px;
-  padding: 2px 20px 2px 8px;
-  cursor: pointer;
-  min-width: 60px;
-  max-width: 80px;
-  text-align: left;
+.ettpd-corner-select-wrapper {
   position: relative;
-  box-shadow: 0 8px 18px var(--ettpd-shadow);
+  display: inline-flex;
+  align-items: center;
 }
 
-.ettpd-corner-select::-ms-expand {
+.ettpd-corner-select-icon {
+  display: flex;
+  pointer-events: none;
+  color: var(--ettpd-text-primary);
+}
+
+.ettpd-corner-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ettpd-bg-secondary);
+  border: 1px solid var(--ettpd-border-color);
+  border-radius: 999px;
+  cursor: pointer;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  position: relative;
+  box-shadow: 0 8px 18px var(--ettpd-shadow);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.ettpd-corner-menu {
   display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ettpd-bg-secondary);
+  border: 1px solid var(--ettpd-border-color);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 24px var(--ettpd-shadow);
+  z-index: 10;
+  flex-direction: column;
+  gap: 2px;
+  min-width: max-content;
+}
+
+.ettpd-corner-menu-open {
+  display: flex;
+}
+
+.ettpd-corner-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 5px 7px;
+  color: var(--ettpd-text-primary);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.ettpd-corner-menu-item:hover {
+  background: var(--ettpd-bg-primary);
+  border-color: var(--ettpd-border-color);
+}
+
+.ettpd-corner-menu-item.active {
+  background: var(--ettpd-bg-primary);
+  border-color: var(--ettpd-accent);
+  color: var(--ettpd-accent);
 }
 .ettpd-pin-btn {
   font-size: 16px;

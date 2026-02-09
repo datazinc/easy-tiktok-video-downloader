@@ -15,6 +15,9 @@ export const STORAGE_KEYS = {
   SHOW_BUTTON_POSITION: "tik.tok::showButtonPosition",
   SHOW_BUTTON_HINT_SEEN: "tik.tok::showButtonHintSeen",
   EXTENSION_ENABLED: "tik.tok::extensionEnabled",
+  BROWSER_COMPAT_ALERT_DISMISSED: "tik.tok::browserCompatAlertDismissed",
+  USE_NATIVE_DOWNLOAD: "tik.tok::useNativeDownload",
+  FILE_PATH_HINT_SEEN: "tik.tok::filePathHintSeen",
 
   // Scrapper
   SCRAPPER_DETAILS: "tik.tok::scrapperDetails",
@@ -87,7 +90,7 @@ export const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS = [
   {
     label: "📢 Hashtags Folder (Weird ahh)",
     template: "hashtags/{hashtags|no-tags}/{videoId|no-id}.mp4",
-    example: "hashtags/fun-relax/739462775.mp4",
+    example: "hashtags/#fun#relax/739462775.mp4",
   },
   {
     label: "🎶 Music by Artist",
