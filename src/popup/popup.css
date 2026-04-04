@@ -42,7 +42,12 @@
 body {
   margin: 0;
   padding: 0;
-  font-family: "Inter", "SF Pro Text", system-ui, -apple-system, sans-serif;
+  font-family:
+    "Inter",
+    "SF Pro Text",
+    system-ui,
+    -apple-system,
+    sans-serif;
   background: var(--popup-bg-primary);
   color: var(--popup-text-primary);
 }
@@ -126,7 +131,10 @@ h2 {
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
 }
 
 .btn.primary {
@@ -287,6 +295,12 @@ footer {
   color: var(--popup-text-secondary);
 }
 
+.footer-meta {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--popup-text-secondary);
+}
+
 footer a {
   color: var(--popup-link-color);
   font-weight: 700;
@@ -310,7 +324,10 @@ footer a {
   align-items: center;
   justify-content: center;
   box-shadow: 0 4px 12px var(--popup-shadow);
-  transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
   z-index: 1000;
   padding: 0;
 }
@@ -435,7 +452,10 @@ footer a {
   background: var(--popup-bg-secondary);
   border: 1px solid var(--popup-border);
   border-radius: 10px;
-  transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+  transition:
+    background 0.2s ease,
+    transform 0.15s ease,
+    box-shadow 0.2s ease;
   box-shadow: 0 8px 18px var(--popup-shadow);
 }
 
@@ -483,19 +503,22 @@ footer a {
   color: var(--popup-text-primary);
   font-weight: 600;
   font-size: 12px;
-  transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease,
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease,
     color 0.2s ease;
   white-space: nowrap;
 }
 
 .download-csv-btn {
-  background: linear-gradient(135deg, #007AFF, #0056CC);
+  background: linear-gradient(135deg, #007aff, #0056cc);
   color: #fff;
   border-color: transparent;
 }
 
 .resume-download-btn {
-  background: linear-gradient(135deg, #34C759, #28A745);
+  background: linear-gradient(135deg, #34c759, #28a745);
   color: #fff;
   border-color: transparent;
 }
@@ -510,11 +533,11 @@ footer a {
 }
 
 .download-csv-btn:hover {
-  background: linear-gradient(135deg, #0056CC, #0040A0);
+  background: linear-gradient(135deg, #0056cc, #0040a0);
 }
 
 .resume-download-btn:hover {
-  background: linear-gradient(135deg, #28A745, #1E7E34);
+  background: linear-gradient(135deg, #28a745, #1e7e34);
 }
 
 .clear-user-btn:active,

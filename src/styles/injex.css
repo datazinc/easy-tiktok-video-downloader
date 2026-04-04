@@ -65,11 +65,8 @@
 }
 
 .ettpd-wrapper.ettpd-theme-dark {
-  background: linear-gradient(
-      145deg,
-      rgba(23, 27, 38, 0.96),
-      rgba(12, 14, 22, 0.98)
-    ),
+  background:
+    linear-gradient(145deg, rgba(23, 27, 38, 0.96), rgba(12, 14, 22, 0.98)),
     radial-gradient(circle at top, rgba(125, 211, 252, 0.12), transparent 60%);
   border-color: var(--ettpd-border-color);
   box-shadow: 0 24px 60px rgba(2, 6, 23, 0.8);
@@ -119,7 +116,10 @@
   background: var(--ettpd-bg-tertiary);
   color: var(--ettpd-text-primary);
   cursor: pointer;
-  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.1s ease;
+  transition:
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.1s ease;
 }
 
 .ettpd-icon-btn svg {
@@ -200,7 +200,9 @@
   padding: 0;
   position: relative;
   box-shadow: 0 8px 18px var(--ettpd-shadow);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .ettpd-corner-menu {
@@ -234,7 +236,9 @@
   cursor: pointer;
   padding: 5px 7px;
   color: var(--ettpd-text-primary);
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .ettpd-corner-menu-item:hover {
@@ -254,7 +258,9 @@
   cursor: pointer;
   color: var(--ettpd-text-primary);
   position: relative;
-  transition: transform 0.2s ease, color 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    color 0.2s ease;
 }
 
 .ettpd-pin-btn:hover {
@@ -559,7 +565,8 @@
   border-radius: 999px;
   padding: 0;
   border: 1px solid var(--ettpd-border-color);
-  background: radial-gradient(circle at 30% 30%, #fff, #fff0) 0 0/ 150% 150%,
+  background:
+    radial-gradient(circle at 30% 30%, #fff, #fff0) 0 0/ 150% 150%,
     var(--ettpd-bg-secondary);
   color: var(--ettpd-text-primary);
   display: inline-flex;
@@ -567,7 +574,9 @@
   justify-content: center;
   font-size: 18px;
   line-height: 1;
-  transition: transform 0.15s ease, box-shadow 0.2s ease,
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
     background-color 0.2s ease;
   z-index: 100000;
 }
@@ -582,7 +591,8 @@
 }
 
 #ettpd-close:focus-visible {
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25),
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.25),
     0 0 0 5px rgba(255, 92, 138, 0.4);
 }
 
@@ -737,7 +747,10 @@ label[for="ettpd-current-profile"] {
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
   opacity: 0.85;
-  transition: opacity 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease,
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
     background-color 0.2s ease;
   pointer-events: auto;
 }
@@ -969,12 +982,17 @@ label[for="ettpd-current-profile"] {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 20% 20%,
       rgba(255, 93, 138, 0.12),
       transparent 32%
     ),
-    radial-gradient(circle at 80% 0%, rgba(51, 145, 255, 0.16), transparent 34%),
+    radial-gradient(
+      circle at 80% 0%,
+      rgba(51, 145, 255, 0.16),
+      transparent 34%
+    ),
     rgba(0, 0, 0, 0.55);
   z-index: 99999;
   display: flex;
@@ -1035,7 +1053,12 @@ label[for="ettpd-current-profile"] {
   max-width: 85vw;
   max-height: 80vh;
   overflow-y: auto;
-  font-family: "Inter", "SF Pro Text", system-ui, -apple-system, sans-serif;
+  font-family:
+    "Inter",
+    "SF Pro Text",
+    system-ui,
+    -apple-system,
+    sans-serif;
   color: var(--ettpd-text-primary);
   border: 1px solid var(--ettpd-border-color);
 }
@@ -1045,7 +1068,8 @@ label[for="ettpd-current-profile"] {
   position: absolute;
   inset: 1px;
   border-radius: 15px;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 10% 10%,
       rgba(255, 255, 255, 0.05),
       transparent 25%
@@ -1146,8 +1170,12 @@ label[for="ettpd-current-profile"] {
     var(--ettpd-bg-secondary)
   );
   color: var(--ettpd-text-primary);
-  transition: transform 0.15s ease, box-shadow 0.25s ease, background 0.25s ease,
-    color 0.2s ease, border-color 0.2s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.25s ease,
+    background 0.25s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
   text-decoration: none;
   box-shadow: 0 16px 38px var(--ettpd-shadow);
 }
@@ -1191,6 +1219,23 @@ label[for="ettpd-current-profile"] {
 .ettpd-modal-button.danger:hover,
 .ettpd-pref-btn.danger:hover {
   box-shadow: 0 20px 46px rgba(244, 67, 54, 0.45);
+}
+
+.ettpd-modal-button.discord,
+.ettpd-modal-button.discord:visited {
+  background: linear-gradient(135deg, #5865f2, var(--ettpd-accent));
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 20px 44px rgba(88, 101, 242, 0.34);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+  text-decoration-color: rgba(255, 255, 255, 0.9);
+}
+
+.ettpd-modal-button.discord:hover {
+  box-shadow: 0 24px 52px rgba(88, 101, 242, 0.42);
+  text-decoration-color: #ffffff;
 }
 
 .ettpd-modal-button.ghost {
@@ -1257,21 +1302,24 @@ label[for="ettpd-current-profile"] {
   cursor: pointer;
   outline: none;
   box-shadow: 0 10px 24px var(--ettpd-shadow);
-  background-image: linear-gradient(
-      45deg,
-      transparent 50%,
-      var(--ettpd-text-secondary) 50%
-    ),
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ettpd-text-secondary) 50%),
     linear-gradient(135deg, var(--ettpd-text-secondary) 50%, transparent 50%);
-  background-position: calc(100% - 16px) 50%, calc(100% - 12px) 50%;
-  background-size: 6px 6px, 6px 6px;
+  background-position:
+    calc(100% - 16px) 50%,
+    calc(100% - 12px) 50%;
+  background-size:
+    6px 6px,
+    6px 6px;
   background-repeat: no-repeat;
 }
 
 .ettpd-select:focus,
 .ettpd-template-select:focus {
   border-color: var(--ettpd-accent);
-  box-shadow: 0 0 0 1px var(--ettpd-accent), 0 12px 26px var(--ettpd-shadow);
+  box-shadow:
+    0 0 0 1px var(--ettpd-accent),
+    0 12px 26px var(--ettpd-shadow);
 }
 
 .ettpd-theme-dark .ettpd-select,
@@ -1431,6 +1479,62 @@ label[for="ettpd-current-profile"] {
   gap: 10px;
 }
 
+.ettpd-template-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ettpd-template-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--ettpd-text-primary);
+}
+
+.ettpd-template-hero-copy {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ettpd-text-secondary);
+}
+
+.ettpd-template-location {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--ettpd-border-color);
+  background: linear-gradient(
+    180deg,
+    var(--ettpd-bg-tertiary),
+    var(--ettpd-bg-secondary)
+  );
+  box-shadow: 0 10px 22px var(--ettpd-shadow);
+}
+
+.ettpd-template-location strong {
+  color: var(--ettpd-text-primary);
+  font-size: 13px;
+}
+
+.ettpd-template-location span {
+  color: var(--ettpd-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ettpd-template-location code {
+  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
+  color: var(--ettpd-text-link);
+  background: rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  padding: 4px 8px;
+  overflow-wrap: anywhere;
+}
+
 .ettpd-template-select {
   width: 100%;
   padding: 10px 12px;
@@ -1463,6 +1567,7 @@ label[for="ettpd-current-profile"] {
   flex-direction: column;
   gap: 4px;
   color: var(--ettpd-text-primary);
+  font-weight: 700;
 }
 
 .ettpd-template-subtitle {
@@ -1562,7 +1667,10 @@ label[for="ettpd-current-profile"] {
   padding: 8px 10px;
   cursor: pointer;
   font-weight: 700;
-  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .ettpd-template-tab.active {
@@ -1581,6 +1689,13 @@ label[for="ettpd-current-profile"] {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.ettpd-template-section-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ettpd-text-primary);
+  margin-top: 4px;
 }
 
 .ettpd-template-details {
@@ -1648,6 +1763,7 @@ label[for="ettpd-current-profile"] {
   margin-top: 6px;
   font-size: 13px;
   margin-bottom: 5px;
+  overflow-wrap: anywhere;
 }
 
 .ettpd-template-active {
@@ -1656,6 +1772,15 @@ label[for="ettpd-current-profile"] {
   margin-top: 6px;
   font-size: 13px;
   margin-bottom: 5px;
+  overflow-wrap: anywhere;
+}
+
+.ettpd-template-example {
+  display: block;
+  margin-top: 4px;
+  color: var(--ettpd-text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .ettpd-template-modal .ettpd-modal-input {
@@ -1833,8 +1958,11 @@ label[for="ettpd-current-profile"] {
   border: 1px solid var(--ettpd-border-color);
   background: var(--ettpd-bg-tertiary);
   box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.04);
-  transition: background 0.15s ease, border-color 0.15s ease,
-    box-shadow 0.15s ease, transform 0.1s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.1s ease;
   flex-shrink: 0;
 }
 
@@ -1867,7 +1995,8 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-checkbox-container input[type="checkbox"]:focus-visible + span::before {
-  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.7),
+  box-shadow:
+    0 0 0 2px rgba(148, 163, 184, 0.7),
     0 0 0 4px rgba(56, 189, 248, 0.45);
 }
 
@@ -1954,7 +2083,10 @@ label[for="ettpd-current-profile"] {
   border-radius: 10px;
   cursor: pointer;
   font-weight: 600;
-  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease,
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease,
     transform 0.15s ease;
   flex: 5;
   color: var(--ettpd-text-primary);
@@ -2001,7 +2133,10 @@ label[for="ettpd-current-profile"] {
   background: rgba(0, 0, 0, 0.05);
   opacity: 0;
   transform: scale(0.8);
-  transition: opacity 0.15s ease, transform 0.15s ease, background 0.2s ease,
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    background 0.2s ease,
     color 0.2s ease;
 }
 
@@ -2217,11 +2352,8 @@ label[for="ettpd-current-profile"] {
 
 .ettpd-stats-banner {
   padding: 10px 12px;
-  background: linear-gradient(
-      135deg,
-      rgba(255, 77, 109, 0.14),
-      rgba(51, 145, 255, 0.14)
-    ),
+  background:
+    linear-gradient(135deg, rgba(255, 77, 109, 0.14), rgba(51, 145, 255, 0.14)),
     var(--ettpd-bg-tertiary);
   border: 1px solid var(--ettpd-border-color);
   border-radius: 12px;
@@ -2615,13 +2747,22 @@ label[for="ettpd-current-profile"] {
   flex: 1;
 }
 
-.ettpd-download-all-container .download-all-btn-pause {
+.ettpd-download-all-container .download-all-btn-pause,
+.ettpd-download-all-container .download-all-btn-stop {
   width: auto;
   flex: 0 0 auto;
   padding: 4px 10px;
   margin: 10px 8px;
   border-radius: 4px;
   font-weight: bold;
+}
+
+.ettpd-download-all-container .download-all-btn-stop {
+  background-color: #d64545;
+}
+
+.ettpd-download-all-container .download-all-btn-stop:hover {
+  background-color: #b93636;
 }
 
 #ttk-downloader-scrapper-container {
@@ -2640,7 +2781,10 @@ label[for="ettpd-current-profile"] {
   font-size: 14px;
   border-radius: 10px;
   cursor: pointer;
-  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+  transition:
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
   font-weight: 700;
   box-shadow: 0 12px 28px var(--ettpd-shadow);
 }
@@ -2701,7 +2845,9 @@ label[for="ettpd-current-profile"] {
   color: var(--ettpd-text-primary);
   background: var(--ettpd-bg-secondary);
   border: 1px solid var(--ettpd-border-color);
-  transition: background 0.2s ease, color 0.2s ease;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
 }
 .ettpd-share-item:visited {
   color: var(--ettpd-text-primary);

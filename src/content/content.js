@@ -1,26 +1,52 @@
 // content.js
 (() => {
   const DEBUG = () => globalThis?.AppStateETTVD?.debug?.active ?? false;
+  const PENDING_RESUME_DOWNLOAD_KEY = "tik.tok::pendingResumeDownload";
 
   // -------- Browser detection (API-first, UA fallback) --------
   function detectBrowserUA() {
     const ua = navigator.userAgent || "";
     if (/firefox/i.test(ua)) return "firefox";
+    if (/edge|edg/i.test(ua)) return "edge";
+    if (/opr|opera/i.test(ua)) return "opera";
     if (/chrome|chromium|crios/i.test(ua) && !/edge|edg|opr|opera/i.test(ua))
       return "chrome";
+    if (/safari/i.test(ua) && !/chrome|chromium|crios/i.test(ua))
+      return "safari";
     return "unknown";
   }
+
+  function detectBrowserFromRuntime() {
+    const runtime =
+      typeof chrome !== "undefined" && chrome?.runtime
+        ? chrome.runtime
+        : typeof browser !== "undefined" && browser?.runtime
+          ? browser.runtime
+          : null;
+
+    if (!runtime || typeof runtime.getURL !== "function") {
+      return null;
+    }
+
+    try {
+      const extensionUrl = runtime.getURL("/");
+
+      if (typeof extensionUrl === "string") {
+        if (extensionUrl.startsWith("moz-extension://")) return "firefox";
+        if (extensionUrl.startsWith("chrome-extension://")) return "chrome";
+        if (extensionUrl.startsWith("safari-web-extension://")) return "safari";
+      }
+    } catch {}
+
+    return null;
+  }
+
   function detectBrowser() {
-    // Prefer API presence in extension contexts
-    if (
-      typeof browser !== "undefined" &&
-      typeof browser.runtime !== "undefined"
-    )
-      return "firefox";
-    if (typeof chrome !== "undefined" && typeof chrome.runtime !== "undefined")
-      return "chrome";
-    // Fallback to UA (useful in page-like contexts)
-    return detectBrowserUA();
+    return detectBrowserFromRuntime() || detectBrowserUA();
+  }
+
+  function supportsBinaryRuntimeMessaging() {
+    return detectBrowser() === "firefox";
   }
 
   // -------- Utilities --------
@@ -32,7 +58,7 @@
       try {
         window.postMessage(
           { type: "BLOB_DOWNLOAD_RESPONSE", id, ...payload },
-          "*"
+          "*",
         );
       } catch (e) {
         try {
@@ -44,25 +70,213 @@
               code: "ERR_POSTMESSAGE",
               error: String(e?.message || e),
             },
-            "*"
+            "*",
           );
         } catch {}
       }
     };
   }
 
+  function summarizeDownloadPayload(payload) {
+    const arrayBuffer = getArrayBuffer(payload?.buffer);
+
+    return {
+      requestId: payload?.requestId || null,
+      filename: payload?.filename || null,
+      filenameLength:
+        typeof payload?.filename === "string" ? payload.filename.length : null,
+      showFolderPicker:
+        typeof payload?.showFolderPicker === "boolean"
+          ? payload.showFolderPicker
+          : null,
+      blobUrlPrefix:
+        typeof payload?.blobUrl === "string"
+          ? payload.blobUrl.slice(0, 32)
+          : null,
+      bufferBytes: arrayBuffer ? arrayBuffer.byteLength : null,
+    };
+  }
+
+  function isArrayBuffer(value) {
+    return (
+      value instanceof ArrayBuffer ||
+      Object.prototype.toString.call(value) === "[object ArrayBuffer]"
+    );
+  }
+
+  function getArrayBuffer(value) {
+    if (isArrayBuffer(value)) {
+      return value;
+    }
+
+    if (ArrayBuffer.isView(value) && isArrayBuffer(value.buffer)) {
+      const start = value.byteOffset || 0;
+      const end = start + value.byteLength;
+      return start === 0 && end === value.buffer.byteLength
+        ? value.buffer
+        : value.buffer.slice(start, end);
+    }
+
+    if (value && isArrayBuffer(value.buffer)) {
+      const start =
+        typeof value.byteOffset === "number" && value.byteOffset >= 0
+          ? value.byteOffset
+          : 0;
+      const end =
+        typeof value.byteLength === "number" && value.byteLength >= 0
+          ? start + value.byteLength
+          : value.buffer.byteLength;
+      return start === 0 && end === value.buffer.byteLength
+        ? value.buffer
+        : value.buffer.slice(start, end);
+    }
+
+    return null;
+  }
+
+  function usePromiseRuntimeMessaging() {
+    return (
+      supportsBinaryRuntimeMessaging() &&
+      typeof browser !== "undefined" &&
+      typeof browser.runtime !== "undefined" &&
+      typeof browser.runtime.sendMessage === "function"
+    );
+  }
+
+  function persistPendingResumeDownload(payload) {
+    try {
+      localStorage.setItem(
+        PENDING_RESUME_DOWNLOAD_KEY,
+        JSON.stringify(payload),
+      );
+    } catch (error) {
+      console.warn(
+        "[Content Script] Failed to persist pending resume request:",
+        error,
+      );
+    }
+  }
+
+  function dispatchResumeDownload(payload) {
+    try {
+      window.postMessage(
+        {
+          type: "RESUME_DOWNLOAD",
+          payload,
+        },
+        "*",
+      );
+    } catch (error) {
+      console.warn(
+        "[Content Script] Failed to dispatch resume request to page:",
+        error,
+      );
+    }
+  }
+
   function sendMessage(action, payload) {
+    const isDownloadAction =
+      action === "downloadArrayBuffer" || action === "downloadBlobUrl";
+
+    if (isDownloadAction && DEBUG()) {
+      console.warn(
+        "[Content Script] Forwarding download request to background",
+        {
+          action,
+          ...summarizeDownloadPayload(payload),
+        },
+      );
+    }
+
     return new Promise((resolve) => {
+      const message = { action, payload };
+
       try {
-        chrome.runtime.sendMessage({ action, payload }, (response) => {
+        if (usePromiseRuntimeMessaging()) {
+          browser.runtime
+            .sendMessage(message)
+            .then((response) => {
+              if (isDownloadAction && response?.success !== true) {
+                console.error(
+                  "[Content Script] Background returned a failed download response",
+                  {
+                    action,
+                    requestId: payload?.requestId || null,
+                    code: response?.code || null,
+                    error: response?.error || response?.message || null,
+                    runtimeApi: "browser",
+                  },
+                );
+              }
+
+              resolve(response);
+            })
+            .catch((error) => {
+              const errorMessage = error?.message || String(error);
+
+              if (isDownloadAction) {
+                console.error(
+                  "[Content Script] Background transport error during download",
+                  {
+                    action,
+                    ...summarizeDownloadPayload(payload),
+                    error: errorMessage,
+                    runtimeApi: "browser",
+                  },
+                );
+              }
+
+              resolve({ __transportError: errorMessage });
+            });
+
+          return;
+        }
+
+        chrome.runtime.sendMessage(message, (response) => {
           const lastErr = chrome.runtime.lastError;
           if (lastErr) {
+            if (isDownloadAction) {
+              console.error(
+                "[Content Script] Background transport error during download",
+                {
+                  action,
+                  ...summarizeDownloadPayload(payload),
+                  error: lastErr.message,
+                  runtimeApi: "chrome",
+                },
+              );
+            }
             resolve({ __transportError: lastErr.message });
             return;
           }
+
+          if (isDownloadAction && response?.success !== true) {
+            console.error(
+              "[Content Script] Background returned a failed download response",
+              {
+                action,
+                requestId: payload?.requestId || null,
+                code: response?.code || null,
+                error: response?.error || response?.message || null,
+                runtimeApi: "chrome",
+              },
+            );
+          }
+
           resolve(response);
         });
       } catch (e) {
+        if (isDownloadAction) {
+          console.error(
+            "[Content Script] Exception while sending download request to background",
+            {
+              action,
+              ...summarizeDownloadPayload(payload),
+              error: e?.message || String(e),
+              runtimeApi: usePromiseRuntimeMessaging() ? "browser" : "chrome",
+            },
+          );
+        }
         resolve({ __transportError: e?.message || String(e) });
       }
     });
@@ -100,7 +314,7 @@
       const reply = (response) =>
         window.postMessage(
           { type: "EXT_STATE_RESPONSE", id, ...response },
-          "*"
+          "*",
         );
 
       if (action === "GET") {
@@ -125,7 +339,7 @@
               return;
             }
             reply({ success: true, enabled: !!enabled });
-          }
+          },
         );
         return;
       }
@@ -146,7 +360,7 @@
             id,
             ...response,
           },
-          "*"
+          "*",
         );
       }
 
@@ -221,12 +435,25 @@
       const browserName = detectBrowser();
       const { blobUrl, filename, showFolderPicker } = payload || {};
 
+      if (DEBUG()) {
+        console.warn("[Content Script] Received page download request", {
+          requestId: id,
+          browserName,
+          filename,
+          filenameLength: typeof filename === "string" ? filename.length : null,
+          showFolderPicker,
+          blobUrlPrefix:
+            typeof blobUrl === "string" ? blobUrl.slice(0, 32) : typeof blobUrl,
+        });
+      }
+
       // Validate minimal payload (we tolerate missing blobUrl if future modes appear)
       if (typeof filename !== "string" || !filename.trim()) {
         const errorMsg = `Invalid filename in BLOB_DOWNLOAD_REQUEST: expected non-empty string, got ${typeof filename}${
           filename ? ` (length: ${filename.length})` : ""
         }`;
         console.error("[Content Script] ❌ Filename validation failed:", {
+          requestId: id,
           filename,
           type: typeof filename,
           trimmed: filename?.trim(),
@@ -243,6 +470,16 @@
       // --- FIREFOX: always go ArrayBuffer -> background ---
       if (browserName === "firefox") {
         if (typeof blobUrl !== "string" || !blobUrl.startsWith("blob:")) {
+          console.error(
+            "[Content Script] Firefox download path received invalid blob URL",
+            {
+              requestId: id,
+              browserName,
+              blobUrl:
+                typeof blobUrl === "string" ? blobUrl.slice(0, 64) : blobUrl,
+              filename,
+            },
+          );
           finish({
             success: false,
             code: "ERR_INVALID_BLOB_URL",
@@ -251,14 +488,38 @@
           return;
         }
 
+        if (DEBUG()) {
+          console.warn(
+            "[Content Script] Firefox download path converting blob URL to ArrayBuffer",
+            {
+              requestId: id,
+              browserName,
+              filename,
+            },
+          );
+        }
+
         fetchBlobAsArrayBuffer(blobUrl)
-          .then((buffer) =>
-            sendMessage("downloadArrayBuffer", {
+          .then((buffer) => {
+            if (DEBUG()) {
+              console.warn(
+                "[Content Script] Blob URL converted to ArrayBuffer for Firefox download",
+                {
+                  requestId: id,
+                  browserName,
+                  bytes: buffer.byteLength,
+                  filename,
+                },
+              );
+            }
+
+            return sendMessage("downloadArrayBuffer", {
               buffer,
               filename,
+              requestId: id,
               showFolderPicker,
-            })
-          )
+            });
+          })
           .then((resp) => {
             if (!resp || typeof resp.success !== "boolean") {
               finish({
@@ -278,6 +539,15 @@
             });
           })
           .catch((e) => {
+            console.error(
+              "[Content Script] Firefox ArrayBuffer download flow failed",
+              {
+                requestId: id,
+                browserName,
+                filename,
+                error: e?.message || String(e),
+              },
+            );
             finish({
               success: false,
               code: "ERR_FETCH_BLOB",
@@ -288,12 +558,22 @@
         return;
       }
 
-      // --- CHROME (and others): try blob URL first, then fallback to ArrayBuffer on failure ---
+      // --- Chrome-like browsers: try blob URL and surface the error if it fails ---
       if (typeof blobUrl === "string" && blobUrl.startsWith("blob:")) {
+        if (DEBUG()) {
+          console.warn("[Content Script] Trying blob URL download path", {
+            requestId: id,
+            browserName,
+            filename,
+            showFolderPicker,
+          });
+        }
+
         // Attempt direct blob URL path
         sendMessage("downloadBlobUrl", {
           blobUrl,
           filename,
+          requestId: id,
           showFolderPicker,
         }).then((resp) => {
           // Successful background response
@@ -309,10 +589,25 @@
 
           // Decide if we should fallback to ArrayBuffer route
           const shouldFallback =
-            browserName !== "firefox" && // already handled above
+            supportsBinaryRuntimeMessaging() &&
+            browserName !== "firefox" &&
             shouldFallbackFromBlobResp(resp);
 
           if (!shouldFallback) {
+            console.error(
+              "[Content Script] Blob URL download failed without fallback",
+              {
+                requestId: id,
+                browserName,
+                filename,
+                code: resp?.code || null,
+                error:
+                  resp?.error ||
+                  resp?.__transportError ||
+                  "Background returned no/invalid response",
+              },
+            );
+
             // return the error we got
             finish({
               success: false,
@@ -325,15 +620,44 @@
             return;
           }
 
+          if (DEBUG()) {
+            console.warn(
+              "[Content Script] Blob URL download failed; falling back to ArrayBuffer",
+              {
+                requestId: id,
+                browserName,
+                filename,
+                code: resp?.code || null,
+                error:
+                  resp?.error ||
+                  resp?.__transportError ||
+                  "Background returned no/invalid response",
+              },
+            );
+          }
+
           // Fallback: fetch blob content and send ArrayBuffer
           fetchBlobAsArrayBuffer(blobUrl)
-            .then((buffer) =>
-              sendMessage("downloadArrayBuffer", {
+            .then((buffer) => {
+              if (DEBUG()) {
+                console.warn(
+                  "[Content Script] Blob URL converted to ArrayBuffer for fallback download",
+                  {
+                    requestId: id,
+                    browserName,
+                    bytes: buffer.byteLength,
+                    filename,
+                  },
+                );
+              }
+
+              return sendMessage("downloadArrayBuffer", {
                 buffer,
                 filename,
+                requestId: id,
                 showFolderPicker,
-              })
-            )
+              });
+            })
             .then((resp2) => {
               if (!resp2 || typeof resp2.success !== "boolean") {
                 finish({
@@ -353,6 +677,15 @@
               });
             })
             .catch((e) => {
+              console.error(
+                "[Content Script] ArrayBuffer fallback download flow failed",
+                {
+                  requestId: id,
+                  browserName,
+                  filename,
+                  error: e?.message || String(e),
+                },
+              );
               finish({
                 success: false,
                 code: "ERR_FETCH_BLOB",
@@ -365,12 +698,28 @@
       }
 
       // If we reach here, we have no usable blobUrl
+      console.error(
+        "[Content Script] No usable blob URL for download request",
+        {
+          requestId: id,
+          browserName,
+          filename,
+          blobUrl: typeof blobUrl === "string" ? blobUrl.slice(0, 64) : blobUrl,
+        },
+      );
       finish({
         success: false,
         code: "ERR_INVALID_BLOB_URL",
         error: "Invalid or missing blob URL.",
       });
     } catch (e) {
+      console.error(
+        "[Content Script] Unexpected error while bridging page download",
+        {
+          requestId: id,
+          error: e?.message || String(e),
+        },
+      );
       finish({
         success: false,
         code: "ERR_CONTENT_THROW",
@@ -404,15 +753,26 @@
     // Check if extension is disabled before injecting resources
     if (!isExtensionEnabled()) {
       console.log(
-        "[Extension] Extension is disabled. Skipping resource injection."
+        "[Extension] Extension is disabled. Skipping resource injection.",
       );
       return;
     }
+
+    try {
+      const manifestVersion = chrome.runtime?.getManifest?.().version;
+      if (manifestVersion) {
+        document.documentElement?.setAttribute(
+          "data-ettpd-extension-version",
+          manifestVersion,
+        );
+      }
+    } catch {}
+
     resources.forEach(({ type, href, src, isModule }) => {
       const existing = document.querySelector(
         `${href ? `${type}[href="${chrome.runtime.getURL(href)}"]` : ""}${
           href && src ? ", " : ""
-        }${src ? `${type}[src="${chrome.runtime.getURL(src)}"]` : ""}`
+        }${src ? `${type}[src="${chrome.runtime.getURL(src)}"]` : ""}`,
       );
       if (existing) return;
 
@@ -438,7 +798,7 @@
     for (const m of mutations) {
       if (
         Array.from(m.addedNodes).some(
-          (node) => node.nodeType === 1 && node.tagName === "HEAD"
+          (node) => node.nodeType === 1 && node.tagName === "HEAD",
         )
       ) {
         inject();
@@ -482,12 +842,12 @@
               localStorage.setItem(STATE_KEY, resp.enabled ? "true" : "false");
               console.log(
                 "[EXT_POWER] content.js synced initial state:",
-                newState
+                newState,
               );
             } catch (err) {
               console.warn(
                 "Failed to sync extension state to localStorage:",
-                err
+                err,
               );
             }
           }
@@ -505,14 +865,14 @@
       } catch (err) {
         console.warn(
           "Failed to sync extension state change to localStorage:",
-          err
+          err,
         );
       }
 
       // If extension was disabled and gets enabled again, refresh the page so scripts reattach
       if (previousState === false && enabledNow === true) {
         console.log(
-          "[EXT_POWER] content.js triggering page reload (disabled -> enabled transition detected)"
+          "[EXT_POWER] content.js triggering page reload (disabled -> enabled transition detected)",
         );
         try {
           setTimeout(() => {
@@ -554,7 +914,14 @@
         // Handle resume download action from popup
         if (msg?.action === "resumeDownload") {
           const { payload } = msg;
-          const { username, tabName, isCollection, collectionUrl } = payload || {};
+          const { username, tabName, isCollection, collectionUrl } =
+            payload || {};
+          const resumePayload = {
+            username,
+            tabName,
+            isCollection,
+            collectionUrl,
+          };
           console.log("[Content Script] Received resume request:", {
             username,
             tabName,
@@ -562,19 +929,8 @@
             collectionUrl,
           });
 
-          // Forward to page script via window.postMessage
-          window.postMessage(
-            {
-              type: "RESUME_DOWNLOAD",
-              payload: {
-                username,
-                tabName,
-                isCollection,
-                collectionUrl,
-              },
-            },
-            "*"
-          );
+          persistPendingResumeDownload(resumePayload);
+          dispatchResumeDownload(resumePayload);
 
           if (sendResponse) {
             try {

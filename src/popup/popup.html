@@ -1,140 +1,119 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="./popup.css" />
-    <title>Easy TikTok Downloader</title>
-  </head>
 
-  <body>
-    <div class="popup-shell">
-      <header class="popup-hero">
-        <div class="badge">Easy TikTok Video Downloader</div>
-        <h1>Grab videos faster</h1>
-        <p class="subtitle">
-          Jump to a TikTok profile, scroll a little, and download everything you
-          see — watermark-free when possible.
-        </p>
-      </header>
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="./popup.css" />
+  <title>Easy TikTok Downloader</title>
+</head>
 
-      <!-- Disabled State UI (initially hidden) -->
-      <section
-        id="disabled-state"
-        class="card state-card"
-        style="display: none"
-      >
-        <div class="state-icon">⏸</div>
-        <div>
-          <h2>Extension disabled</h2>
-          <p class="subtitle">Click turn on to get back to downloading.</p>
+<body>
+  <div class="popup-shell">
+    <header class="popup-hero">
+      <div class="badge">Easy TikTok Video Downloader</div>
+      <h1>Grab videos faster</h1>
+      <p class="subtitle">
+        Jump to a TikTok profile, scroll a little, and download everything you
+        see — watermark-free when possible.
+      </p>
+    </header>
+
+    <!-- Disabled State UI (initially hidden) -->
+    <section id="disabled-state" class="card state-card" style="display: none">
+      <div class="state-icon">⏸</div>
+      <div>
+        <h2>Extension disabled</h2>
+        <p class="subtitle">Click turn on to get back to downloading.</p>
+      </div>
+      <div class="state-actions">
+        <button id="turnOnBtn" class="btn primary">⚡ Turn On</button>
+        <button id="turnOffInfo" class="btn secondary" disabled>
+          Disabled
+        </button>
+      </div>
+      <p class="footnote">
+        After turning on, refresh any open TikTok tabs for changes to take
+        effect.
+      </p>
+    </section>
+
+    <!-- Normal State UI -->
+    <section id="normal-state" class="card state-card" style="display: block">
+      <div class="cta-row">
+        <form id="start-wrapper">
+          <input placeholder="Enter TikTok @username or link" type="text" id="username" />
+          <button type="submit" id="startBtn" class="btn primary">Go</button>
+        </form>
+        <div class="pill">Pro tip: open a profile first</div>
+        <button id="pastDownloadsBtn" class="btn secondary" style="width: 100%">
+          📥 Past Downloads
+        </button>
+      </div>
+
+      <div class="grid two-col">
+        <div class="tile">
+          <div class="tile-title">How to use</div>
+          <ul class="mini-list">
+            <li>Open tiktok.com and pick a profile.</li>
+            <li>
+              Scroll a bit so videos load. Hit <strong>Download</strong> or
+              <strong>Download All</strong>.
+            </li>
+            <li>
+              Use <strong>Auto-Scroll</strong> to auto-load and batch
+              download.
+            </li>
+          </ul>
         </div>
-        <div class="state-actions">
-          <button id="turnOnBtn" class="btn primary">⚡ Turn On</button>
-          <button id="turnOffInfo" class="btn secondary" disabled>
-            Disabled
-          </button>
-        </div>
-        <p class="footnote">
-          After turning on, refresh any open TikTok tabs for changes to take
-          effect.
-        </p>
-      </section>
-
-      <!-- Normal State UI -->
-      <section id="normal-state" class="card state-card" style="display: block">
-        <div class="cta-row">
-          <form id="start-wrapper">
-            <input
-              placeholder="Enter TikTok @username or link"
-              type="text"
-              id="username"
-            />
-            <button type="submit" id="startBtn" class="btn primary">Go</button>
-          </form>
-          <div class="pill">Pro tip: open a profile first</div>
-          <button
-            id="pastDownloadsBtn"
-            class="btn secondary"
-            style="width: 100%"
-          >
-            📥 Past Downloads
-          </button>
-        </div>
-
-        <div class="grid two-col">
-          <div class="tile">
-            <div class="tile-title">How to use</div>
-            <ul class="mini-list">
-              <li>Open tiktok.com and pick a profile.</li>
-              <li>
-                Scroll a bit so videos load. Hit <strong>Download</strong> or
-                <strong>Download All</strong>.
-              </li>
-              <li>
-                Use <strong>Auto-Scroll</strong> to auto-load and batch
-                download.
-              </li>
-            </ul>
-          </div>
-          <div class="tile">
-            <div class="tile-title">Watermarks</div>
-            <p class="body">
-              We prefer no-watermark links when TikTok makes them available.
-              When not possible, you may see the original watermark.
-            </p>
-          </div>
-        </div>
-
-        <div class="alert">
-          <strong>Heads up:</strong> TikTok changes can break downloaders at any
-          time. If you want to nudge a fix (or fuel it), drop a note or
-          <a
-            href="https://linktr.ee/aimuhire"
-            target="_blank"
-            rel="noopener noreferrer"
-            >say thanks</a
-          >.
-        </div>
-
-        <div class="links">
-          <a target="_blank" href="https://forms.gle/Up1JaQJjxSBNYsZw5"
-            >Report a Bug</a
-          >
-          <a target="_blank" href="https://forms.gle/Up1JaQJjxSBNYsZw5"
-            >Request a Feature</a
-          >
-        </div>
-
-        <footer>
-          <p>
-            Built with ❤️ (and caffeine). If it breaks, give it a gentle nudge —
-            we're listening.
-          </p>
-        </footer>
-      </section>
-    </div>
-
-    <!-- Past Downloads Modal -->
-    <div
-      id="pastDownloadsModal"
-      class="past-downloads-modal"
-      style="display: none"
-    >
-      <div class="past-downloads-content">
-        <div class="past-downloads-header">
-          <h2>📥 Past Downloads</h2>
-          <button id="closePastDownloadsBtn" class="close-btn">×</button>
-        </div>
-        <div id="pastDownloadsContent" class="past-downloads-body">
-          <p style="text-align: center; color: #666; padding: 20px">
-            Loading downloads history...
+        <div class="tile">
+          <div class="tile-title">Watermarks</div>
+          <p class="body">
+            We prefer no-watermark links when TikTok makes them available.
+            When not possible, you may see the original watermark.
           </p>
         </div>
       </div>
-    </div>
 
-    <script src="./popup.bundle.js"></script>
-  </body>
+      <div class="alert">
+        <strong>Heads up:</strong> TikTok changes can break downloaders at any
+        time. If you want to nudge a fix (or fuel it), drop a note or
+        <a href="https://linktr.ee/aimuhire" target="_blank" rel="noopener noreferrer">say thanks</a>.
+      </div>
+
+      <div class="links">
+        <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/KpT7xdUUbM">Report a Bug on Discord</a>
+        <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/KpT7xdUUbM">Request a Feature on
+          Discord</a>
+      </div>
+
+      <footer>
+        <p>
+          Built with ❤️ (and caffeine). If it breaks, give it a gentle nudge —
+          we're listening.
+        </p>
+        <p class="footer-meta" id="footerMeta"></p>
+      </footer>
+    </section>
+  </div>
+
+  <!-- Past Downloads Modal -->
+  <div id="pastDownloadsModal" class="past-downloads-modal" style="display: none">
+    <div class="past-downloads-content">
+      <div class="past-downloads-header">
+        <h2>📥 Past Downloads</h2>
+        <button id="closePastDownloadsBtn" class="close-btn">×</button>
+      </div>
+      <div id="pastDownloadsContent" class="past-downloads-body">
+        <p style="text-align: center; color: #666; padding: 20px">
+          Loading downloads history...
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="./popup.bundle.js"></script>
+</body>
+
 </html>

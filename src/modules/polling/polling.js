@@ -59,7 +59,7 @@ function isExtensionEnabled() {
   };
 
   window.addEventListener("popstate", () =>
-    window.dispatchEvent(new Event("locationchange"))
+    window.dispatchEvent(new Event("locationchange")),
   );
 })();
 /**
@@ -104,7 +104,7 @@ function checkScrapperPathChange() {
       details.originalPath,
       "Current:",
       currentPath,
-      "Marking scrapping as abandoned."
+      "Marking scrapping as abandoned.",
     );
 
     // Stop auto-scroll immediately
@@ -129,7 +129,7 @@ function checkScrapperPathChange() {
     // Save to localStorage
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
 
     // Show notification to user
@@ -137,7 +137,7 @@ function checkScrapperPathChange() {
       "Scrapping Abandoned",
       `You navigated away from the original target (${
         details.originalUsername || details.originalPath
-      }). Auto-scrolling and automatic downloads have been stopped. You can manually download items if needed.`
+      }). Auto-scrolling and automatic downloads have been stopped. You can manually download items if needed.`,
     );
 
     // Refresh scrapper controls to show the new state
@@ -195,7 +195,7 @@ function runScheduledUITasks(reason = "timer") {
 function scheduleUITasks(reason = "timer") {
   if (uiFrameHandle != null) return;
   uiFrameHandle = window.requestAnimationFrame(() =>
-    runScheduledUITasks(reason)
+    runScheduledUITasks(reason),
   );
 }
 
@@ -230,7 +230,7 @@ export function pollInitialData() {
     try {
       const fiberItem = findFiberItemById(
         getCurrentPlayingArticle(),
-        getClosestPlayingVideoId()
+        getClosestPlayingVideoId(),
       );
       if (fiberItem?.item) {
         fiberItem.item.downloaderHasLowConfidence = true;
@@ -352,7 +352,7 @@ async function performScrollBackAndRetry() {
   }
 
   console.log(
-    `[AutoBatch] Scrolling back ${scrollBackCount} items to trigger load more`
+    `[AutoBatch] Scrolling back ${scrollBackCount} items to trigger load more`,
   );
 
   // Scroll back up to item at position (items.length - scrollBackCount)
@@ -403,7 +403,7 @@ async function performScrollBackAndRetry() {
     const currentItemCount = AppState.allDirectLinks.length;
     if (currentItemCount > initialItemCount) {
       console.log(
-        `[AutoBatch] New items found! Initial: ${initialItemCount}, Current: ${currentItemCount}`
+        `[AutoBatch] New items found! Initial: ${initialItemCount}, Current: ${currentItemCount}`,
       );
       return false; // New items found, don't complete
     }
@@ -411,12 +411,12 @@ async function performScrollBackAndRetry() {
     // Also check if there are undownloaded items
     const allItems = AppState.allDirectLinks || [];
     const undownloadedItems = allItems.filter(
-      (item) => !AppState.downloadedURLs.includes(item.url)
+      (item) => !AppState.downloadedURLs.includes(item.url),
     );
 
     if (undownloadedItems.length > 0) {
       console.log(
-        `[AutoBatch] Found ${undownloadedItems.length} undownloaded items after scroll-back`
+        `[AutoBatch] Found ${undownloadedItems.length} undownloaded items after scroll-back`,
       );
       return false; // Undownloaded items found, don't complete
     }
@@ -434,7 +434,7 @@ export function startAutoBatchDownloads() {
   // Check if extension is disabled before starting batch downloads
   if (!isExtensionEnabled()) {
     console.log(
-      "[Extension] Extension is disabled. Auto-batch downloads not started."
+      "[Extension] Extension is disabled. Auto-batch downloads not started.",
     );
     return;
   }
@@ -451,7 +451,7 @@ export function startAutoBatchDownloads() {
   ) {
     console.log(
       "[AutoBatch] Not starting - scrappingStage is:",
-      AppState.scrapperDetails.scrappingStage
+      AppState.scrapperDetails.scrappingStage,
     );
     return;
   }
@@ -472,7 +472,7 @@ export function startAutoBatchDownloads() {
   AppState.scrapperDetails.downloadedInBatches = 0;
   localStorage.setItem(
     STORAGE_KEYS.SCRAPPER_DETAILS,
-    JSON.stringify(AppState.scrapperDetails)
+    JSON.stringify(AppState.scrapperDetails),
   );
 
   console.log("[AutoBatch] Starting automatic batch downloads");
@@ -489,7 +489,7 @@ export function startAutoBatchDownloads() {
         details.originalPath !== window.location.pathname
       ) {
         console.warn(
-          "[AutoBatch] Path changed during batch processing, stopping"
+          "[AutoBatch] Path changed during batch processing, stopping",
         );
         checkScrapperPathChange();
         return;
@@ -501,7 +501,7 @@ export function startAutoBatchDownloads() {
         AppState.scrapperDetails.paused
       ) {
         console.warn(
-          "[AutoBatch] Scrapping was abandoned, stopping batch processing"
+          "[AutoBatch] Scrapping was abandoned, stopping batch processing",
         );
         AppState.scrapperDetails.isAutoBatchDownloading = false;
         return;
@@ -516,12 +516,12 @@ export function startAutoBatchDownloads() {
       const allItems = AppState.allDirectLinks || [];
 
       console.log(
-        `[AutoBatch] Checking for items. Total: ${allItems.length}, Downloaded: ${AppState.downloadedURLs.length}`
+        `[AutoBatch] Checking for items. Total: ${allItems.length}, Downloaded: ${AppState.downloadedURLs.length}`,
       );
 
       // Filter out saved items
       const undownloadedItems = allItems.filter(
-        (item) => !AppState.downloadedURLs.includes(item.url)
+        (item) => !AppState.downloadedURLs.includes(item.url),
       );
 
       if (undownloadedItems.length === 0) {
@@ -531,12 +531,12 @@ export function startAutoBatchDownloads() {
         if (AppState.downloadPreferences.autoScrollMode !== "always") {
           // Scrolling has completed, check if all items are downloaded
           const allDownloaded = allItems.every((item) =>
-            AppState.downloadedURLs.includes(item.url)
+            AppState.downloadedURLs.includes(item.url),
           );
 
           if (allDownloaded) {
             console.log(
-              "[AutoBatch] All items downloaded, attempting final scroll-back check"
+              "[AutoBatch] All items downloaded, attempting final scroll-back check",
             );
 
             // Before marking complete, try scroll-back strategy to trigger load more
@@ -544,13 +544,13 @@ export function startAutoBatchDownloads() {
 
             if (shouldComplete) {
               console.log(
-                "[AutoBatch] Scroll-back check complete, marking as completed"
+                "[AutoBatch] Scroll-back check complete, marking as completed",
               );
               AppState.scrapperDetails.scrappingStage = "completed";
               AppState.scrapperDetails.isAutoBatchDownloading = false;
               localStorage.setItem(
                 STORAGE_KEYS.SCRAPPER_DETAILS,
-                JSON.stringify(AppState.scrapperDetails)
+                JSON.stringify(AppState.scrapperDetails),
               );
 
               // Refresh scrapper controls to show completion view
@@ -564,7 +564,7 @@ export function startAutoBatchDownloads() {
             } else {
               // New items were found, continue processing
               console.log(
-                "[AutoBatch] New items found after scroll-back, continuing"
+                "[AutoBatch] New items found after scroll-back, continuing",
               );
               continue;
             }
@@ -581,28 +581,33 @@ export function startAutoBatchDownloads() {
       const batchNumber = AppState.scrapperDetails.currentBatch;
 
       console.log(
-        `[AutoBatch] Batch ${batchNumber}: Found ${undownloadedItems.length} undownloaded items`
+        `[AutoBatch] Batch ${batchNumber}: Found ${undownloadedItems.length} undownloaded items`,
       );
 
       // Download the batch
       const result = await downloadBatch(undownloadedItems, batchNumber);
+
+      if (result.stopped) {
+        updateDownloadButtonLabelSimple();
+        return;
+      }
 
       // Increment batch number AFTER download completes (for next batch)
       AppState.scrapperDetails.currentBatch += 1;
       // Save to localStorage so batch number persists
       localStorage.setItem(
         STORAGE_KEYS.SCRAPPER_DETAILS,
-        JSON.stringify(AppState.scrapperDetails)
+        JSON.stringify(AppState.scrapperDetails),
       );
 
       if (result.success) {
         console.log(
-          `[AutoBatch] Batch ${batchNumber} completed: ${result.downloaded} items downloaded`
+          `[AutoBatch] Batch ${batchNumber} completed: ${result.downloaded} items downloaded`,
         );
       } else {
         console.warn(
           `[AutoBatch] Batch ${batchNumber} had errors:`,
-          result.error
+          result.error,
         );
       }
 
@@ -617,7 +622,7 @@ export function startAutoBatchDownloads() {
     if (AppState.scrapperDetails.scrappingStage !== "completed") {
       const allItems = AppState.allDirectLinks || [];
       const allDownloaded = allItems.every((item) =>
-        AppState.downloadedURLs.includes(item.url)
+        AppState.downloadedURLs.includes(item.url),
       );
 
       if (allDownloaded) {
@@ -629,7 +634,7 @@ export function startAutoBatchDownloads() {
           AppState.scrapperDetails.isAutoBatchDownloading = false;
           localStorage.setItem(
             STORAGE_KEYS.SCRAPPER_DETAILS,
-            JSON.stringify(AppState.scrapperDetails)
+            JSON.stringify(AppState.scrapperDetails),
           );
 
           // Refresh scrapper controls to show completion view
@@ -641,7 +646,7 @@ export function startAutoBatchDownloads() {
         } else {
           // New items were found, continue processing
           console.log(
-            "[AutoBatch] New items found after scroll-back, continuing"
+            "[AutoBatch] New items found after scroll-back, continuing",
           );
         }
       }
@@ -654,7 +659,7 @@ export function startAutoBatchDownloads() {
     AppState.scrapperDetails.isAutoBatchDownloading = false;
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
   });
 }
@@ -665,7 +670,7 @@ export function startAutoBatchDownloads() {
 function showScrapperCompletionModal() {
   // Remove any existing modal
   const existingModal = document.querySelector(
-    ".ettpd-scrapper-completion-modal"
+    ".ettpd-scrapper-completion-modal",
   );
   if (existingModal) {
     document.body.removeChild(existingModal);
@@ -719,7 +724,7 @@ function showScrapperCompletionModal() {
 
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
 
     // Remove modal
@@ -742,13 +747,13 @@ function showScrapperCompletionModal() {
     // Get all downloaded items by filtering allDirectLinks
     const allItems = AppState.allDirectLinks || [];
     const downloadedItems = allItems.filter((item) =>
-      AppState.downloadedURLs.includes(item.url)
+      AppState.downloadedURLs.includes(item.url),
     );
 
     if (downloadedItems.length === 0) {
       showToast(
         "No items to export",
-        "No downloaded items found to export to CSV."
+        "No downloaded items found to export to CSV.",
       );
       return;
     }
@@ -759,7 +764,7 @@ function showScrapperCompletionModal() {
     // Show success message
     showToast(
       "CSV Export Started",
-      `Exporting ${downloadedItems.length} downloaded items to CSV file.`
+      `Exporting ${downloadedItems.length} downloaded items to CSV file.`,
     );
   };
 
@@ -791,7 +796,7 @@ function showScrapperCompletionModal() {
     // Save to localStorage
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
 
     // Remove modal
@@ -846,7 +851,7 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
     if (AppState.debug.active)
       console.log(
         "SWIPE UP in the loop",
-        AppState.downloadPreferences.autoScrollMode
+        AppState.downloadPreferences.autoScrollMode,
       );
     if (
       AppState.scrapperDetails.scrappingStage == "initiated" &&
@@ -872,7 +877,7 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
       AppState.ui.isScrapperBoxOpen = true;
       localStorage.setItem(
         STORAGE_KEYS.SCRAPPER_DETAILS,
-        JSON.stringify(AppState.scrapperDetails)
+        JSON.stringify(AppState.scrapperDetails),
       );
 
       let listToScrape;
@@ -888,7 +893,7 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
             "[Tab Error] Tab not found:",
             selectedTabKey,
             "Available tabs:",
-            Object.keys(tabSpans).filter((k) => tabSpans[k] !== null)
+            Object.keys(tabSpans).filter((k) => tabSpans[k] !== null),
           );
 
           // Store the tab name for error message before clearing
@@ -900,13 +905,13 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
           AppState.scrapperDetails.selectedCollectionName = null;
           localStorage.setItem(
             STORAGE_KEYS.SCRAPPER_DETAILS,
-            JSON.stringify(AppState.scrapperDetails)
+            JSON.stringify(AppState.scrapperDetails),
           );
 
           showToast(
             "Tab not found",
             missingTabName +
-              ". Please ensure the tab is visible on the page and try again."
+              ". Please ensure the tab is visible on the page and try again.",
           );
 
           // Refresh controls to show stepper view
@@ -940,7 +945,7 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
     const interval =
       Math.floor(Math.random() * (maxInterval - minInterval)) + minInterval;
     AppState.ui.autoSwipeConfigurations.remainingTime = Math.floor(
-      interval / 1000
+      interval / 1000,
     );
 
     const ui = document.getElementById("autoSwipeUI");
@@ -956,7 +961,7 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
       if (AppState.downloadPreferences.autoScrollMode != "always") return;
       timerText.textContent = `Next Auto Scroll in ${Math.max(
         0,
-        AppState.ui.autoSwipeConfigurations.remainingTime--
+        AppState.ui.autoSwipeConfigurations.remainingTime--,
       )}s`;
       if (AppState.ui.autoSwipeConfigurations.remainingTime < 0)
         clearInterval(AppState.ui.autoSwipeConfigurations.countdownInterval);
@@ -970,7 +975,7 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
             "SWIPE UP ",
             canClickNextButton(),
             "all visible? ",
-            listScrollingCompleted()
+            listScrollingCompleted(),
           );
         clearInterval(AppState.ui.autoSwipeConfigurations.countdownInterval);
         if (
@@ -992,7 +997,7 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
         }
         loop(); // Repeat
       },
-      interval
+      interval,
     );
   }
 

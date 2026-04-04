@@ -21,6 +21,7 @@ export const STORAGE_KEYS = {
 
   // Scrapper
   SCRAPPER_DETAILS: "tik.tok::scrapperDetails",
+  PENDING_RESUME_DOWNLOAD: "tik.tok::pendingResumeDownload",
 
   // === ⬇️ Downloads Stats
   DOWNLOADS_ALL_TIME_COUNT: "tik.tok::downloads::allTimeCount", // number

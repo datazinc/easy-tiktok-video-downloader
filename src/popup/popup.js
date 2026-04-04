@@ -7,7 +7,9 @@
   // Resolve system theme to actual theme
   let resolvedTheme = themeMode;
   if (themeMode === "system") {
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const prefersDark = window.matchMedia(
+      "(prefers-color-scheme: dark)",
+    ).matches;
     resolvedTheme = prefersDark ? "dark" : "light";
   }
 
@@ -19,6 +21,25 @@
     document.documentElement.classList.remove("theme-dark");
   }
 })();
+
+function getExtensionVersion() {
+  try {
+    return chrome?.runtime?.getManifest?.().version || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function renderFooterMeta() {
+  const footerMeta = document.getElementById("footerMeta");
+  if (!footerMeta) return;
+
+  const year = new Date().getFullYear();
+  const version = getExtensionVersion();
+  footerMeta.innerHTML = `v${version} © ${year} <a href="https://linktr.ee/aimuhire" target="_blank" rel="noopener noreferrer">linktr.ee/aimuhire</a>`;
+}
+
+renderFooterMeta();
 
 // Check extension state and show appropriate UI
 const EXTENSION_ENABLED_KEY = "tik.tok::extensionEnabled";
@@ -36,7 +57,7 @@ async function getExtensionState() {
           if (chrome.runtime?.lastError) {
             console.warn(
               "Error reading extension state via message:",
-              chrome.runtime.lastError
+              chrome.runtime.lastError,
             );
             return resolve(null);
           }
@@ -48,7 +69,7 @@ async function getExtensionState() {
         try {
           localStorage.setItem(
             EXTENSION_ENABLED_KEY,
-            resp.enabled ? "true" : "false"
+            resp.enabled ? "true" : "false",
           );
         } catch {}
         return !!resp.enabled;
@@ -84,7 +105,7 @@ async function setExtensionState(enabled) {
               return reject(chrome.runtime.lastError);
             }
             resolve(r);
-          }
+          },
         );
       });
       if (resp?.success === false) {
@@ -108,25 +129,43 @@ async function setExtensionState(enabled) {
 }
 
 // Helper to wait for state confirmation with polling
-async function waitForStateConfirmation(expectedState, maxRetries = 20, delayMs = 150) {
-  console.log("[EXT_POWER] popup waitForStateConfirmation: waiting for", expectedState);
-  
+async function waitForStateConfirmation(
+  expectedState,
+  maxRetries = 20,
+  delayMs = 150,
+) {
+  console.log(
+    "[EXT_POWER] popup waitForStateConfirmation: waiting for",
+    expectedState,
+  );
+
   for (let i = 0; i < maxRetries; i++) {
     const currentState = await getExtensionState();
     if (currentState === expectedState) {
-      console.log("[EXT_POWER] popup state confirmed:", currentState, "after", i + 1, "attempts");
+      console.log(
+        "[EXT_POWER] popup state confirmed:",
+        currentState,
+        "after",
+        i + 1,
+        "attempts",
+      );
       // Small additional delay to ensure background has fully processed
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 50));
       return true;
     }
-    
+
     // Wait before next attempt
     if (i < maxRetries - 1) {
-      await new Promise(resolve => setTimeout(resolve, delayMs));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
-  
-  console.warn("[EXT_POWER] popup state confirmation timeout: expected", expectedState, "but got", await getExtensionState());
+
+  console.warn(
+    "[EXT_POWER] popup state confirmation timeout: expected",
+    expectedState,
+    "but got",
+    await getExtensionState(),
+  );
   return false;
 }
 
@@ -158,16 +197,16 @@ async function waitForStateConfirmation(expectedState, maxRetries = 20, delayMs 
 
       newBtn.addEventListener("click", async () => {
         console.log("[EXT_POWER] popup Turn On clicked");
-        
+
         // Get fresh references to UI elements
         const currentDisabledState = document.getElementById("disabled-state");
         const currentNormalState = document.getElementById("normal-state");
-        
+
         // Disable button and show loading state
         newBtn.disabled = true;
         const originalText = newBtn.textContent;
         newBtn.textContent = "Turning on...";
-        
+
         try {
           // Set up a one-time listener for state broadcast (if available)
           let stateUpdatePromise = null;
@@ -192,7 +231,7 @@ async function waitForStateConfirmation(expectedState, maxRetries = 20, delayMs 
                 resolve(false);
                 return;
               }
-              
+
               // Timeout after 3 seconds
               setTimeout(() => {
                 try {
@@ -202,7 +241,7 @@ async function waitForStateConfirmation(expectedState, maxRetries = 20, delayMs 
               }, 3000);
             });
           }
-          
+
           // Set the state
           await setExtensionState(true);
           console.log("[EXT_POWER] popup setExtensionState(true) completed");
@@ -250,9 +289,9 @@ async function waitForStateConfirmation(expectedState, maxRetries = 20, delayMs 
             "[EXT_POWER] popup state update - broadcast:",
             broadcastReceived,
             "poll:",
-            pollConfirmed
+            pollConfirmed,
           );
-          
+
           if (confirmed) {
             // Update UI immediately - directly manipulate for instant feedback
             // This ensures the UI updates right away without waiting for checkAndUpdateUI
@@ -262,7 +301,7 @@ async function waitForStateConfirmation(expectedState, maxRetries = 20, delayMs 
             if (currentNormalState) {
               currentNormalState.style.display = "block";
             }
-            
+
             // Verify the state one more time and update UI if needed
             // Use a small delay to ensure background has fully processed
             setTimeout(async () => {
@@ -275,7 +314,7 @@ async function waitForStateConfirmation(expectedState, maxRetries = 20, delayMs 
             newBtn.disabled = false;
             newBtn.textContent = originalText;
             console.error("[EXT_POWER] popup failed to confirm state change");
-            
+
             const errorMessage = document.createElement("p");
             errorMessage.textContent =
               "Failed to enable extension. Please try again.";
@@ -283,8 +322,9 @@ async function waitForStateConfirmation(expectedState, maxRetries = 20, delayMs 
               "margin-top: 15px; color: #ef4444; font-weight: bold;";
             if (currentDisabledState) {
               // Remove any existing messages
-              const existingMessages = currentDisabledState.querySelectorAll("p");
-              existingMessages.forEach(msg => {
+              const existingMessages =
+                currentDisabledState.querySelectorAll("p");
+              existingMessages.forEach((msg) => {
                 if (msg !== currentDisabledState.querySelector(".footnote")) {
                   msg.remove();
                 }
@@ -296,7 +336,7 @@ async function waitForStateConfirmation(expectedState, maxRetries = 20, delayMs 
           console.error("[EXT_POWER] popup error enabling extension:", err);
           newBtn.disabled = false;
           newBtn.textContent = originalText;
-          
+
           const errorMessage = document.createElement("p");
           errorMessage.textContent =
             "Error enabling extension. Please try again.";
@@ -305,7 +345,7 @@ async function waitForStateConfirmation(expectedState, maxRetries = 20, delayMs 
           if (currentDisabledState) {
             // Remove any existing messages
             const existingMessages = currentDisabledState.querySelectorAll("p");
-            existingMessages.forEach(msg => {
+            existingMessages.forEach((msg) => {
               if (msg !== currentDisabledState.querySelector(".footnote")) {
                 msg.remove();
               }
@@ -351,7 +391,7 @@ async function waitForStateConfirmation(expectedState, maxRetries = 20, delayMs 
           "[EXT_POWER] popup onChanged",
           changes[EXTENSION_ENABLED_KEY].oldValue,
           "->",
-          changes[EXTENSION_ENABLED_KEY].newValue
+          changes[EXTENSION_ENABLED_KEY].newValue,
         );
         checkAndUpdateUI();
       }
@@ -411,7 +451,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
             if (chrome.runtime.lastError) {
               console.warn(
                 "[Past Downloads] Failed to load progress:",
-                chrome.runtime.lastError
+                chrome.runtime.lastError,
               );
               resolve({});
               return;
@@ -420,7 +460,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
             console.log("[Past Downloads] Loaded progress:", progress);
             console.log(
               "[Past Downloads] Progress keys:",
-              Object.keys(progress)
+              Object.keys(progress),
             );
             resolve(progress);
           });
@@ -447,13 +487,13 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
                 if (chrome.runtime.lastError) {
                   console.warn(
                     "Failed to clear user:",
-                    chrome.runtime.lastError
+                    chrome.runtime.lastError,
                   );
                 } else {
                   console.log("✅ Cleared user:", normalizedUsername);
                 }
                 resolve();
-              }
+              },
             );
           });
         }
@@ -478,13 +518,13 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
                 if (chrome.runtime.lastError) {
                   console.warn(
                     "Failed to clear tab:",
-                    chrome.runtime.lastError
+                    chrome.runtime.lastError,
                   );
                 } else {
                   console.log("✅ Cleared tab:", normalizedUsername, tabName);
                 }
                 resolve();
-              }
+              },
             );
           });
         }
@@ -501,13 +541,13 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
               if (chrome.runtime.lastError) {
                 console.warn(
                   "Failed to clear all progress:",
-                  chrome.runtime.lastError
+                  chrome.runtime.lastError,
                 );
               } else {
                 console.log("✅ Cleared all progress");
               }
               resolve();
-            }
+            },
           );
         });
       } catch (err) {
@@ -529,7 +569,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
   const pastDownloadsBtn = document.getElementById("pastDownloadsBtn");
   const pastDownloadsModal = document.getElementById("pastDownloadsModal");
   const closePastDownloadsBtn = document.getElementById(
-    "closePastDownloadsBtn"
+    "closePastDownloadsBtn",
   );
   const pastDownloadsContent = document.getElementById("pastDownloadsContent");
 
@@ -570,6 +610,60 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
     return (
       tabNameMap[tabName] || tabName.charAt(0).toUpperCase() + tabName.slice(1)
     );
+  }
+
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  async function waitForTabComplete(tabId, expectedUrl, timeoutMs = 20000) {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const tab = await chrome.tabs.get(tabId);
+      const tabUrl = tab?.url || "";
+      const urlMatches = !expectedUrl || tabUrl.startsWith(expectedUrl);
+
+      if (tab?.status === "complete" && urlMatches) {
+        return true;
+      }
+
+      await wait(400);
+    }
+
+    return false;
+  }
+
+  async function sendResumeMessageWithRetry(tabId, payload) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const wasSent = await new Promise((resolve) => {
+        chrome.tabs.sendMessage(
+          tabId,
+          {
+            action: "resumeDownload",
+            payload,
+          },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              console.warn(
+                `[Resume Download] sendMessage attempt ${attempt + 1} failed:`,
+                chrome.runtime.lastError,
+              );
+              resolve(false);
+              return;
+            }
+
+            resolve(response?.success !== false);
+          },
+        );
+      });
+
+      if (wasSent) {
+        return true;
+      }
+
+      await wait(500);
+    }
+
+    return false;
   }
 
   async function renderPastDownloads() {
@@ -624,7 +718,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
             <div class="past-downloads-tab">
               <div class="past-downloads-tab-meta">
                 <span class="past-downloads-tab-label">${formatTabName(
-                  tabName
+                  tabName,
                 )}</span>
                 <span class="past-downloads-tab-count">${count} items</span>
               </div>
@@ -678,15 +772,24 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
           const username = e.target.dataset.username;
           const tabName = e.target.dataset.tab;
           try {
-            const videoIds = await progressStorage.getProgress(username, tabName);
-            
+            const videoIds = await progressStorage.getProgress(
+              username,
+              tabName,
+            );
+
             if (!videoIds || videoIds.length === 0) {
               alert("No items to export");
               return;
             }
 
             // Create CSV content
-            const headers = ["index", "videoId", "imageIndex", "username", "tab"];
+            const headers = [
+              "index",
+              "videoId",
+              "imageIndex",
+              "username",
+              "tab",
+            ];
             const rows = videoIds.map((videoId, index) => {
               // Handle image posts with sequence numbers (videoId:sequence)
               let baseVideoId = videoId;
@@ -696,30 +799,34 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
                 baseVideoId = parts[0];
                 imageIndex = parts[1] || "";
               }
-              
+
               const row = [
                 index + 1,
                 baseVideoId,
                 imageIndex,
                 username,
-                tabName
+                tabName,
               ];
-              return row.map((val) => `"${String(val).replace(/"/g, '""')}"`).join(",");
+              return row
+                .map((val) => `"${String(val).replace(/"/g, '""')}"`)
+                .join(",");
             });
 
             const csvContent = [headers.join(","), ...rows].join("\n");
-            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+            const blob = new Blob([csvContent], {
+              type: "text/csv;charset=utf-8;",
+            });
             const url = URL.createObjectURL(blob);
             const sanitizedUsername = username.replace(/[^a-zA-Z0-9_]/g, "_");
             const sanitizedTab = tabName.replace(/[^a-zA-Z0-9_]/g, "_");
             const filename = `downloads_${sanitizedUsername}_${sanitizedTab}_${new Date().toISOString().split("T")[0]}.csv`;
-            
+
             const a = document.createElement("a");
             a.href = url;
             a.download = filename;
             a.click();
             URL.revokeObjectURL(url);
-            
+
             // Close popup after successful CSV download
             setTimeout(() => {
               window.close();
@@ -736,18 +843,25 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
         btn.addEventListener("click", async (e) => {
           const username = e.target.dataset.username;
           const tabName = e.target.dataset.tab;
-          
+
           try {
             // Get the active tab
-            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            const tabs = await chrome.tabs.query({
+              active: true,
+              currentWindow: true,
+            });
             if (!tabs[0]) {
               alert("Please open a TikTok page first");
               return;
             }
 
             const currentUrl = tabs[0].url;
-            const isCollection = tabName !== "videos" && tabName !== "liked" && tabName !== "favorites" && tabName !== "reposts";
-            
+            const isCollection =
+              tabName !== "videos" &&
+              tabName !== "liked" &&
+              tabName !== "favorites" &&
+              tabName !== "reposts";
+
             // Get collection URL if this is a collection
             let collectionUrl = null;
             if (isCollection) {
@@ -758,12 +872,15 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
                     { action: "getCollectionUrl", username, tabName },
                     (resp) => {
                       if (chrome.runtime.lastError) {
-                        console.warn("Failed to get collection URL:", chrome.runtime.lastError);
+                        console.warn(
+                          "Failed to get collection URL:",
+                          chrome.runtime.lastError,
+                        );
                         resolve(null);
                       } else {
                         resolve(resp?.collectionUrl || null);
                       }
-                    }
+                    },
                   );
                 });
                 collectionUrl = response;
@@ -771,7 +888,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
                 console.warn("Failed to retrieve collection URL:", err);
               }
             }
-            
+
             // Determine target URL
             let targetUrl;
             if (isCollection && collectionUrl) {
@@ -781,57 +898,56 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
               // Fall back to profile URL
               targetUrl = `https://www.tiktok.com/@${username}`;
             }
-            
+
+            const resumePayload = {
+              username,
+              tabName,
+              isCollection,
+              collectionUrl,
+            };
+
             // Navigate to the target URL if not already there
-            if (!currentUrl.includes(targetUrl.replace("https://www.tiktok.com", ""))) {
+            if (
+              !currentUrl.includes(
+                targetUrl.replace("https://www.tiktok.com", ""),
+              )
+            ) {
               await chrome.tabs.update(tabs[0].id, { url: targetUrl });
-              // Wait for page to load, then send message
-              setTimeout(() => {
-                chrome.tabs.sendMessage(
-                  tabs[0].id,
-                  {
-                    action: "resumeDownload",
-                    payload: {
-                      username: username,
-                      tabName: tabName,
-                      isCollection: isCollection,
-                      collectionUrl: collectionUrl,
-                    },
-                  },
-                  (response) => {
-                    if (chrome.runtime.lastError) {
-                      console.warn("Failed to send resume message:", chrome.runtime.lastError);
-                      alert("Failed to trigger download. Please make sure you're on the correct page.");
-                    } else {
-                      // Close popup after successfully sending resume message
-                      window.close();
-                    }
-                  }
+              const pageReady = await waitForTabComplete(tabs[0].id, targetUrl);
+              if (!pageReady) {
+                alert(
+                  "The TikTok page took too long to load. Please try again once it finishes loading.",
                 );
-              }, 3000);
-            } else {
-              // Already on the target page, send the message
-              chrome.tabs.sendMessage(
+                return;
+              }
+
+              const sent = await sendResumeMessageWithRetry(
                 tabs[0].id,
-                {
-                  action: "resumeDownload",
-                  payload: {
-                    username: username,
-                    tabName: tabName,
-                    isCollection: isCollection,
-                    collectionUrl: collectionUrl,
-                  },
-                },
-                (response) => {
-                  if (chrome.runtime.lastError) {
-                    console.warn("Failed to send resume message:", chrome.runtime.lastError);
-                    alert("Failed to trigger download. Please refresh the page.");
-                  } else {
-                    // Close popup after successfully sending resume message
-                    window.close();
-                  }
-                }
+                resumePayload,
               );
+
+              if (!sent) {
+                alert(
+                  "Failed to trigger resume after navigation. Please refresh the page and try again.",
+                );
+                return;
+              }
+
+              window.close();
+            } else {
+              const sent = await sendResumeMessageWithRetry(
+                tabs[0].id,
+                resumePayload,
+              );
+
+              if (!sent) {
+                alert(
+                  "Failed to trigger download. Please refresh the page and try again.",
+                );
+                return;
+              }
+
+              window.close();
             }
           } catch (err) {
             console.error("Failed to resume download:", err);
@@ -846,7 +962,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
           const tabName = e.target.dataset.tab;
           if (
             confirm(
-              `Clear ${formatTabName(tabName)} downloads for @${username}?`
+              `Clear ${formatTabName(tabName)} downloads for @${username}?`,
             )
           ) {
             await progressStorage.clearTab(username, tabName);

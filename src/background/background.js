@@ -38,13 +38,134 @@ function makeError(code, message, extra = {}) {
   return { success: false, code, error: message, message, ...extra };
 }
 
+function detectBrowserUA() {
+  const ua =
+    typeof navigator !== "undefined" && typeof navigator.userAgent === "string"
+      ? navigator.userAgent
+      : "";
+
+  if (/firefox/i.test(ua)) return "firefox";
+  if (/edge|edg/i.test(ua)) return "edge";
+  if (/opr|opera/i.test(ua)) return "opera";
+  if (/chrome|chromium|crios/i.test(ua) && !/edge|edg|opr|opera/i.test(ua))
+    return "chrome";
+  if (/safari/i.test(ua) && !/chrome|chromium|crios/i.test(ua)) return "safari";
+
+  return "unknown";
+}
+
+function detectBrowserFromRuntime() {
+  const runtime =
+    typeof chrome !== "undefined" && chrome?.runtime
+      ? chrome.runtime
+      : typeof browser !== "undefined" && browser?.runtime
+        ? browser.runtime
+        : null;
+
+  if (!runtime || typeof runtime.getURL !== "function") {
+    return null;
+  }
+
+  try {
+    const extensionUrl = runtime.getURL("/");
+
+    if (typeof extensionUrl === "string") {
+      if (extensionUrl.startsWith("moz-extension://")) return "firefox";
+      if (extensionUrl.startsWith("chrome-extension://")) return "chrome";
+      if (extensionUrl.startsWith("safari-web-extension://")) return "safari";
+    }
+  } catch {}
+
+  return null;
+}
+
 // Optional: simple browser detector (useful for debug logs)
 function detectBrowser() {
-  if (typeof browser !== "undefined" && typeof browser.runtime !== "undefined")
-    return "firefox";
-  if (typeof chrome !== "undefined" && typeof chrome.runtime !== "undefined")
-    return "chrome";
-  return "unknown";
+  return detectBrowserFromRuntime() || detectBrowserUA();
+}
+
+function isArrayBuffer(value) {
+  return (
+    value instanceof ArrayBuffer ||
+    Object.prototype.toString.call(value) === "[object ArrayBuffer]"
+  );
+}
+
+function getArrayBuffer(value) {
+  if (isArrayBuffer(value)) {
+    return value;
+  }
+
+  if (ArrayBuffer.isView(value) && isArrayBuffer(value.buffer)) {
+    const start = value.byteOffset || 0;
+    const end = start + value.byteLength;
+    return start === 0 && end === value.buffer.byteLength
+      ? value.buffer
+      : value.buffer.slice(start, end);
+  }
+
+  if (value && isArrayBuffer(value.buffer)) {
+    const start =
+      typeof value.byteOffset === "number" && value.byteOffset >= 0
+        ? value.byteOffset
+        : 0;
+    const end =
+      typeof value.byteLength === "number" && value.byteLength >= 0
+        ? start + value.byteLength
+        : value.buffer.byteLength;
+    return start === 0 && end === value.buffer.byteLength
+      ? value.buffer
+      : value.buffer.slice(start, end);
+  }
+
+  return null;
+}
+
+function describeBinaryPayload(value) {
+  return {
+    type: value == null ? String(value) : typeof value,
+    tag: value == null ? null : Object.prototype.toString.call(value),
+    constructorName: value?.constructor?.name || null,
+    isView: ArrayBuffer.isView(value),
+    byteLength: typeof value?.byteLength === "number" ? value.byteLength : null,
+    hasBuffer: !!value?.buffer,
+    bufferTag:
+      value?.buffer == null
+        ? null
+        : Object.prototype.toString.call(value.buffer),
+    ownKeysSample:
+      value && typeof value === "object"
+        ? Object.keys(value).slice(0, 8)
+        : null,
+  };
+}
+
+function summarizeDownloadPayload(payload) {
+  const arrayBuffer = getArrayBuffer(payload?.buffer);
+
+  return {
+    requestId: payload?.requestId || null,
+    filename: payload?.filename || null,
+    filenameLength:
+      typeof payload?.filename === "string" ? payload.filename.length : null,
+    showFolderPicker:
+      typeof payload?.showFolderPicker === "boolean"
+        ? payload.showFolderPicker
+        : null,
+    blobUrlPrefix:
+      typeof payload?.blobUrl === "string"
+        ? payload.blobUrl.slice(0, 32)
+        : null,
+    bufferBytes: arrayBuffer ? arrayBuffer.byteLength : null,
+  };
+}
+
+function summarizeSender(sender) {
+  return {
+    frameId: sender?.frameId ?? null,
+    tabId: sender?.tab?.id ?? null,
+    url: sender?.url || sender?.tab?.url || null,
+  };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -94,10 +215,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 if (chrome.runtime?.lastError && DEBUG()) {
                   console.warn(
                     "[COM_EXT] storage.set error (non-fatal):",
-                    chrome.runtime.lastError
+                    chrome.runtime.lastError,
                   );
                 }
-              }
+              },
             );
           }
         } catch (err) {
@@ -117,7 +238,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (chrome.runtime.lastError && DEBUG()) {
               console.log(
                 "[COM_EXT] runtime.sendMessage error (expected):",
-                chrome.runtime.lastError.message
+                chrome.runtime.lastError.message,
               );
             }
           });
@@ -213,35 +334,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (action === "downloadArrayBuffer") {
     try {
       const payload = message?.payload ?? {};
-      const { buffer, filename, showFolderPicker } = payload;
+      const { buffer, filename, requestId, showFolderPicker } = payload;
+      const senderSummary = summarizeSender(sender);
+      const arrayBuffer = getArrayBuffer(buffer);
 
-      if (
-        !(buffer instanceof ArrayBuffer) &&
-        !(buffer?.buffer instanceof ArrayBuffer)
-      ) {
+      if (!arrayBuffer) {
+        console.error("[Background] ❌ Invalid ArrayBuffer payload:", {
+          ...summarizeDownloadPayload(payload),
+          buffer: describeBinaryPayload(buffer),
+          sender: senderSummary,
+        });
         return finish(
           makeError(
             "ERR_INVALID_BUFFER",
-            "payload.buffer must be an ArrayBuffer"
-          )
+            "payload.buffer must be an ArrayBuffer",
+          ),
         );
       }
       if (typeof filename !== "string" || !filename.trim()) {
         const errorMsg = `Invalid filename in downloadArrayBuffer: expected non-empty string, got ${typeof filename}${
           filename
             ? ` (length: ${filename.length}, contains: "${String(
-                filename
+                filename,
               ).slice(0, 50)}")`
             : ""
         }`;
         console.error(
           "[Background] ❌ Filename validation failed (ArrayBuffer):",
           {
+            requestId,
             filename,
             type: typeof filename,
             trimmed: filename?.trim(),
             error: errorMsg,
-          }
+            sender: senderSummary,
+          },
         );
         return finish(makeError("ERR_INVALID_FILENAME", errorMsg));
       }
@@ -249,26 +376,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return finish(
           makeError(
             "ERR_INVALID_SAVEAS_FLAG",
-            "showFolderPicker must be a boolean when provided."
-          )
+            "showFolderPicker must be a boolean when provided.",
+          ),
         );
       }
 
-      const blob = new Blob([
-        buffer instanceof ArrayBuffer ? buffer : buffer.buffer,
-      ]);
+      const blob = new Blob([arrayBuffer]);
       const objUrl = URL.createObjectURL(blob);
+      const saveAs = showFolderPicker === undefined ? true : !!showFolderPicker;
+
+      if (DEBUG()) {
+        console.warn(
+          "[Background] Starting chrome.downloads.download from ArrayBuffer",
+          {
+            ...summarizeDownloadPayload(payload),
+            saveAs,
+            browser: detectBrowser(),
+            sender: senderSummary,
+          },
+        );
+      }
 
       // Watchdog in case the downloads callback never fires
       watchdogId = setTimeout(() => {
         try {
           URL.revokeObjectURL(objUrl);
         } catch {}
+        console.error(
+          "[Background] ❌ chrome.downloads.download timed out (ArrayBuffer):",
+          {
+            requestId,
+            filename,
+            saveAs,
+            sender: senderSummary,
+          },
+        );
         finish(
           makeError(
             "ERR_DOWNLOAD_TIMEOUT",
-            "Timed out waiting for chrome.downloads.download callback (20s)."
-          )
+            "Timed out waiting for chrome.downloads.download callback (20s).",
+          ),
         );
       }, 20000);
 
@@ -278,7 +425,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         {
           url: objUrl,
           filename,
-          saveAs: showFolderPicker === undefined ? true : !!showFolderPicker,
+          saveAs,
           // conflictAction: "uniquify", // or "overwrite" | "prompt"
         },
         (downloadId) => {
@@ -294,11 +441,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             console.error(
               "[Background] ❌ Chrome downloads.download failed (ArrayBuffer):",
               {
+                requestId,
                 error: lastErr.message,
                 filename,
                 filenameLength: filename?.length,
                 hasUnicode: filename ? /[^\x00-\x7F]/.test(filename) : false,
-              }
+                saveAs,
+                sender: senderSummary,
+              },
             );
             return finish(makeError("ERR_CHROME_DOWNLOADS", errorMsg));
           }
@@ -307,11 +457,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             try {
               URL.revokeObjectURL(objUrl);
             } catch {}
+            console.error(
+              "[Background] ❌ chrome.downloads.download returned no downloadId (ArrayBuffer):",
+              {
+                requestId,
+                filename,
+                saveAs,
+                sender: senderSummary,
+              },
+            );
             return finish(
               makeError(
                 "ERR_NO_DOWNLOAD_ID",
-                "chrome.downloads.download did not return a downloadId."
-              )
+                "chrome.downloads.download did not return a downloadId.",
+              ),
             );
           }
 
@@ -326,7 +485,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }, 5000);
 
           finish({ success: true, downloadId });
-        }
+        },
       );
     } catch (e) {
       finish(makeError("ERR_HANDLER_THROW", e?.message || String(e)));
@@ -339,9 +498,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (action === "downloadBlobUrl") {
     try {
       const payload = message?.payload ?? {};
-      const { blobUrl, filename, showFolderPicker } = payload;
+      const { blobUrl, filename, requestId, showFolderPicker } = payload;
+      const senderSummary = summarizeSender(sender);
 
       if (typeof blobUrl !== "string" || !blobUrl.startsWith("blob:")) {
+        console.error("[Background] ❌ Invalid blob URL payload:", {
+          ...summarizeDownloadPayload(payload),
+          sender: senderSummary,
+        });
         return finish(
           makeError(
             "ERR_INVALID_BLOB_URL",
@@ -351,23 +515,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 typeof blobUrl === "string"
                   ? blobUrl.slice(0, 64)
                   : typeof blobUrl,
-            }
-          )
+            },
+          ),
         );
       }
       if (typeof filename !== "string" || !filename.trim()) {
         const errorMsg = `Invalid filename in downloadBlobUrl: expected non-empty string, got ${typeof filename}${
           filename
             ? ` (length: ${filename.length}, contains: "${String(
-                filename
+                filename,
               ).slice(0, 50)}")`
             : ""
         }`;
         console.error("[Background] ❌ Filename validation failed (BlobUrl):", {
+          requestId,
           filename,
           type: typeof filename,
           trimmed: filename?.trim(),
           error: errorMsg,
+          sender: senderSummary,
         });
         return finish(makeError("ERR_INVALID_FILENAME", errorMsg));
       }
@@ -375,20 +541,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return finish(
           makeError(
             "ERR_INVALID_SAVEAS_FLAG",
-            "showFolderPicker must be a boolean when provided."
-          )
+            "showFolderPicker must be a boolean when provided.",
+          ),
         );
       }
 
       // Note: This blob URL belongs to the page context; background CAN’T revoke it.
       // We simply attempt the download; if Firefox or Chrome rejects, the caller can fallback.
 
+      const saveAs = showFolderPicker === undefined ? true : !!showFolderPicker;
+
+      if (DEBUG()) {
+        console.warn(
+          "[Background] Starting chrome.downloads.download from blob URL",
+          {
+            ...summarizeDownloadPayload(payload),
+            saveAs,
+            browser: detectBrowser(),
+            sender: senderSummary,
+          },
+        );
+      }
+
       watchdogId = setTimeout(() => {
+        console.error(
+          "[Background] ❌ chrome.downloads.download timed out (BlobUrl):",
+          {
+            requestId,
+            filename,
+            saveAs,
+            sender: senderSummary,
+          },
+        );
         finish(
           makeError(
             "ERR_DOWNLOAD_TIMEOUT",
-            "Timed out waiting for chrome.downloads.download callback (20s)."
-          )
+            "Timed out waiting for chrome.downloads.download callback (20s).",
+          ),
         );
       }, 20000);
 
@@ -398,7 +587,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         {
           url: blobUrl,
           filename,
-          saveAs: showFolderPicker === undefined ? true : !!showFolderPicker,
+          saveAs,
           // conflictAction: "uniquify",
         },
         (downloadId) => {
@@ -416,32 +605,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             console.error(
               "[Background] ❌ Chrome downloads.download failed (BlobUrl):",
               {
+                requestId,
                 error: lastErr.message,
                 filename,
                 filenameLength: filename?.length,
                 hasUnicode: filename ? /[^\x00-\x7F]/.test(filename) : false,
-              }
+                saveAs,
+                sender: senderSummary,
+              },
             );
             return finish(makeError("ERR_CHROME_DOWNLOADS", errorMsg));
           }
 
           if (typeof downloadId !== "number") {
+            console.error(
+              "[Background] ❌ chrome.downloads.download returned no downloadId (BlobUrl):",
+              {
+                requestId,
+                filename,
+                saveAs,
+                sender: senderSummary,
+              },
+            );
             return finish(
               makeError(
                 "ERR_NO_DOWNLOAD_ID",
-                "chrome.downloads.download did not return a downloadId."
-              )
+                "chrome.downloads.download did not return a downloadId.",
+              ),
             );
           }
 
           finish({ success: true, downloadId });
-        }
+        },
       );
     } catch (e) {
       finish(
         makeError("ERR_HANDLER_THROW", e?.message || String(e), {
           stack: e?.stack,
-        })
+        }),
       );
     }
 

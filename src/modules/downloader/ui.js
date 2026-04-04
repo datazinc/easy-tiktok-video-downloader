@@ -43,6 +43,9 @@ import {
   applyTemplate,
   isOnProfileOrCollectionPage,
   saveCSVFile,
+  stopActiveBatchDownload,
+  findFiberItemById,
+  findFiberItemsInContainer,
 } from "../utils/utils.js";
 import {
   startAutoSwipeLoop,
@@ -313,7 +316,7 @@ export function setButtonWithIcon(
   button,
   text,
   iconName = null,
-  iconPosition = "before"
+  iconPosition = "before",
 ) {
   // Clear existing content
   button.textContent = "";
@@ -352,7 +355,7 @@ export function getResolvedThemeMode() {
   // If system is selected, detect system preference
   if (normalized === "system") {
     const prefersDark = window.matchMedia(
-      "(prefers-color-scheme: dark)"
+      "(prefers-color-scheme: dark)",
     ).matches;
     return prefersDark ? "dark" : "light";
   }
@@ -390,7 +393,7 @@ function createHeaderPowerButton() {
     button.title = enabled ? "Turn extension off" : "Turn extension on";
     button.setAttribute(
       "aria-label",
-      enabled ? "Turn extension off" : "Turn extension on"
+      enabled ? "Turn extension off" : "Turn extension on",
     );
   };
 
@@ -401,7 +404,7 @@ function createHeaderPowerButton() {
     const currentState = isExtensionEnabledSync();
     console.log(
       "[EXT_POWER] header button clicked, currentState:",
-      currentState
+      currentState,
     );
 
     if (currentState) {
@@ -441,7 +444,7 @@ function createHeaderPowerButton() {
 
           showToast(
             "Extension disabled",
-            "Reloading the page to stop the downloader..."
+            "Reloading the page to stop the downloader...",
           );
 
           const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
@@ -469,7 +472,7 @@ function createHeaderPowerButton() {
     applyState(true);
     showToast(
       "Extension enabled",
-      "Reload the page for changes to take effect."
+      "Reload the page for changes to take effect.",
     );
   };
 
@@ -514,7 +517,11 @@ export function createDownloaderWrapper() {
     { value: "top-left", icon: "corner-top-left", label: "Top Left" },
     { value: "top-right", icon: "corner-top-right", label: "Top Right" },
     { value: "bottom-left", icon: "corner-bottom-left", label: "Bottom Left" },
-    { value: "bottom-right", icon: "corner-bottom-right", label: "Bottom Right" },
+    {
+      value: "bottom-right",
+      icon: "corner-bottom-right",
+      label: "Bottom Right",
+    },
   ];
 
   let selectedCornerValue = "";
@@ -561,7 +568,10 @@ export function createDownloaderWrapper() {
       // Update toggle icon
       const newIcon = createIcon(icon, 14);
       newIcon.setAttribute("class", "ettpd-corner-select-icon");
-      cornerToggle.replaceChild(newIcon, cornerToggle.querySelector(".ettpd-corner-select-icon"));
+      cornerToggle.replaceChild(
+        newIcon,
+        cornerToggle.querySelector(".ettpd-corner-select-icon"),
+      );
       cornerIcon = newIcon;
 
       // Close menu
@@ -598,7 +608,9 @@ export function createDownloaderWrapper() {
   // Helper to set the selected corner value programmatically
   const setCornerValue = (val) => {
     selectedCornerValue = val;
-    const match = cornerOptions.find((o) => o.value === val) || cornerOptions[cornerOptions.length - 1];
+    const match =
+      cornerOptions.find((o) => o.value === val) ||
+      cornerOptions[cornerOptions.length - 1];
     const newIcon = createIcon(match.icon, 14);
     newIcon.setAttribute("class", "ettpd-corner-select-icon");
     const oldIcon = cornerToggle.querySelector(".ettpd-corner-select-icon");
@@ -662,12 +674,12 @@ export function createDownloaderWrapper() {
   const saved =
     localStorage.getItem(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE) ||
     "bottom-right";
-  
+
   // Set initial select value and icon
   if (saved && saved !== "custom") {
     setCornerValue(saved);
   }
-  
+
   if (saved === "custom") {
     const pos =
       AppState.ui.live_ETTPD_CUSTOM_POS &&
@@ -693,7 +705,7 @@ export function createDownloaderWrapper() {
   // Use setTimeout to ensure wrapper is in DOM before constraining
   setTimeout(() => {
     constrainWrapperToViewport(wrapper);
-    
+
     // If using custom position, update saved position with constrained values
     if (saved === "custom") {
       const pos = constrainWrapperToViewport(wrapper);
@@ -701,7 +713,7 @@ export function createDownloaderWrapper() {
         AppState.ui.live_ETTPD_CUSTOM_POS = JSON.stringify(pos);
         localStorage.setItem(
           STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION,
-          AppState.ui.live_ETTPD_CUSTOM_POS
+          AppState.ui.live_ETTPD_CUSTOM_POS,
         );
       }
     }
@@ -764,7 +776,7 @@ async function createResumableDownloadsContainer(pageInfo, tabOptions) {
 
           // Check if we have a collection tab option
           const collectionTabOption = tabOptions.find(
-            (opt) => opt.key === "collection"
+            (opt) => opt.key === "collection",
           );
           if (collectionTabOption && pageInfo.collectionName) {
             // Decode and format the stored collection name for comparison
@@ -782,7 +794,7 @@ async function createResumableDownloadsContainer(pageInfo, tabOptions) {
             // Get the current collection name (also remove numeric suffix for comparison)
             let currentCollectionName = pageInfo.collectionName.replace(
               /-\d+$/,
-              ""
+              "",
             );
 
             // Only show if this collection matches the current page's collection
@@ -891,7 +903,7 @@ function renderActiveScrappingView() {
 
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
 
     // Re-render with stepper view
@@ -919,7 +931,7 @@ function renderActiveScrappingView() {
   const tabName = document.createElement("span");
   tabName.className = "ettpd-progress-tab-name";
   const tabDisplay = toTitleCase(
-    AppState.scrapperDetails.selectedTab || "Scrapper"
+    AppState.scrapperDetails.selectedTab || "Scrapper",
   );
   tabName.textContent =
     tabDisplay.length > 12 ? tabDisplay.slice(0, 12) + "..." : tabDisplay;
@@ -938,7 +950,7 @@ function renderActiveScrappingView() {
   setButtonWithIcon(
     pauseBtn,
     "",
-    AppState.scrapperDetails.paused ? "play" : "pause"
+    AppState.scrapperDetails.paused ? "play" : "pause",
   );
   pauseBtn.title = AppState.scrapperDetails.paused ? "Resume" : "Pause";
   pauseBtn.style.cssText = `
@@ -981,7 +993,7 @@ function renderActiveScrappingView() {
     }
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
     pauseBtn.onmouseover = () => {
       pauseBtn.style.background = AppState.scrapperDetails.paused
@@ -1071,7 +1083,7 @@ function renderActiveScrappingView() {
       // Normal case: count discovered items downloaded in this session
       const sessionDownloadedUrlsSet = new Set(AppState.downloadedURLs);
       downloaded = AppState.allDirectLinks.filter((item) =>
-        sessionDownloadedUrlsSet.has(item.url)
+        sessionDownloadedUrlsSet.has(item.url),
       ).length;
       // B = discovered items in this session
       maxCount = discovered;
@@ -1199,7 +1211,7 @@ async function renderCompletedView() {
 
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
 
     // Re-render with stepper view
@@ -1224,7 +1236,7 @@ async function renderCompletedView() {
 
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
 
     // Re-render with stepper view
@@ -1266,7 +1278,7 @@ async function renderCompletedView() {
 
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
 
     startAutoBatchDownloads();
@@ -1300,13 +1312,13 @@ async function renderCompletedView() {
   csvBtn.onclick = () => {
     const allItems = AppState.allDirectLinks || [];
     const downloadedItems = allItems.filter((item) =>
-      AppState.downloadedURLs.includes(item.url)
+      AppState.downloadedURLs.includes(item.url),
     );
 
     if (downloadedItems.length === 0) {
       showToast(
         "No items to export",
-        "No downloaded items found to export to CSV."
+        "No downloaded items found to export to CSV.",
       );
       return;
     }
@@ -1314,7 +1326,7 @@ async function renderCompletedView() {
     saveCSVFile(downloadedItems);
     showToast(
       "CSV Export Started",
-      `Exporting ${downloadedItems.length} downloaded items to CSV file.`
+      `Exporting ${downloadedItems.length} downloaded items to CSV file.`,
     );
   };
 
@@ -1356,7 +1368,7 @@ async function renderCompletedView() {
 
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
 
     showScrapperControls();
@@ -1397,9 +1409,7 @@ async function renderCompletedView() {
     });
 
     // Filter out the currently completed tab
-    const otherTabs = availableTabs.filter(
-      (tab) => tab.key !== selectedTab
-    );
+    const otherTabs = availableTabs.filter((tab) => tab.key !== selectedTab);
 
     if (otherTabs.length > 0) {
       const separator = document.createElement("div");
@@ -1484,7 +1494,7 @@ async function renderCompletedView() {
           // Save state
           localStorage.setItem(
             STORAGE_KEYS.SCRAPPER_DETAILS,
-            JSON.stringify(AppState.scrapperDetails)
+            JSON.stringify(AppState.scrapperDetails),
           );
 
           // Start scraping the new tab
@@ -1593,7 +1603,7 @@ async function startScrappingProcess(tabKey, pageInfo) {
         const userChoice = await showDownloadConfirmationModal(
           username,
           tabName,
-          existingProgress.length
+          existingProgress.length,
         );
 
         if (userChoice === "cancel") {
@@ -1631,7 +1641,7 @@ async function startScrappingProcess(tabKey, pageInfo) {
           username,
           collectionName,
           existingVideoIds || [],
-          window.location.pathname
+          window.location.pathname,
         );
       });
     }
@@ -1639,7 +1649,7 @@ async function startScrappingProcess(tabKey, pageInfo) {
 
   localStorage.setItem(
     STORAGE_KEYS.SCRAPPER_DETAILS,
-    JSON.stringify(AppState.scrapperDetails)
+    JSON.stringify(AppState.scrapperDetails),
   );
 
   window.location.href = window.location.pathname;
@@ -1688,7 +1698,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
   // Get resumable downloads
   const resumableContainer = await createResumableDownloadsContainer(
     pageInfo,
-    tabOptions
+    tabOptions,
   );
   const hasResumableDownloads = resumableContainer !== null;
   const hasSelectedTab = AppState.scrapperDetails.selectedTab !== null;
@@ -1718,9 +1728,9 @@ async function createStepperView(pageInfo, tabOptions, spans) {
             i + 1 === currentStep
               ? "active"
               : i + 1 < currentStep
-              ? "completed"
-              : ""
-          }"></span>`
+                ? "completed"
+                : ""
+          }"></span>`,
       ).join("")}
     </div>
   `;
@@ -1773,7 +1783,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
               // Get the current collection name (also remove numeric suffix for comparison)
               const currentCollectionName = pageInfo.collectionName.replace(
                 /-\d+$/,
-                ""
+                "",
               );
 
               // Only add if the collection name matches
@@ -1788,7 +1798,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
 
     // Filter out tabs that are already resumable - show only tabs for new downloads
     const tabsForNewDownloads = availableTabs.filter(
-      (tab) => !resumableTabKeys.has(tab.key)
+      (tab) => !resumableTabKeys.has(tab.key),
     );
 
     // Show other available tabs for new downloads
@@ -1844,7 +1854,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
           // Save state
           localStorage.setItem(
             STORAGE_KEYS.SCRAPPER_DETAILS,
-            JSON.stringify(AppState.scrapperDetails)
+            JSON.stringify(AppState.scrapperDetails),
           );
 
           // Refresh controls to show Step 3 (start action)
@@ -1916,7 +1926,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
             updateButtonWithIcon(
               refreshTabsBtn,
               "Check for More Tabs",
-              "refresh"
+              "refresh",
             );
             refreshTabsBtn.style.background = "#f0f0f0";
             // Show a brief message
@@ -1931,7 +1941,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
           updateButtonWithIcon(
             refreshTabsBtn,
             "Check for More Tabs",
-            "refresh"
+            "refresh",
           );
           refreshTabsBtn.style.background = "#f0f0f0";
         } finally {
@@ -2043,7 +2053,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
             updateButtonWithIcon(
               refreshTabsBtn,
               "Check for More Tabs",
-              "refresh"
+              "refresh",
             );
             refreshTabsBtn.style.background = "#f0f0f0";
             // Show a brief message
@@ -2058,7 +2068,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
           updateButtonWithIcon(
             refreshTabsBtn,
             "Check for More Tabs",
-            "refresh"
+            "refresh",
           );
           refreshTabsBtn.style.background = "#f0f0f0";
         } finally {
@@ -2198,7 +2208,7 @@ async function hasEvidence(username, tabName) {
 
 export async function showScrapperControls() {
   const scrapperContainer = document.getElementById(
-    DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER
+    DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER,
   );
   if (!scrapperContainer) return;
   scrapperContainer.style.display = AppState.ui.isScrapperBoxOpen
@@ -2269,7 +2279,7 @@ export async function showScrapperControls() {
     AppState.scrapperDetails.originalCollectionName = null;
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
   }
 
@@ -2299,7 +2309,7 @@ export async function showScrapperControls() {
       AppState.scrapperDetails.originalCollectionName = null;
       localStorage.setItem(
         STORAGE_KEYS.SCRAPPER_DETAILS,
-        JSON.stringify(AppState.scrapperDetails)
+        JSON.stringify(AppState.scrapperDetails),
       );
     }
     contentContainer = await createStepperView(pageInfo, tabOptions, spans);
@@ -2354,7 +2364,7 @@ export async function showScrapperControls() {
       // Save cleared state
       localStorage.setItem(
         STORAGE_KEYS.SCRAPPER_DETAILS,
-        JSON.stringify(AppState.scrapperDetails)
+        JSON.stringify(AppState.scrapperDetails),
       );
 
       // Re-render controls with cleared state
@@ -2425,8 +2435,8 @@ async function showDownloadConfirmationModal(username, tabName, count) {
     contentDiv.innerHTML = `
       <p style="margin-bottom: 15px; font-size: 14px;">
         You've previously scraped <strong>@${username}</strong>'s <strong>${toTitleCase(
-      tabName
-    )}</strong>.
+          tabName,
+        )}</strong>.
       </p>
       <p style="margin-bottom: 20px; font-size: 14px;">
         Found <strong>${count}</strong> previously downloaded items.
@@ -2567,7 +2577,7 @@ function explainerModal(tab) {
       getRecommendedPresetTemplate();
     const templates = getSavedTemplates();
     const updated = templates.filter(
-      (t) => t.label !== AppState.downloadPreferences.fullPathTemplate.label
+      (t) => t.label !== AppState.downloadPreferences.fullPathTemplate.label,
     );
     updated.push(AppState.downloadPreferences.fullPathTemplate);
     // First update the state, since it's needed by saveTemplates
@@ -2580,7 +2590,7 @@ function explainerModal(tab) {
     checkIcon.style.marginRight = "4px";
     successMessage.appendChild(checkIcon);
     successMessage.appendChild(
-      document.createTextNode("Template applied successfully!")
+      document.createTextNode("Template applied successfully!"),
     );
     successMessage.style.display = "block";
     applyBtn.disabled = true;
@@ -2759,7 +2769,7 @@ function createDownloadAllButton() {
   const pauseBtn = document.createElement("button");
   pauseBtn.id = DOM_IDS.DOWNLOAD_ALL_BUTTON + "-pause";
   pauseBtn.className = "ettpd-btn download-all-btn-pause";
-  setButtonWithIcon(pauseBtn, "Pause", "stop");
+  setButtonWithIcon(pauseBtn, "Pause", "pause");
   pauseBtn.disabled = true;
   pauseBtn.style.display = "none";
   pauseBtn.title = "Pause downloading";
@@ -2771,9 +2781,22 @@ function createDownloadAllButton() {
       setButtonWithIcon(pauseBtn, "Resume", "play");
       pauseBtn.title = "Resume downloading";
     } else {
-      setButtonWithIcon(pauseBtn, "Pause", "stop");
+      setButtonWithIcon(pauseBtn, "Pause", "pause");
       pauseBtn.title = "Pause downloading";
     }
+  };
+
+  const stopBtn = document.createElement("button");
+  stopBtn.id = DOM_IDS.DOWNLOAD_ALL_BUTTON + "-stop";
+  stopBtn.className = "ettpd-btn download-all-btn-stop";
+  setButtonWithIcon(stopBtn, "Stop", "stop");
+  stopBtn.disabled = true;
+  stopBtn.style.display = "none";
+  stopBtn.title = "Stop downloading";
+  stopBtn.onclick = (e) => {
+    e.stopPropagation();
+    if (!AppState.downloading.isDownloadingAll) return;
+    stopActiveBatchDownload();
   };
 
   const message = document.createElement("div");
@@ -2783,6 +2806,7 @@ function createDownloadAllButton() {
 
   container.appendChild(btn);
   container.appendChild(pauseBtn);
+  container.appendChild(stopBtn);
   container.appendChild(message);
 
   return container;
@@ -2930,7 +2954,7 @@ async function populateScrapperTabPicker(messageEl) {
         AppState.scrapperDetails.selectedCollectionName = null;
         localStorage.setItem(
           STORAGE_KEYS.SCRAPPER_DETAILS,
-          JSON.stringify(AppState.scrapperDetails)
+          JSON.stringify(AppState.scrapperDetails),
         );
       }
 
@@ -2942,7 +2966,7 @@ async function populateScrapperTabPicker(messageEl) {
       }
       localStorage.setItem(
         STORAGE_KEYS.SCRAPPER_DETAILS,
-        JSON.stringify(AppState.scrapperDetails)
+        JSON.stringify(AppState.scrapperDetails),
       );
 
       // Reset populated flag so it rebuilds on next show
@@ -3036,13 +3060,16 @@ function updateDownloadAllButtonState(btn, items = []) {
   const actualBtn = container
     ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON)
     : btn.id === DOM_IDS.DOWNLOAD_ALL_BUTTON
-    ? btn
-    : null;
+      ? btn
+      : null;
   const message = container
     ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-message")
     : null;
   const pauseBtn = container
     ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-pause")
+    : null;
+  const stopBtn = container
+    ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-stop")
     : null;
 
   if (!actualBtn) return;
@@ -3060,6 +3087,7 @@ function updateDownloadAllButtonState(btn, items = []) {
       // user can switch tabs (with abandon warning)
       actualBtn.style.display = "none";
       if (pauseBtn) pauseBtn.style.display = "none";
+      if (stopBtn) stopBtn.style.display = "none";
       if (message) {
         message.style.display = "block";
         populateScrapperTabPicker(message);
@@ -3070,6 +3098,7 @@ function updateDownloadAllButtonState(btn, items = []) {
       // Tab selected but not started - show tab picker
       actualBtn.style.display = "none";
       if (pauseBtn) pauseBtn.style.display = "none";
+      if (stopBtn) stopBtn.style.display = "none";
       if (message) {
         message.style.display = "block";
         populateScrapperTabPicker(message);
@@ -3091,6 +3120,7 @@ function updateDownloadAllButtonState(btn, items = []) {
     // Hide button and show tab picker when scrapper is selected but not started
     actualBtn.style.display = "none";
     if (pauseBtn) pauseBtn.style.display = "none";
+    if (stopBtn) stopBtn.style.display = "none";
     if (message) {
       message.style.display = "block";
       populateScrapperTabPicker(message);
@@ -3117,6 +3147,10 @@ function updateDownloadAllButtonState(btn, items = []) {
       pauseBtn.style.display = "none";
       pauseBtn.disabled = true;
     }
+    if (stopBtn) {
+      stopBtn.style.display = "none";
+      stopBtn.disabled = true;
+    }
     return;
   }
 
@@ -3128,8 +3162,8 @@ function updateDownloadAllButtonState(btn, items = []) {
       actualBtn.appendChild(hourglassIcon);
       actualBtn.appendChild(
         document.createTextNode(
-          `Downloading ${done} of ${total} post${total !== 1 ? "s" : ""}…`
-        )
+          `Downloading ${done} of ${total} post${total !== 1 ? "s" : ""}…`,
+        ),
       );
     } else {
       actualBtn.textContent = "";
@@ -3138,8 +3172,8 @@ function updateDownloadAllButtonState(btn, items = []) {
       actualBtn.appendChild(checkIcon);
       actualBtn.appendChild(
         document.createTextNode(
-          `All ${total} post${total !== 1 ? "s" : ""} downloaded`
-        )
+          `All ${total} post${total !== 1 ? "s" : ""} downloaded`,
+        ),
       );
     }
     actualBtn.disabled = true;
@@ -3149,9 +3183,13 @@ function updateDownloadAllButtonState(btn, items = []) {
       setButtonWithIcon(
         pauseBtn,
         isPausedAll ? "Resume" : "Pause",
-        isPausedAll ? "play" : "stop"
+        isPausedAll ? "play" : "pause",
       );
       pauseBtn.title = isPausedAll ? "Resume downloading" : "Pause downloading";
+    }
+    if (stopBtn) {
+      stopBtn.style.display = "inline-flex";
+      stopBtn.disabled = false;
     }
     return;
   }
@@ -3161,12 +3199,16 @@ function updateDownloadAllButtonState(btn, items = []) {
     `Download ${total > 1 ? `all ${total}` : "1"} post${
       total !== 1 ? "s" : ""
     }`,
-    "down"
+    "down",
   );
   actualBtn.disabled = false;
   if (pauseBtn) {
     pauseBtn.style.display = "none";
     pauseBtn.disabled = true;
+  }
+  if (stopBtn) {
+    stopBtn.style.display = "none";
+    stopBtn.disabled = true;
   }
 }
 
@@ -3207,6 +3249,9 @@ export function updateDownloadButtonLabelSimple() {
   const pauseBtn = container
     ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-pause")
     : null;
+  const stopBtn = container
+    ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-stop")
+    : null;
 
   // Show container
   if (container) container.style.display = "block";
@@ -3218,6 +3263,7 @@ export function updateDownloadButtonLabelSimple() {
     if (isScrappingActive || scrapperSelectedNotStarted) {
       downloadAllBtn.style.display = "none";
       if (pauseBtn) pauseBtn.style.display = "none";
+      if (stopBtn) stopBtn.style.display = "none";
       if (message) message.style.display = "block";
       return;
     }
@@ -3249,6 +3295,10 @@ export function updateDownloadButtonLabelSimple() {
       pauseBtn.style.display = "none";
       pauseBtn.disabled = true;
     }
+    if (stopBtn) {
+      stopBtn.style.display = "none";
+      stopBtn.disabled = true;
+    }
     return;
   }
 
@@ -3259,6 +3309,10 @@ export function updateDownloadButtonLabelSimple() {
       pauseBtn.style.display = "none";
       pauseBtn.disabled = true;
     }
+    if (stopBtn) {
+      stopBtn.style.display = "none";
+      stopBtn.disabled = true;
+    }
   } else if (isDownloading) {
     if (done < total) {
       downloadAllBtn.textContent = "";
@@ -3267,8 +3321,8 @@ export function updateDownloadButtonLabelSimple() {
       downloadAllBtn.appendChild(hourglassIcon2);
       downloadAllBtn.appendChild(
         document.createTextNode(
-          `Downloading ${done} of ${total} Post${total !== 1 ? "s" : ""}…`
-        )
+          `Downloading ${done} of ${total} Post${total !== 1 ? "s" : ""}…`,
+        ),
       );
       downloadAllBtn.disabled = true;
       if (pauseBtn) {
@@ -3277,11 +3331,15 @@ export function updateDownloadButtonLabelSimple() {
         setButtonWithIcon(
           pauseBtn,
           AppState.downloading.pausedAll ? "Resume" : "Pause",
-          AppState.downloading.pausedAll ? "play" : "stop"
+          AppState.downloading.pausedAll ? "play" : "pause",
         );
         pauseBtn.title = AppState.downloading.pausedAll
           ? "Resume downloading"
           : "Pause downloading";
+      }
+      if (stopBtn) {
+        stopBtn.style.display = "inline-flex";
+        stopBtn.disabled = false;
       }
     } else {
       downloadAllBtn.textContent = "";
@@ -3290,12 +3348,16 @@ export function updateDownloadButtonLabelSimple() {
       downloadAllBtn.appendChild(checkIcon2);
       downloadAllBtn.appendChild(
         document.createTextNode(
-          `Downloaded all ${total} Post${total !== 1 ? "s" : ""}`
-        )
+          `Downloaded all ${total} Post${total !== 1 ? "s" : ""}`,
+        ),
       );
       if (pauseBtn) {
         pauseBtn.style.display = "none";
         pauseBtn.disabled = true;
+      }
+      if (stopBtn) {
+        stopBtn.style.display = "none";
+        stopBtn.disabled = true;
       }
     }
   } else {
@@ -3304,12 +3366,16 @@ export function updateDownloadButtonLabelSimple() {
       `Download ${total > 1 ? "All " + total : "1"} Post${
         total !== 1 ? "s" : ""
       }`,
-      "down"
+      "down",
     );
     downloadAllBtn.disabled = false;
     if (pauseBtn) {
       pauseBtn.style.display = "none";
       pauseBtn.disabled = true;
+    }
+    if (stopBtn) {
+      stopBtn.style.display = "none";
+      stopBtn.disabled = true;
     }
   }
 }
@@ -3331,7 +3397,7 @@ function updateCurrentVideoButton(btn, items = []) {
   if (!btn) return;
   const currentVideoId = document.location.pathname.split("/")[3];
   const currentMedia = items.find(
-    (media) => currentVideoId && media.videoId === currentVideoId
+    (media) => currentVideoId && media.videoId === currentVideoId,
   );
 
   if (!currentMedia) {
@@ -3388,13 +3454,15 @@ function updateCurrentVideoButton(btn, items = []) {
 }
 
 function createReportBugButton() {
+  const discordUrl = "https://discord.gg/KpT7xdUUbM";
   const reportBugBtn = document.createElement("button");
   reportBugBtn.className = "ettpd-btn ettpd-report-bug";
   reportBugBtn.innerText = "Report Bugs (Quick fix: Refresh/Login/Logout😉)";
 
   const reportBugBtnLink = document.createElement("a");
   reportBugBtnLink.target = "_blank";
-  reportBugBtnLink.href = "https://forms.gle/Up1JaQJjxSBNYsZw5";
+  reportBugBtnLink.rel = "noopener noreferrer";
+  reportBugBtnLink.href = discordUrl;
   reportBugBtnLink.appendChild(reportBugBtn);
 
   return reportBugBtnLink;
@@ -3437,7 +3505,7 @@ export function showStatsSpan() {
         "This week?!",
         allTimeRecsCount,
         "top",
-        getUserRecommendationsCurrentTier
+        getUserRecommendationsCurrentTier,
       )}
       <div class="ettpd-stat-line-bottom" title="You're in a downloading mood 😏">📦 Fresh streak</div>
     `;
@@ -3447,13 +3515,13 @@ export function showStatsSpan() {
         "Downloads this week",
         weeklyCount,
         "top",
-        getUserDownloadsCurrentTier
+        getUserDownloadsCurrentTier,
       )}
       ${formatStatsLine(
         "All time recommendations",
         allTimeRecsCount,
         "bottom",
-        getUserRecommendationsCurrentTier
+        getUserRecommendationsCurrentTier,
       )}
     `;
   }
@@ -3479,12 +3547,34 @@ export function showStatsSpan() {
   wrapper.appendChild(span);
 }
 
+function getExtensionVersion() {
+  try {
+    const pageVersion = document.documentElement?.getAttribute(
+      "data-ettpd-extension-version",
+    );
+    if (pageVersion) {
+      return pageVersion;
+    }
+
+    const runtime =
+      typeof chrome !== "undefined" && chrome?.runtime
+        ? chrome.runtime
+        : typeof browser !== "undefined" && browser?.runtime
+          ? browser.runtime
+          : null;
+    return runtime?.getManifest?.().version || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 function createCreditsSpan() {
   const span = document.createElement("span");
   span.className = "ettpd-span ettpd-copyright";
 
   const year = new Date().getFullYear();
-  
+  const version = getExtensionVersion();
+
   // Create coffee link with consistent styling
   const coffeeLink = document.createElement("a");
   coffeeLink.href = "https://linktr.ee/aimuhire";
@@ -3514,7 +3604,7 @@ function createCreditsSpan() {
   discordLink.rel = "noopener noreferrer";
   discordLink.title = "Join Our Discord";
   discordLink.className = "ettpd-discord-link";
-  
+
   // Apply theme class
   const resolvedTheme = getResolvedThemeMode();
   if (resolvedTheme === "dark") {
@@ -3522,7 +3612,7 @@ function createCreditsSpan() {
   } else {
     discordLink.classList.add("ettpd-theme-classic");
   }
-  
+
   // Match the coffee link styling exactly for proper alignment
   discordLink.style.cssText = `
     display: inline;
@@ -3552,17 +3642,17 @@ function createCreditsSpan() {
     top: 2px;
   `;
   discordLink.appendChild(discordIcon);
-  
+
   // Add text node directly (not wrapped in span) for better baseline alignment
   discordLink.appendChild(document.createTextNode("Discord"));
 
   // Build the span content
-  span.appendChild(document.createTextNode(`© ${year} `));
+  span.appendChild(document.createTextNode(`v${version} © ${year} `));
   span.appendChild(coffeeLink);
   span.appendChild(document.createTextNode(" "));
   span.appendChild(discordLink);
   span.onclick = hideDownloader;
-  
+
   return span;
 }
 
@@ -3663,7 +3753,7 @@ function initializeDownloaderStructure(wrapper) {
   scrapperContainer.id = DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER;
   const downloadAllContainer = createDownloadAllButton();
   const downloadAllBtn = downloadAllContainer.querySelector(
-    "#" + DOM_IDS.DOWNLOAD_ALL_BUTTON
+    "#" + DOM_IDS.DOWNLOAD_ALL_BUTTON,
   );
   const currentVideoBtn = createCurrentVideoButton();
   const reportBugBtn = createReportBugButton();
@@ -3681,7 +3771,7 @@ function initializeDownloaderStructure(wrapper) {
     reportBugBtn,
     creditsSpan,
     list,
-    closeBtn
+    closeBtn,
   );
 
   const refs = {
@@ -3715,14 +3805,14 @@ function initializeDownloaderStructure(wrapper) {
     if (settingsBtn) {
       settingsBtn.classList.toggle(
         "ettpd-settings-open",
-        AppState.ui.isPreferenceBoxOpen
+        AppState.ui.isPreferenceBoxOpen,
       );
     }
 
     if (userPostsBtn) {
       userPostsBtn.classList.toggle(
         "ettpd-settings-open",
-        AppState.ui.isScrapperBoxOpen
+        AppState.ui.isScrapperBoxOpen,
       );
     }
 
@@ -3755,22 +3845,22 @@ function renderMediaList(listEl, items = []) {
   }
 
   const existingNodes = new Map(
-    Array.from(listEl.children).map((child) => [child.dataset.videoId, child])
+    Array.from(listEl.children).map((child) => [child.dataset.videoId, child]),
   );
 
   const fragment = document.createDocumentFragment();
   const orderedItems = [...items].reverse();
 
-   const currentVideoId = document.location.pathname.split("/")[3];
-   let hasMarkedCurrent = false;
+  const currentVideoId = document.location.pathname.split("/")[3];
+  let hasMarkedCurrent = false;
 
   orderedItems.forEach((media) => {
     const key = media.videoId || media.id;
     if (!key) return;
     const entryHash = getMediaEntryHash(media);
 
-     const shouldMarkAsCurrent =
-       !hasMarkedCurrent && currentVideoId && currentVideoId === media?.videoId;
+    const shouldMarkAsCurrent =
+      !hasMarkedCurrent && currentVideoId && currentVideoId === media?.videoId;
 
     let node = existingNodes.get(key);
 
@@ -3779,7 +3869,7 @@ function renderMediaList(listEl, items = []) {
       const authorWrapper = node.querySelector(".ettpd-author-wrapper");
       if (authorWrapper) {
         const existingCurrent = authorWrapper.querySelector(
-          '.ettpd-emoji[data-role="current-video"]'
+          '.ettpd-emoji[data-role="current-video"]',
         );
         if (existingCurrent) existingCurrent.remove();
         if (shouldMarkAsCurrent) {
@@ -3931,7 +4021,7 @@ function buildMediaListItem(media, options = {}) {
       if (media?.videoId && media?.authorId)
         window.open(
           `https://tiktok.com/@${media.authorId}/photo/${media.videoId}`,
-          "_blank"
+          "_blank",
         );
     };
     const tiktokBtn = document.createElement("span");
@@ -4033,7 +4123,7 @@ function buildMediaListItem(media, options = {}) {
       if (media?.videoId && media?.authorId)
         window.open(
           `https://tiktok.com/@${media.authorId}/video/${media.videoId}`,
-          "_blank"
+          "_blank",
         );
     };
     tiktokBtnContainer.appendChild(tiktokBtn);
@@ -4142,10 +4232,13 @@ function constrainWrapperToViewport(wrapper) {
   const currentBottom = viewportHeight - wrapperRect.bottom;
 
   // Determine if using left/top (custom) or corner positioning
-  const isCustomPosition = wrapper.style.left && wrapper.style.left !== "" && 
-                          wrapper.style.top && wrapper.style.top !== "" &&
-                          (wrapper.style.bottom === "" || wrapper.style.bottom === "auto") &&
-                          (wrapper.style.right === "" || wrapper.style.right === "auto");
+  const isCustomPosition =
+    wrapper.style.left &&
+    wrapper.style.left !== "" &&
+    wrapper.style.top &&
+    wrapper.style.top !== "" &&
+    (wrapper.style.bottom === "" || wrapper.style.bottom === "auto") &&
+    (wrapper.style.right === "" || wrapper.style.right === "auto");
 
   if (isCustomPosition) {
     // Custom position: constrain using left/top
@@ -4213,13 +4306,13 @@ function makeElementDraggable(wrapper, handle) {
   handle.addEventListener("mousedown", (e) => {
     console.log(
       " AppState.ui.isDragging 12orubt mousedown",
-      AppState.ui.isDragging
+      AppState.ui.isDragging,
     );
 
     AppState.ui.isDragging = true;
     console.log(
       " AppState.ui.isDragging 12orubt mousedown 2",
-      AppState.ui.isDragging
+      AppState.ui.isDragging,
     );
     const rect = wrapper.getBoundingClientRect();
     offsetX = e.clientX - rect.left;
@@ -4237,11 +4330,11 @@ function makeElementDraggable(wrapper, handle) {
       AppState.ui.downloaderPositionType = "custom";
       localStorage.setItem(
         STORAGE_KEYS.DOWNLOADER_POSITION_TYPE,
-        AppState.ui.downloaderPositionType
+        AppState.ui.downloaderPositionType,
       );
       localStorage.setItem(
         STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION,
-        AppState.ui.live_ETTPD_CUSTOM_POS
+        AppState.ui.live_ETTPD_CUSTOM_POS,
       );
 
       // Reset corner selector to "free" since user is now using custom positioning
@@ -4275,7 +4368,7 @@ function makeElementDraggable(wrapper, handle) {
     wrapper.style.top = `${newTop}px`;
     wrapper.style.bottom = "auto";
     wrapper.style.right = "auto";
-    
+
     // Update live position state with constrained values
     AppState.ui.live_ETTPD_CUSTOM_POS = JSON.stringify({
       left: newLeft,
@@ -4287,16 +4380,18 @@ function makeElementDraggable(wrapper, handle) {
   const handleResize = () => {
     if (wrapper && wrapper.parentElement) {
       constrainWrapperToViewport(wrapper);
-      
+
       // If using custom position, save the constrained position
-      const positionType = localStorage.getItem(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE);
+      const positionType = localStorage.getItem(
+        STORAGE_KEYS.DOWNLOADER_POSITION_TYPE,
+      );
       if (positionType === "custom") {
         const pos = constrainWrapperToViewport(wrapper);
         if (pos) {
           AppState.ui.live_ETTPD_CUSTOM_POS = JSON.stringify(pos);
           localStorage.setItem(
             STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION,
-            AppState.ui.live_ETTPD_CUSTOM_POS
+            AppState.ui.live_ETTPD_CUSTOM_POS,
           );
         }
       }
@@ -4309,19 +4404,21 @@ function makeElementDraggable(wrapper, handle) {
   document.addEventListener("mouseup", () => {
     AppState.ui.isDragging = false;
     document.body.style.userSelect = "";
-    
+
     // Ensure final position is constrained
     constrainWrapperToViewport(wrapper);
-    
+
     // Save final position if using custom position
-    const positionType = localStorage.getItem(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE);
+    const positionType = localStorage.getItem(
+      STORAGE_KEYS.DOWNLOADER_POSITION_TYPE,
+    );
     if (positionType === "custom") {
       const pos = constrainWrapperToViewport(wrapper);
       if (pos) {
         AppState.ui.live_ETTPD_CUSTOM_POS = JSON.stringify(pos);
         localStorage.setItem(
           STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION,
-          AppState.ui.live_ETTPD_CUSTOM_POS
+          AppState.ui.live_ETTPD_CUSTOM_POS,
         );
       }
     }
@@ -4437,7 +4534,7 @@ function makeShowButtonDraggable(button) {
       const pos = constrainToViewport();
       localStorage.setItem(
         STORAGE_KEYS.SHOW_BUTTON_POSITION,
-        JSON.stringify(pos)
+        JSON.stringify(pos),
       );
     }
   };
@@ -4505,7 +4602,7 @@ export function hideDownloader() {
     wrapper._cleanupDraggable();
   }
   wrapper?.remove();
-  
+
   // Check if button already exists - if it does, ensure it's visible
   const existingBtn = document.getElementById(DOM_IDS.SHOW_DOWNLOADER);
   if (existingBtn) {
@@ -4527,7 +4624,7 @@ export function hideDownloader() {
   showBtn.title = "Drag to move me anywhere";
   showBtn.setAttribute(
     "aria-label",
-    "Open downloader (drag to move me anywhere)"
+    "Open downloader (drag to move me anywhere)",
   );
 
   // Create SVG drag-handle + download icon
@@ -4556,7 +4653,7 @@ export function hideDownloader() {
   ].forEach(([cx, cy]) => {
     const dot = document.createElementNS(
       "http://www.w3.org/2000/svg",
-      "circle"
+      "circle",
     );
     dot.setAttribute("cx", String(cx));
     dot.setAttribute("cy", String(cy));
@@ -4655,7 +4752,7 @@ export function hideDownloader() {
               JSON.stringify({
                 left: constrainedLeft,
                 top: constrainedTop,
-              })
+              }),
             );
           }
         }, 0);
@@ -4674,7 +4771,7 @@ export function hideDownloader() {
         if (!isExtensionEnabledSync()) {
           // Extension is disabled, show message
           alert(
-            "Extension is disabled. Please enable it from the extension popup to use the downloader."
+            "Extension is disabled. Please enable it from the extension popup to use the downloader.",
           );
           return;
         }
@@ -4774,7 +4871,7 @@ export function showRateUsPopUpLegacy() {
   AppState.rateDonate.shownCount += 1;
   localStorage.setItem(
     STORAGE_KEYS.RATE_DONATE_DATA,
-    JSON.stringify(AppState.rateDonate)
+    JSON.stringify(AppState.rateDonate),
   );
   document.body.appendChild(overlay);
 }
@@ -4783,7 +4880,7 @@ export function showStatsPopUp() {
   if (AppState.downloading.isDownloadingAll || AppState.downloading.isActive) {
     showToast(
       "Download in progress",
-      "Wait for the download to be over or refresh 🙂"
+      "Wait for the download to be over or refresh 🙂",
     );
     return;
   }
@@ -4872,7 +4969,7 @@ export function showStatsPopUp() {
             <div class="ettpd-stats-card__total" title="${count.toLocaleString()}">
               <span class="ettpd-total-label">Total</span>
               <span class="ettpd-total-value">${formatCompactNumberWithTooltip(
-                count
+                count,
               )}</span>
             </div>
           </div>
@@ -4894,8 +4991,8 @@ export function showStatsPopUp() {
       You've ${
         tabKey === "downloads" ? "downloaded" : "been recommended"
       } <strong title="${totalCount.toLocaleString()}">${formatCompactNumberWithTooltip(
-      totalCount
-    )}</strong> posts. Level: ${tierLabel}
+        totalCount,
+      )}</strong> posts. Level: ${tierLabel}
     </div>
     ${
       sameCount
@@ -4940,12 +5037,12 @@ export function showStatsPopUp() {
   resetBtn.textContent = "🧹 Reset";
   resetBtn.addEventListener("click", () => {
     const confirmed = confirm(
-      "⚠️ This will wipe your local leaderboard stats (downloads + recommendations). Nothing else will be touched. Want to proceed with the reset?"
+      "⚠️ This will wipe your local leaderboard stats (downloads + recommendations). Nothing else will be touched. Want to proceed with the reset?",
     );
     if (!confirmed) return;
 
     const doubleCheck = confirm(
-      "🚨 Just making sure — this can't be undone. All your leaderboard stats will be gone. Still want to do it?"
+      "🚨 Just making sure — this can't be undone. All your leaderboard stats will be gone. Still want to do it?",
     );
     if (!doubleCheck) return;
 
@@ -5004,7 +5101,7 @@ export function createModal({ children = [], onClose = null }) {
   overlay.classList.add(
     getResolvedThemeMode() === "dark"
       ? "ettpd-theme-dark"
-      : "ettpd-theme-classic"
+      : "ettpd-theme-classic",
   );
 
   // === Container to hold both close btn and modal box ===
@@ -5069,7 +5166,7 @@ export function showMorpheusRateUsPage() {
         AppState.rateDonate.lastDonatedAt = Date.now();
         localStorage.setItem(
           STORAGE_KEYS.RATE_DONATE_DATA,
-          JSON.stringify(AppState.rateDonate)
+          JSON.stringify(AppState.rateDonate),
         );
         overlay?.remove();
         if (typeof onClose === "function") onClose();
@@ -5078,13 +5175,13 @@ export function showMorpheusRateUsPage() {
         console.log("✅ User took the blue pill — rated us.");
         window.open(
           "https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg",
-          "_blank"
+          "_blank",
         );
         AppState.rateDonate.lastShownAt = Date.now();
         AppState.rateDonate.lastRatedAt = Date.now();
         localStorage.setItem(
           STORAGE_KEYS.RATE_DONATE_DATA,
-          JSON.stringify(AppState.rateDonate)
+          JSON.stringify(AppState.rateDonate),
         );
         overlay?.remove();
         if (typeof onClose === "function") onClose();
@@ -5099,7 +5196,7 @@ export function showMorpheusRateUsPage() {
     AppState.rateDonate.shownCount += 1;
     localStorage.setItem(
       STORAGE_KEYS.RATE_DONATE_DATA,
-      JSON.stringify(AppState.rateDonate)
+      JSON.stringify(AppState.rateDonate),
     );
   }, 3500);
 }
@@ -5116,7 +5213,7 @@ export function createModalMorpheus({
   overlay.classList.add(
     getResolvedThemeMode() === "dark"
       ? "ettpd-theme-dark"
-      : "ettpd-theme-classic"
+      : "ettpd-theme-classic",
   );
 
   const modal = document.createElement("div");
@@ -5166,21 +5263,44 @@ export function createModalMorpheus({
 }
 
 export function createFilenameTemplateModal() {
-  // Fetch saved user templates and built-in presets
   const templates = getSavedTemplates();
   const presetTemplates = getPresetTemplates();
 
-  // Currently applied template from state
   const savedTemplateObj = AppState.downloadPreferences.fullPathTemplate || {};
   const savedFullTemplate = savedTemplateObj.template || "";
   const savedLabel = savedTemplateObj.label || "";
 
-  // Main container
   const layout = document.createElement("div");
   layout.className = "layout";
   layout.classList.add("ettpd-template-modal");
 
-  // Collapsible instructions
+  const templateHero = document.createElement("div");
+  templateHero.className = "ettpd-template-hero";
+
+  const templateTitle = document.createElement("div");
+  templateTitle.className = "ettpd-template-title";
+  templateTitle.textContent = "Download Folder Templates";
+
+  const templateHeroCopy = document.createElement("p");
+  templateHeroCopy.className = "ettpd-template-hero-copy";
+  templateHeroCopy.textContent =
+    "Choose how your files are named and organized when they are saved.";
+
+  templateHero.append(templateTitle, templateHeroCopy);
+
+  const locationNote = document.createElement("div");
+  locationNote.className = "ettpd-template-location";
+  locationNote.innerHTML = `
+    <strong>Where files go</strong>
+    <span>${
+      AppState.downloadPreferences.showFolderPicker
+        ? "Your browser can still ask where to save each file. This template controls the suggested folder path and filename."
+        : "Files are saved inside your browser's default Downloads folder. This template controls the folders and filename inside that location."
+    }</span>
+    <span><strong>Name cleanup</strong>: if a folder or file segment would start with <code>.</code>, the downloader rewrites it so it stays visible and browser-safe. Example: <code>@.dernful</code> becomes <code>@_dernful</code>.</span>
+    <code>Downloads/${DOWNLOAD_FOLDER_DEFAULT}/...</code>
+  `;
+
   const knownFields = [
     "videoId",
     "authorUsername",
@@ -5213,16 +5333,18 @@ export function createFilenameTemplateModal() {
       key: "guide",
       label: "Guide",
       body: `
-        <p class="ettpd-template-subtitle">Use <code>{field}</code>, <code>{field|fallback}</code>, or <code>{field:maxLen|fallback}</code>. Defaults use <code>missing-{field}</code>. Click to see the full playbook.</p>
+        <p class="ettpd-template-subtitle">Templates build the relative path inside your Downloads folder. Use <code>{field}</code>, <code>{field|fallback}</code>, or <code>{field:maxLen|fallback}</code>.</p>
         <details class="ettpd-template-accordion">
-          <summary style="cursor: pointer;">Read more</summary>
+          <summary class="ettpd-template-summary">Show examples and rules</summary>
           <ul class="ettpd-template-list">
+            <li><strong>Save location</strong>: your files go to <code>Downloads/${DOWNLOAD_FOLDER_DEFAULT}/...</code> unless you changed your browser save location.</li>
             <li><strong>Extensions</strong>: auto-added (<code>.jpeg</code> / <code>.mp4</code>).</li>
             <li><strong>Numbering</strong>: <code>{sequenceNumber}</code> only on multi-image unless forced with <code>{sequenceNumber|required}</code>.</li>
             <li><strong>Length</strong>: trim with <code>{desc:40|no-desc}</code> or any field. Use negative numbers for last N chars: <code>{videoId:-4}</code> takes last 4 characters.</li>
-            <li><strong>Paths</strong>: keep them relative; no leading <code>/</code> or <code>..</code>.</li>
+            <li><strong>Paths</strong>: keep them relative; no leading <code>/</code> or <code>..</code>. If a filename would be invalid, the downloader cleans it automatically.</li>
+            <li><strong>Leading dots</strong>: browsers can hide or reject dot-prefixed names, so <code>.name</code> is rewritten to <code>_name</code>. Example: <code>@.dernful</code> becomes <code>@_dernful</code>.</li>
             <li><strong>Ads & media</strong>: <code>{ad}</code> adds "ad"; <code>{mediaType}</code> is <em>image</em>/<em>video</em>.</li>
-            <li><strong>Context</strong>: <code>{tabName}</code> follows the scrapper tab (Video, Reposts, Liked, Favorited).</li>
+            <li><strong>Context</strong>: <code>{tabName}</code> follows the scrapper tab (Videos, Reposts, Liked, Favorited).</li>
           </ul>
         </details>
       `,
@@ -5231,36 +5353,29 @@ export function createFilenameTemplateModal() {
       key: "fields",
       label: "Supported fields",
       body: `
-        <p><strong>Fields:</strong></p>
+        <p class="ettpd-template-subtitle">These values can be used in folder names and file names.</p>
+        <p><strong>Supported fields</strong></p>
         <code class="ettpd-template-code">${knownFields.join(", ")}</code>
         <div class="ettpd-template-grid">
           <div><strong>{videoId}</strong><span>Unique post ID</span></div>
           <div><strong>{authorUsername}</strong><span>@handle of the creator</span></div>
           <div><strong>{authorNickname}</strong><span>Display name when available</span></div>
-          <div><strong>{desc}</strong><span>Caption/description text</span></div>
+          <div><strong>{desc}</strong><span>Caption or description text</span></div>
           <div><strong>{createTime}</strong><span>Original post timestamp</span></div>
           <div><strong>{downloadTime}</strong><span>When you downloaded it</span></div>
           <div><strong>{musicTitle}</strong><span>Track title</span></div>
           <div><strong>{musicAuthor}</strong><span>Track artist</span></div>
-          <div><strong>{views}</strong><span>View count if available</span></div>
+          <div><strong>{views}</strong><span>View count when available</span></div>
           <div><strong>{duration}</strong><span>Length in seconds</span></div>
-          <div><strong>{hashtags}</strong><span>Hashtags with # symbol, concatenated</span></div>
-          <div><strong>{sequenceNumber}</strong><span>Index for multi-assets</span></div>
-          <div><strong>{ad}</strong><span>“ad” when marked as ad</span></div>
+          <div><strong>{hashtags}</strong><span>Hashtags with the # symbol</span></div>
+          <div><strong>{sequenceNumber}</strong><span>Index for multi-asset posts</span></div>
+          <div><strong>{ad}</strong><span>"ad" when marked as ad</span></div>
           <div><strong>{mediaType}</strong><span>image or video</span></div>
-          <div><strong>{tabName}</strong><span>Video/Reposts/Liked/Favorited</span></div>
+          <div><strong>{tabName}</strong><span>Videos, Reposts, Liked, or Favorited</span></div>
         </div>
       `,
     },
   ];
-
-  const renderTab = (key) => {
-    tabButtons.forEach((btn) =>
-      btn.classList.toggle("active", btn.dataset.key === key)
-    );
-    const section = tabConfig.find((t) => t.key === key);
-    tabContent.innerHTML = section?.body || "";
-  };
 
   const tabButtons = tabConfig.map((tab) => {
     const btn = document.createElement("button");
@@ -5272,52 +5387,70 @@ export function createFilenameTemplateModal() {
     return btn;
   });
 
-  instructions.appendChild(tabNav);
-  instructions.appendChild(tabContent);
+  const renderTab = (key) => {
+    tabButtons.forEach((btn) =>
+      btn.classList.toggle("active", btn.dataset.key === key),
+    );
+    const section = tabConfig.find((tab) => tab.key === key);
+    tabContent.innerHTML = section?.body || "";
+  };
+
+  instructions.append(tabNav, tabContent);
   renderTab("guide");
 
-  // Dropdown for both user templates and presets
+  const pickerLabel = document.createElement("div");
+  pickerLabel.className = "ettpd-template-section-label";
+  pickerLabel.textContent =
+    "Start from a built-in preset or one of your saved templates";
+
   const comboSelect = document.createElement("select");
   comboSelect.className = "ettpd-template-select";
 
-  // Default placeholder option
-  const defaultOpt = document.createElement("option");
-  defaultOpt.text = "⚙️ Select template...";
-  defaultOpt.value = "";
-  comboSelect.appendChild(defaultOpt);
+  const appendTemplateOptions = (selectEl, activeLabel) => {
+    selectEl.querySelectorAll("option").forEach((opt) => opt.remove());
 
-  // Add user-saved templates
-  templates.forEach((t, i) => {
-    const opt = document.createElement("option");
-    opt.value = `user-${i}`;
-    opt.text = t.label === savedLabel ? `(Active) ${t.label}` : t.label;
-    if (t.label === savedLabel) opt.selected = true;
-    comboSelect.appendChild(opt);
-  });
+    const placeholder = document.createElement("option");
+    placeholder.text = "Choose a template or preset...";
+    placeholder.value = "";
+    selectEl.appendChild(placeholder);
 
-  // Divider before presets
-  if (presetTemplates.length) {
-    const sep = document.createElement("option");
-    sep.text = "-- Presets --";
-    sep.disabled = true;
-    comboSelect.appendChild(sep);
-
-    // Add built-in presets
-    presetTemplates.forEach((p, i) => {
+    getSavedTemplates().forEach((template, index) => {
       const opt = document.createElement("option");
-      opt.value = `preset-${i}`;
-      opt.text = p.label === savedLabel ? `(Active) ${p.label}` : p.label;
-      if (p.label === savedLabel) opt.selected = true;
-      opt.title = p.example;
-      comboSelect.appendChild(opt);
+      opt.value = `user-${index}`;
+      opt.text =
+        template.label === activeLabel
+          ? `(Active) ${template.label}`
+          : template.label;
+      if (template.label === activeLabel) opt.selected = true;
+      selectEl.appendChild(opt);
     });
-  }
 
-  // Inputs for label and template
+    if (presetTemplates.length) {
+      const sep = document.createElement("option");
+      sep.text = "-- Presets --";
+      sep.disabled = true;
+      selectEl.appendChild(sep);
+
+      presetTemplates.forEach((template, index) => {
+        const opt = document.createElement("option");
+        opt.value = `preset-${index}`;
+        opt.text =
+          template.label === activeLabel
+            ? `(Active) ${template.label}`
+            : template.label;
+        if (template.label === activeLabel) opt.selected = true;
+        opt.title = template.example;
+        selectEl.appendChild(opt);
+      });
+    }
+  };
+
+  appendTemplateOptions(comboSelect, savedLabel);
+
   const labelInput = document.createElement("input");
   labelInput.type = "text";
   labelInput.name = "label";
-  labelInput.placeholder = "Template name (e.g. Default, ShortDesc)";
+  labelInput.placeholder = "Template label shown in the list";
   labelInput.value = savedLabel;
   labelInput.className = "ettpd-modal-input";
 
@@ -5325,7 +5458,7 @@ export function createFilenameTemplateModal() {
   inputPathTemplate.type = "text";
   inputPathTemplate.name = "template";
   inputPathTemplate.placeholder =
-    "downloads/{authorUsername}/{videoId}-{desc|no-desc}.mp4";
+    "@/@{authorUsername|:profile:}/{tabName}/{videoId}-{desc|no-desc}.mp4";
   inputPathTemplate.value = savedFullTemplate;
   inputPathTemplate.className = "ettpd-modal-input";
 
@@ -5337,53 +5470,57 @@ export function createFilenameTemplateModal() {
 
   const activeFullPathTemplate = document.createElement("div");
   activeFullPathTemplate.className = "ettpd-template-active";
-  if (
-    savedLabel &&
-    savedLabel == AppState.downloadPreferences.fullPathTemplate?.label
-  ) {
-    activeFullPathTemplate.textContent = `Active template: ${savedLabel}`;
+  if (savedLabel && savedLabel === savedTemplateObj.label) {
+    activeFullPathTemplate.textContent = `Currently in use: ${savedLabel}`;
   }
 
   const presetExample = document.createElement("code");
-  presetExample.style =
-    "font-size:12px;display:block;margin-top:4px;color:#888;";
+  presetExample.className = "ettpd-template-example";
 
-  // Buttons
   const saveBtn = document.createElement("button");
   saveBtn.className = "ettpd-pref-btn";
-  saveBtn.textContent = "💾 Save & Apply";
+  saveBtn.textContent = "Save & Apply";
 
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "ettpd-pref-btn danger";
   setButtonWithIcon(deleteBtn, "Delete Template", "delete");
   deleteBtn.style = "margin-right:15px;";
+  deleteBtn.disabled = !savedLabel;
 
-  // Utility: sanitize
   const sanitize = (val) =>
     (val ?? "")
       .toString()
-      .replace(/[^a-zA-Z0-9_-]/g, "-")
+      .replace(/[^\p{L}\p{N}_-]+/gu, "-")
       .slice(0, 100);
 
-  // Validator for the template path
   const validatePathTemplate = (tpl) => {
     const errs = [];
-    if (tpl.startsWith("/") && !tpl.startsWith("@/@"))
+    if (tpl.startsWith("/") && !tpl.startsWith("@/@")) {
       errs.push("Path must be relative (no leading / or drive letters)");
-    if (/\.\.|^[a-zA-Z]:/.test(tpl))
+    }
+    if (/\.\.|^[a-zA-Z]:/.test(tpl)) {
       errs.push("No '..' or drive letters allowed");
+    }
     const tokenRe = /\{(\w+)(\|[^}]+)?\}/g;
-    let m;
-    while ((m = tokenRe.exec(tpl))) {
-      if (!knownFields.includes(m[1])) errs.push(`Unknown field: ${m[1]}`);
+    let match;
+    while ((match = tokenRe.exec(tpl))) {
+      if (!knownFields.includes(match[1])) {
+        errs.push(`Unknown field: ${match[1]}`);
+      }
     }
     return errs;
   };
 
-  // Preview logic
   function renderPreviewAndErrors() {
     const tpl = inputPathTemplate.value.trim();
     const errors = validatePathTemplate(tpl);
+
+    if (!tpl) {
+      error.textContent = "";
+      preview.textContent =
+        "Add a relative path template to preview where files will land inside Downloads.";
+      return;
+    }
 
     if (errors.length) {
       error.textContent = "";
@@ -5416,36 +5553,24 @@ export function createFilenameTemplateModal() {
       tabName: "Reposts",
     };
 
-    const sanitize = (val) =>
-      (val ?? "")
-        .toString()
-        .replace(/[^\p{L}\p{N}_-]+/gu, "-")
-        .slice(0, 100);
-
-    // Special sanitize for descriptions - respects maxLen from template
-    // Also preserves hashtags (#) which are commonly used in TikTok descriptions
     const sanitizeDesc = (val, maxLen = 100) => {
       const str = (val ?? "").toString();
       const sanitized = str.replace(/[^\p{L}\p{N}_\-.#]+/gu, "-");
       return sanitized.length > maxLen ? sanitized.slice(0, maxLen) : sanitized;
     };
 
-    // Special sanitize for hashtags - preserves the "#" symbol
     const sanitizeHashtag = (val) => {
       const str = (val ?? "").toString();
-      // Replace invalid filename characters but preserve #, alphanumeric, _, -, and .
-      // Process character by character: preserve allowed chars and #, replace others with dash
       const sanitized = str
         .split("")
         .map((char) => {
-          // Allow letters, numbers, underscore, dash, dot, and # symbol
           if (/[\p{L}\p{N}_\-.]/u.test(char) || char === "#") {
             return char;
           }
           return "-";
         })
         .join("")
-        .replace(/-+/g, "-"); // Collapse multiple dashes
+        .replace(/-+/g, "-");
       return sanitized.slice(0, 100);
     };
 
@@ -5462,11 +5587,11 @@ export function createFilenameTemplateModal() {
 
     const fieldValues = {
       videoId: sanitize(sample.videoId),
-      authorUsername: sanitize(sample.authorId),
+      authorUsername: sanitize(sample.authorUsername),
       authorNickname: sanitize(sample.authorNickname),
       desc: sanitizeDesc(
         sample.desc,
-        isDescMaxLenDefined ? (descMaxLen > 0 ? descMaxLen : 100) : 100
+        isDescMaxLenDefined ? (descMaxLen > 0 ? descMaxLen : 100) : 100,
       ),
       createTime: sample.createTime,
       musicTitle: sanitize(sample.musicTitle),
@@ -5476,86 +5601,80 @@ export function createFilenameTemplateModal() {
       hashtags: (sample.hashtags || [])
         .map((tag) => {
           const tagName = tag.name || tag;
-          // Add "#" prefix if it doesn't already start with "#"
           const prefixedTag = tagName.startsWith("#") ? tagName : `#${tagName}`;
           return sanitizeHashtag(prefixedTag);
         })
         .join(""),
+      tabName: sample.tabName,
       downloadTime: sample.downloadTime,
-      isAd: false,
-      isImage: false,
+      isAd: sample.isAd,
+      isImage: sample.isImage,
     };
 
-    const replaced = applyTemplate(tpl, fieldValues, {
+    const previewTemplate = tpl.startsWith("@/")
+      ? `${DOWNLOAD_FOLDER_DEFAULT}${tpl.slice(1)}`
+      : tpl;
+    const replaced = applyTemplate(previewTemplate, fieldValues, {
       sequenceNumber,
       isMultiImage,
+      collectionName: "sample-collection",
     });
-    let cleaned = cleanupPath(replaced);
-
-    if (cleaned.startsWith("@/")) {
-      cleaned = cleaned.replace("@", DOWNLOAD_FOLDER_DEFAULT);
-    }
-    preview.textContent = `Example: ${cleaned}.mp4`;
+    const cleaned = cleanupPath(replaced);
+    preview.textContent = `Preview in Downloads: ${cleaned}.mp4`;
   }
 
   comboSelect.onchange = () => {
-    const val = comboSelect.value;
-    if (!val) return;
+    const value = comboSelect.value;
+    if (!value) return;
 
-    const [type, idxStr] = val.split("-");
-    const idx = parseInt(idxStr, 10);
+    const [type, indexStr] = value.split("-");
+    const index = Number.parseInt(indexStr, 10);
 
-    const currentUserTemplates = getSavedTemplates();
-    const currentPresetTemplates = getPresetTemplates();
-
-    let selected;
+    let selected = null;
     if (type === "user") {
-      selected = currentUserTemplates[idx];
+      selected = getSavedTemplates()[index];
       deleteBtn.disabled = false;
     } else {
-      selected = currentPresetTemplates[idx];
-      deleteBtn.disabled = false;
+      selected = getPresetTemplates()[index];
+      deleteBtn.disabled = true;
     }
 
     if (!selected) {
-      console.warn("Invalid template selection:", val);
+      console.warn("Invalid template selection:", value);
       return;
     }
 
     inputPathTemplate.value = selected.template || selected.fullPathTemplate;
     labelInput.value = selected.label;
-    activeFullPathTemplate.textContent = `Selected: ${selected.label}`;
+    activeFullPathTemplate.textContent = `Selected template: ${selected.label}`;
     presetExample.textContent = selected.example
-      ? `e.g. ${selected.example}`
+      ? `Preset example: ${selected.example}`
       : "";
 
     renderPreviewAndErrors();
   };
 
   renderPreviewAndErrors();
-  // Feedback container
+
   const feedbackContainer = document.createElement("div");
   feedbackContainer.className = "ettpd-reset-feedback";
   feedbackContainer.style.textAlign = "center";
-  // Utility function to show feedback
+
   function showFeedback(text) {
     feedbackContainer.innerHTML = `<span>Applying...</span>`;
     layout.appendChild(feedbackContainer);
-    // Then show the actual message after displayFoundUrls finishes
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       setTimeout(() => {
         feedbackContainer.innerHTML = `<span>${text}</span>`;
-        // Then remove the message after a short delay
         setTimeout(() => {
           feedbackContainer.remove();
           displayFoundUrls({ forced: true });
           resolve();
         }, 1500);
-      }, 1500); // slight delay to allow DOM update to complete
+      }, 1500);
     });
   }
 
-  // Save & Apply
   saveBtn.onclick = async () => {
     renderPreviewAndErrors();
     if (error.textContent) {
@@ -5570,106 +5689,73 @@ export function createFilenameTemplateModal() {
     const trimmedLabel = labelInput.value.trim();
     const recommendedTemplate = getRecommendedPresetTemplate();
 
-    // Warn user if they're using the recommended template name
     if (recommendedTemplate && trimmedLabel === recommendedTemplate.label) {
       showToast(
         "⚠️ Template Name Warning",
         `The name "${trimmedLabel}" will be automatically updated on next reload. Please rename your template to avoid automatic overrides.`,
-        8000
+        8000,
       );
-      // Still allow saving, but warn them
     }
 
-    const newTpl = {
+    const newTemplate = {
       label: trimmedLabel,
       template: inputPathTemplate.value.trim(),
     };
-    const updated = templates.filter((t) => t.label !== newTpl.label);
-    updated.push(newTpl);
-    // First update the state, since it's needed by saveTemplates
-    AppState.downloadPreferences.fullPathTemplate = newTpl;
-    saveTemplates(updated);
+    const updatedTemplates = getSavedTemplates().filter(
+      (template) => template.label !== newTemplate.label,
+    );
+    updatedTemplates.push(newTemplate);
+
+    AppState.downloadPreferences.fullPathTemplate = newTemplate;
+    saveTemplates(updatedTemplates);
     saveSelectedTemplate();
-    activeFullPathTemplate.textContent = `Applied & saved: ${newTpl.template}`;
-    // Remove old options
-    comboSelect.querySelectorAll("option").forEach((opt) => opt.remove());
+    activeFullPathTemplate.textContent = `Now using: ${newTemplate.label}`;
+    presetExample.textContent = "";
+    deleteBtn.disabled = false;
 
-    // Rebuild dropdown options with updated templates and current selection
-    const updatedTemplates = getSavedTemplates();
-    const rebuilt = document.createDocumentFragment();
-
-    const defaultOpt = document.createElement("option");
-    defaultOpt.text = "⚙️ Select template...";
-    defaultOpt.value = "";
-    rebuilt.appendChild(defaultOpt);
-
-    updatedTemplates.forEach((t, i) => {
-      const opt = document.createElement("option");
-      opt.value = `user-${i}`;
-      opt.text = t.label === newTpl.label ? `(Active) ${t.label}` : t.label;
-      if (t.label === newTpl.label) opt.selected = true;
-      rebuilt.appendChild(opt);
-    });
-
-    if (presetTemplates.length) {
-      const sep = document.createElement("option");
-      sep.text = "-- Presets --";
-      sep.disabled = true;
-      rebuilt.appendChild(sep);
-
-      presetTemplates.forEach((p, i) => {
-        const opt = document.createElement("option");
-        opt.value = `preset-${i}`;
-        opt.text = p.label === newTpl.label ? `(Active) ${p.label}` : p.label;
-        if (p.label === newTpl.label) opt.selected = true;
-        opt.title = p.example;
-        rebuilt.appendChild(opt);
-      });
-    }
-
-    comboSelect.appendChild(rebuilt);
-
+    appendTemplateOptions(comboSelect, newTemplate.label);
     await showFeedback("✅ Template saved and applied!");
   };
 
-  // Delete Handler
   deleteBtn.onclick = async () => {
-    const val = comboSelect.value;
-    if (!val) {
+    const value = comboSelect.value;
+    if (!value) {
       showToast("Error", "Select a user template to delete.");
       return;
     }
-    const [type, idxStr] = val.split("-");
-    const idx = parseInt(idxStr, 10);
+    const [type, indexStr] = value.split("-");
+    const index = Number.parseInt(indexStr, 10);
     if (type !== "user") {
       showToast("Error", "Cannot delete built-in presets.");
       return;
     }
-    const removed = templates.splice(idx, 1)[0];
-    saveTemplates(templates);
-    comboSelect.querySelector(`option[value=\"${type}-${idx}\"]`).remove();
+
+    const currentTemplates = getSavedTemplates();
+    const removed = currentTemplates.splice(index, 1)[0];
+    if (!removed) {
+      showToast("Error", "That template could not be found.");
+      return;
+    }
+
+    saveTemplates(currentTemplates);
     labelInput.value = "";
     inputPathTemplate.value = "";
     activeFullPathTemplate.textContent = "";
+    presetExample.textContent = "";
+    comboSelect.value = "";
+    deleteBtn.disabled = true;
+    appendTemplateOptions(comboSelect, "");
+    renderPreviewAndErrors();
     await showFeedback(`🗑️ Deleted template '${removed.label}'.`);
   };
 
-  // Wire input events
   const inputsLabel = document.createElement("span");
-  inputsLabel.style.cssText = `
-    color: var(--ettpd-text-primary, #333);
-    text-align: left;
-    display: block;
-    margin-bottom: 5px;
-  `;
+  inputsLabel.className = "ettpd-template-section-label";
+  inputsLabel.textContent = "Edit the template label and relative save path";
 
-  inputsLabel.textContent = "🤤 Create your own or copy existing template!";
   inputPathTemplate.addEventListener("input", renderPreviewAndErrors);
-  inputPathTemplate.className = "ettpd-modal-input";
-
   labelInput.addEventListener("input", () => (deleteBtn.disabled = false));
 
-  // Create a flex container for template label and buttons (same line)
   const templateActionsContainer = document.createElement("div");
   templateActionsContainer.style.cssText = `
     display: flex;
@@ -5683,9 +5769,11 @@ export function createFilenameTemplateModal() {
   templateActionsContainer.appendChild(deleteBtn);
   templateActionsContainer.appendChild(saveBtn);
 
-  // Assemble UI
   layout.append(
+    templateHero,
+    locationNote,
     instructions,
+    pickerLabel,
     comboSelect,
     presetExample,
     inputsLabel,
@@ -5693,12 +5781,11 @@ export function createFilenameTemplateModal() {
     inputPathTemplate,
     error,
     preview,
-    templateActionsContainer
+    templateActionsContainer,
   );
 
   createModal({
     children: [layout],
-    onClose: () => showFeedback("Closed template editor."),
   });
 }
 
@@ -5745,7 +5832,7 @@ export function createPreferencesBox() {
     ) {
       showToast(
         "Download in progress",
-        "Please wait for the download to be over or refresh!"
+        "Please wait for the download to be over or refresh!",
       );
       return;
     }
@@ -5758,7 +5845,7 @@ export function createPreferencesBox() {
     AppState.ui.isScrapperBoxOpen = false;
     showToast(
       "🔄 All set!",
-      "The download list now shows only the posts visible on the main screen — nothing from the sidebar.<br><br>💡 <b>Tip:</b> To scrape this page, scroll all the way down, then click <b>Download All</b> once you're happy with your list."
+      "The download list now shows only the posts visible on the main screen — nothing from the sidebar.<br><br>💡 <b>Tip:</b> To scrape this page, scroll all the way down, then click <b>Download All</b> once you're happy with your list.",
     );
 
     setTimeout(() => {
@@ -5785,7 +5872,7 @@ export function createPreferencesBox() {
       AppState.downloadPreferences.skipFailedDownloads =
         !AppState.downloadPreferences.skipFailedDownloads;
     },
-    AppState.downloadPreferences.skipFailedDownloads
+    AppState.downloadPreferences.skipFailedDownloads,
   );
   const skipAdsCheckbox = createCheckbox(
     "Skip Ads",
@@ -5795,7 +5882,7 @@ export function createPreferencesBox() {
         !AppState.downloadPreferences.skipAds;
     },
     AppState.downloadPreferences.skipAds,
-    "Will not download ads, buy you will still see ads."
+    "Will not download ads, buy you will still see ads.",
   );
   const includeCSVFile = createCheckbox(
     "Include CSV File",
@@ -5804,7 +5891,7 @@ export function createPreferencesBox() {
       AppState.downloadPreferences.includeCSV =
         !AppState.downloadPreferences.includeCSV;
     },
-    AppState.downloadPreferences.includeCSV
+    AppState.downloadPreferences.includeCSV,
   );
 
   const disableConfetti = createCheckbox(
@@ -5815,10 +5902,10 @@ export function createPreferencesBox() {
         !AppState.downloadPreferences.disableConfetti;
       localStorage.setItem(
         STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI,
-        AppState.downloadPreferences.disableConfetti
+        AppState.downloadPreferences.disableConfetti,
       );
     },
-    AppState.downloadPreferences.disableConfetti
+    AppState.downloadPreferences.disableConfetti,
   );
 
   // Theme dropdown
@@ -5901,8 +5988,8 @@ export function createPreferencesBox() {
         newTheme === "system"
           ? "System"
           : newTheme === "dark"
-          ? "Dark"
-          : "Light";
+            ? "Dark"
+            : "Light";
       showFeedback(`Theme set to ${themeLabel} mode`);
     };
 
@@ -6030,7 +6117,7 @@ export function createPreferencesBox() {
             toggleIcon.textContent = "🔌";
 
             showFeedback(
-              "Extension disabled. Reloading the page to stop the downloader..."
+              "Extension disabled. Reloading the page to stop the downloader...",
             );
 
             const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
@@ -6059,7 +6146,7 @@ export function createPreferencesBox() {
         toggle.classList.add("ettpd-power-toggle-on");
         toggleIcon.textContent = "⚡";
         showFeedback(
-          "Extension enabled. Reload the page for changes to take effect."
+          "Extension enabled. Reload the page for changes to take effect.",
         );
       }
     };
@@ -6098,7 +6185,7 @@ export function createPreferencesBox() {
     stateKey,
     customHandler = null,
     defaultValue = false,
-    title = ""
+    title = "",
   ) {
     const container = document.createElement("label");
     container.className = "ettpd-checkbox-container";
@@ -6128,7 +6215,7 @@ export function createPreferencesBox() {
   function createScrollModeSelector() {
     const label = document.createElement("label");
     label.className = "ettpd-label";
-    
+
     // Self-updating label that polls state every 2 seconds
     let intervalId = null;
     const updateLabel = () => {
@@ -6136,7 +6223,7 @@ export function createPreferencesBox() {
       label.textContent = `Auto Scroll Mode (${isAvailable ? "Available" : "Unavailable"})`;
     };
     updateLabel();
-    
+
     // Start polling when element is in DOM, stop when removed
     const startPolling = () => {
       if (!intervalId) {
@@ -6149,7 +6236,7 @@ export function createPreferencesBox() {
         intervalId = null;
       }
     };
-    
+
     // Use MutationObserver to detect when element is added/removed from DOM
     const observer = new MutationObserver(() => {
       if (document.contains(label)) {
@@ -6159,7 +6246,7 @@ export function createPreferencesBox() {
         observer.disconnect();
       }
     });
-    
+
     // Start observing once label is added to DOM
     requestAnimationFrame(() => {
       if (document.contains(label)) {
@@ -6188,7 +6275,7 @@ export function createPreferencesBox() {
     select.onchange = (e) => {
       AppState.downloadPreferences.autoScrollMode = e.target.value;
       showFeedback(
-        `Auto Scroll Mode set to "${e.target.selectedOptions[0].text}"`
+        `Auto Scroll Mode set to "${e.target.selectedOptions[0].text}"`,
       );
     };
 
@@ -6218,7 +6305,7 @@ export function createPreferencesBox() {
     autoScrollSettingUI,
     prefLabel,
     templateEditorBtn,
-    btnContainer
+    btnContainer,
   );
 
   return preferencesBox;
@@ -6235,7 +6322,7 @@ export function createSettingsToggle(preferencesBox) {
     AppState.ui.isScrapperBoxOpen = false;
     if (document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER)) {
       document.getElementById(
-        DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER
+        DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER,
       ).style.display = "none";
     }
     preferencesBox.style.display =
@@ -6258,7 +6345,7 @@ export function createSettingsToggle(preferencesBox) {
       AppState.ui.isScrapperBoxOpen = false;
       if (document.getElementById(DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER))
         document.getElementById(
-          DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER
+          DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER,
         ).style.display = AppState.ui.isScrapperBoxOpen ? "flex" : "none";
 
       settingsBtn.classList.add("ettpd-settings-open");
@@ -6308,16 +6395,18 @@ export function createSettingsToggle(preferencesBox) {
 
 export function clearDownloadBtnContainers() {
   const match = window.location.pathname.match(
-    /^\/@[^/]+\/(photo|video)\/([A-Za-z0-9]+)$/
+    /^\/@[^/]+\/(photo|video)\/([A-Za-z0-9]+)$/,
   );
   const activeId = match?.[2];
 
   document.querySelectorAll(".download-btn-container").forEach((el) => {
-    const hasActiveButton = el.querySelector(
-      `button.download-btn.${CSS.escape(activeId)}`
-    );
+    const hasActiveButton = activeId
+      ? el.querySelector(`button.download-btn.${CSS.escape(activeId)}`)
+      : null;
 
-    if (hasActiveButton) {
+    const isInsideActiveHoverSelection = isInsideActiveHoverSelectionRoot(el);
+
+    if (hasActiveButton || isInsideActiveHoverSelection) {
       console.log("✅ Skipping active download-btn-container", el);
       return;
     }
@@ -6325,6 +6414,24 @@ export function clearDownloadBtnContainers() {
     console.log("🧹 Removing download-btn-container", el);
     el.remove();
   });
+}
+
+function isInsideActiveHoverSelectionRoot(container) {
+  const activeRoots = [
+    activeProfileGridItem,
+    activeSideGridItem,
+    activeCreatorVideosSidebarCard,
+    activeYouMayLikeGridCard,
+    activeMainVideoSideGridCard,
+  ];
+
+  return activeRoots.some(
+    (root) =>
+      root instanceof Element &&
+      root.isConnected &&
+      root.matches(":hover") &&
+      root.contains(container),
+  );
 }
 
 function createDownloadButton({
@@ -6389,15 +6496,63 @@ function createDownloadButton({
     e.preventDefault();
     e.stopPropagation();
 
-    const media = buildVideoLinkMeta(AppState.allItemsEverSeen[videoId]) ?? {
-      videoId,
-      authorId: author,
+    const toMatchingMedia = (candidate) => {
+      const media = buildVideoLinkMeta(candidate);
+      if (!media?.videoId) return null;
+      return String(media.videoId) === String(videoId) ? media : null;
     };
-    const src = media?.url ?? getVideoSrc();
+
+    const resolveDownloadTarget = () => {
+      const fiberItem = findFiberItemById(parentEl, videoId, 40)?.item;
+      const fiberMedia = toMatchingMedia(fiberItem);
+      const cachedMedia = toMatchingMedia(AppState.allItemsEverSeen[videoId]);
+      const media = fiberMedia ||
+        cachedMedia || {
+          videoId,
+          authorId: author,
+        };
+
+      const liveSource = getVideoSrc();
+      const directSrcCandidates = [
+        liveSource,
+        fiberMedia?.url,
+        cachedMedia?.url,
+        getSrcById(videoId),
+      ];
+
+      const src =
+        directSrcCandidates.find(
+          (candidate) =>
+            typeof candidate === "string" && /^https?:/i.test(candidate),
+        ) ||
+        directSrcCandidates.find(
+          (candidate) =>
+            typeof candidate === "string" && /^blob:/i.test(candidate),
+        ) ||
+        null;
+
+      return {
+        src,
+        media,
+        liveSource,
+      };
+    };
+
+    let resolvedTarget = resolveDownloadTarget();
+    const src = resolvedTarget.src;
+    const media = resolvedTarget.media;
 
     console.log("IMAGES_DL ⏬ Clicked, source:", src);
-    if (!src?.startsWith("http")) {
-      if (AppState.debug.active) console.warn("IMAGES_DL ❌ Invalid source");
+    const isDownloadableSrc =
+      typeof src === "string" && /^(https?:|blob:)/.test(src);
+    if (!isDownloadableSrc) {
+      if (AppState.debug.active) {
+        console.warn("IMAGES_DL ❌ Invalid source", { src, videoId, from });
+      }
+      showToast(
+        "Save Failed",
+        "This video source is not ready yet. Try again in a moment.",
+      );
       return;
     }
 
@@ -6409,7 +6564,51 @@ function createDownloadButton({
         src,
         getDownloadFilePath(media, {
           imageIndex: photoIndex,
-        })
+        }),
+        {
+          getFreshUrl: async ({ url, error, attempt }) => {
+            const staleBlobError =
+              typeof url === "string" &&
+              /^blob:/i.test(url) &&
+              (error?.code === "ERR_BLOB_FETCH" ||
+                /Failed to fetch|ERR_FILE_NOT_FOUND/i.test(
+                  error?.message || "",
+                ));
+
+            if (!staleBlobError) {
+              return null;
+            }
+
+            await new Promise((resolve) =>
+              setTimeout(resolve, Math.min(150 * attempt, 500)),
+            );
+
+            const nextTarget = resolveDownloadTarget();
+            const nextSrc = nextTarget.src;
+
+            if (AppState.debug.active) {
+              console.warn("IMAGES_DL 🔄 Retrying stale blob source", {
+                videoId,
+                from,
+                attempt,
+                previousSrc: typeof url === "string" ? url.slice(0, 96) : url,
+                nextSrc:
+                  typeof nextSrc === "string" ? nextSrc.slice(0, 96) : nextSrc,
+                changed: nextSrc !== url,
+              });
+            }
+
+            if (
+              typeof nextSrc === "string" &&
+              /^(https?:|blob:)/.test(nextSrc)
+            ) {
+              resolvedTarget = nextTarget;
+              return nextSrc;
+            }
+
+            return null;
+          },
+        },
       );
       btn.textContent = "";
       const savedIcon = createIcon("check", 16);
@@ -6418,7 +6617,7 @@ function createDownloadButton({
       btn.appendChild(document.createTextNode("Saved"));
       showCelebration(
         "downloads",
-        getRandomDownloadSuccessMessage(isImage ? "photo" : "video")
+        getRandomDownloadSuccessMessage(isImage ? "photo" : "video"),
       );
       if (!AppState.downloadPreferences.skipFailedDownloads) {
         setTimeout(() => {
@@ -6477,9 +6676,9 @@ export function createMediaDownloadButtonForWrapper(wrapperEl, postId) {
       );
     } else {
       return (
-        getSrcById(postId) ||
         wrapperEl.querySelector("video source")?.src ||
-        wrapperEl.querySelector("video")?.src
+        wrapperEl.querySelector("video")?.src ||
+        getSrcById(postId)
       );
     }
   };
@@ -6510,16 +6709,16 @@ export function createExploreDownloadButton(exploreItem, videoId) {
       exploreItem.closest('[data-e2e="explore-item"]')?.parentElement,
       {
         origin: "createExploreDownloadButton",
-      }
+      },
     )?.username ||
     getUsernameFromPlayingArticle() ||
     getCurrentPageUsername() ||
     "username";
 
   const getVideoSrc = () =>
-    getSrcById(videoId) ||
     wrapper.querySelector("video source")?.src ||
-    wrapper.querySelector("video")?.src;
+    wrapper.querySelector("video")?.src ||
+    getSrcById(videoId);
 
   createDownloadButton({
     wrapperId: `explore-${videoId}`,
@@ -6651,7 +6850,7 @@ function injectExploreDownloadButtons() {
   document.querySelectorAll('div[data-e2e="explore-item"]').forEach((item) => {
     const href = item.querySelector("a[href*='/video/']")?.getAttribute("href");
     const m = href?.match(/\/video\/(\d+)/);
-    if (m && !item.querySelector(".ettpd-download-btn")) {
+    if (m && !item.querySelector("button.download-btn")) {
       createExploreDownloadButton(item, m[1]);
     }
   });
@@ -6659,8 +6858,19 @@ function injectExploreDownloadButtons() {
 
 function injectFeedWrapperDownloadButtons() {
   document.querySelectorAll("div[id^='xgwrapper-']").forEach((wrapper) => {
+    if (
+      wrapper.closest('div[data-e2e="explore-item"]') ||
+      wrapper.closest('div[data-e2e="user-post-item"]') ||
+      wrapper.closest("div[id^='column-item-video-container-']") ||
+      getCreatorVideosSidebarCard(wrapper) ||
+      getYouMayLikeGridCard(wrapper) ||
+      getMainVideoSideGridCard(wrapper)
+    ) {
+      return;
+    }
+
     const m = wrapper.id.match(/xgwrapper-\d+-(\d+)/);
-    if (m && !wrapper.querySelector(".ettpd-download-btn")) {
+    if (m && !wrapper.querySelector("button.download-btn")) {
       createMediaDownloadButtonForWrapper(wrapper, m[1]);
     }
   });
@@ -6672,83 +6882,924 @@ function injectImageFeedDownloadButtons() {
     .querySelectorAll("div[data-e2e='browse-image-feed-item']")
     .forEach((item) => {
       const idMatch = item.id?.match(/imagewrapper-(\d+)/);
-      if (idMatch && !item.querySelector(".ettpd-download-btn")) {
+      if (idMatch && !item.querySelector("button.download-btn")) {
         createImageDownloadButton(item, idMatch[1]);
       }
     });
 }
 
-function injectSideGridDownloadButtons() {
-  document
-    .querySelectorAll("div[id^='column-item-video-container-']")
-    .forEach((wrapper) => {
-      const playerDiv = wrapper.querySelector(
-        "div[class*='DivPlayerContainer']"
-      );
-      if (!playerDiv) return;
-
-      const href = wrapper
-        .querySelector("a[href*='/video/'], a[href*='/photo/']")
-        ?.getAttribute("href");
-      const m = href?.match(/\/(video|photo)\/(\d+)/);
-      if (!m) return;
-
-      const postId = m[2];
-      if (wrapper.querySelector(".ettpd-download-btn")) return;
-
-      if (!wrapper.matches(":hover")) return;
-
-      createMediaDownloadButtonForWrapper(
-        Array.from(wrapper.children)?.at(0),
-        postId
-      );
+function removeInjectedDownloadButton(item, postId) {
+  item
+    ?.querySelectorAll(`button.download-btn.${CSS.escape(postId)}`)
+    .forEach((button) => {
+      button.closest(".download-btn-container")?.remove();
     });
 }
 
-function downloadBtnInjectorForMainVideoSideGrid() {
-  const listContainer = [...document.querySelectorAll("a[href*='/video/']")]
-    .map((a) => a.closest("div"))
-    .filter((el) => el?.tagName === "DIV");
+function removeAllInjectedDownloadButtons(item) {
+  item
+    ?.querySelectorAll(".download-btn-container, .photo-download-btn-container")
+    .forEach((container) => {
+      container.remove();
+    });
+}
 
-  listContainer.forEach((card) => {
-    const link = card.querySelector("a[href*='/video/']");
-    const href = link?.getAttribute("href");
-    const m = href?.match(/\/video\/(\d+)/);
-    const videoId = m?.[1];
-    if (!videoId) return;
+function getProfileGridPostId(item) {
+  const href = item
+    ?.querySelector('a[href*="/video/"], a[href*="/photo/"]')
+    ?.getAttribute("href");
+  return href?.match(/\/(?:video|photo)\/(\d+)/)?.[1] || null;
+}
 
-    const wrapper = getImageDivPlayerContainerDownward(card);
-    if (wrapper)
-      if (
-        wrapper &&
-        wrapper.className.includes("DivPlayerWrapper") &&
-        !wrapper.querySelector(".ettpd-download-btn")
-      ) {
-        const author =
-          getVideoUsernameFromAllDirectLinks(videoId) ||
-          getPostInfoFrom(card, {
-            origin: "safeGridObserver",
-          })?.username ||
-          getCurrentPageUsername() ||
-          "username";
+function isProfileGridItemHovered(item) {
+  return !!item?.matches(":hover");
+}
 
-        const getVideoSrc = () =>
-          getSrcById(videoId) ||
-          wrapper.querySelector("video source")?.src ||
-          wrapper.querySelector("video")?.src;
+let activeProfileGridItem = null;
 
-        createDownloadButton({
-          wrapperId: `grid-${videoId}`,
-          author,
-          videoId,
-          getVideoSrc,
-          parentEl: wrapper.parentElement.parentElement, // This will definitely break in the future
-          isSmallView: true,
-          from: "safeGridObserver",
-        });
-      }
+function syncProfileGridDownloadButton(item) {
+  if (activeProfileGridItem && activeProfileGridItem !== item) {
+    removeAllInjectedDownloadButtons(activeProfileGridItem);
+    activeProfileGridItem = null;
+  }
+
+  const postId = getProfileGridPostId(item);
+  if (!postId) return;
+
+  if (!isProfileGridItemHovered(item)) {
+    removeAllInjectedDownloadButtons(item);
+    if (activeProfileGridItem === item) {
+      activeProfileGridItem = null;
+    }
+    return;
+  }
+
+  const playerContainer = getImageDivPlayerContainerDownward(item);
+  const wrapper =
+    playerContainer?.parentElement?.parentElement || playerContainer;
+  if (!wrapper) {
+    removeAllInjectedDownloadButtons(item);
+    if (activeProfileGridItem === item) {
+      activeProfileGridItem = null;
+    }
+    return;
+  }
+
+  if (wrapper.querySelector(`button.download-btn.${CSS.escape(postId)}`)) {
+    activeProfileGridItem = item;
+    return;
+  }
+
+  createMediaDownloadButtonForWrapper(wrapper, postId);
+  activeProfileGridItem = item;
+}
+
+let profileGridHoverListenersBound = false;
+
+function ensureProfileGridHoverListeners() {
+  if (profileGridHoverListenersBound || !document?.addEventListener) {
+    return;
+  }
+
+  const getClosestProfileGridItem = (node) =>
+    node instanceof Element
+      ? node.closest('div[data-e2e="user-post-item"]')
+      : null;
+
+  document.addEventListener("mouseover", (event) => {
+    const item = getClosestProfileGridItem(event.target);
+    if (!item) return;
+
+    const relatedItem = getClosestProfileGridItem(event.relatedTarget);
+    if (relatedItem === item) return;
+
+    syncProfileGridDownloadButton(item);
+  });
+
+  document.addEventListener("mouseout", (event) => {
+    const item = getClosestProfileGridItem(event.target);
+    if (!item) return;
+
+    const relatedItem = getClosestProfileGridItem(event.relatedTarget);
+    if (relatedItem === item) return;
+
+    removeAllInjectedDownloadButtons(item);
+    if (activeProfileGridItem === item) {
+      activeProfileGridItem = null;
+    }
+  });
+
+  profileGridHoverListenersBound = true;
+}
+
+function injectProfileGridDownloadButtons() {
+  ensureProfileGridHoverListeners();
+}
+
+ensureProfileGridHoverListeners();
+
+function getSideGridPostId(item) {
+  const href = item
+    ?.querySelector("a[href*='/video/'], a[href*='/photo/']")
+    ?.getAttribute("href");
+  return href?.match(/\/(?:video|photo)\/(\d+)/)?.[1] || null;
+}
+
+let activeSideGridItem = null;
+
+function syncSideGridDownloadButton(item) {
+  if (activeSideGridItem && activeSideGridItem !== item) {
+    removeAllInjectedDownloadButtons(activeSideGridItem);
+    activeSideGridItem = null;
+  }
+
+  const postId = getSideGridPostId(item);
+  if (!postId) return;
+
+  if (!item.matches(":hover")) {
+    removeAllInjectedDownloadButtons(item);
+    if (activeSideGridItem === item) {
+      activeSideGridItem = null;
+    }
+    return;
+  }
+
+  const playerDiv = item.querySelector("div[class*='DivPlayerContainer']");
+  if (!playerDiv) {
+    removeAllInjectedDownloadButtons(item);
+    if (activeSideGridItem === item) {
+      activeSideGridItem = null;
+    }
+    return;
+  }
+
+  const parentEl = Array.from(item.children)?.at(0);
+  if (!parentEl) {
+    removeAllInjectedDownloadButtons(item);
+    if (activeSideGridItem === item) {
+      activeSideGridItem = null;
+    }
+    return;
+  }
+
+  if (item.querySelector(`button.download-btn.${CSS.escape(postId)}`)) {
+    activeSideGridItem = item;
+    return;
+  }
+
+  createMediaDownloadButtonForWrapper(parentEl, postId);
+  activeSideGridItem = item;
+}
+
+let sideGridHoverListenersBound = false;
+
+function ensureSideGridHoverListeners() {
+  if (sideGridHoverListenersBound || !document?.addEventListener) {
+    return;
+  }
+
+  const getClosestSideGridItem = (node) =>
+    node instanceof Element
+      ? node.closest("div[id^='column-item-video-container-']")
+      : null;
+
+  document.addEventListener("mouseover", (event) => {
+    const item = getClosestSideGridItem(event.target);
+    if (!item) return;
+
+    const relatedItem = getClosestSideGridItem(event.relatedTarget);
+    if (relatedItem === item) return;
+
+    syncSideGridDownloadButton(item);
+  });
+
+  document.addEventListener("mouseout", (event) => {
+    const item = getClosestSideGridItem(event.target);
+    if (!item) return;
+
+    const relatedItem = getClosestSideGridItem(event.relatedTarget);
+    if (relatedItem === item) return;
+
+    removeAllInjectedDownloadButtons(item);
+    if (activeSideGridItem === item) {
+      activeSideGridItem = null;
+    }
+  });
+
+  sideGridHoverListenersBound = true;
+}
+
+function injectSideGridDownloadButtons() {
+  ensureSideGridHoverListeners();
+}
+
+function getPostLinkHrefFromElement(element) {
+  if (!(element instanceof Element)) return null;
+
+  return (
+    element
+      .closest("a[href*='/video/'], a[href*='/photo/']")
+      ?.getAttribute("href") ||
+    element
+      .querySelector("a[href*='/video/'], a[href*='/photo/']")
+      ?.getAttribute("href") ||
+    null
+  );
+}
+
+function normalizeMediaAssetUrl(url) {
+  if (typeof url !== "string" || !url.trim()) return null;
+
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url.split("?")[0] || null;
+  }
+}
+
+function collectMediaUrlHints(element) {
+  const hints = new Set();
+
+  const addHint = (value) => {
+    const normalized = normalizeMediaAssetUrl(value);
+    if (normalized) {
+      hints.add(normalized);
+    }
+  };
+
+  const addSrcSetHints = (srcset) => {
+    if (typeof srcset !== "string") return;
+
+    srcset
+      .split(",")
+      .map((part) => part.trim().split(/\s+/)[0])
+      .forEach(addHint);
+  };
+
+  if (!(element instanceof Element)) return hints;
+
+  element.querySelectorAll("img").forEach((img) => {
+    addHint(img.currentSrc || img.src);
+    addSrcSetHints(img.srcset);
+  });
+
+  element.querySelectorAll("source").forEach((source) => {
+    addHint(source.src);
+    addSrcSetHints(source.srcset);
+  });
+
+  element.querySelectorAll("video").forEach((video) => {
+    addHint(video.currentSrc || video.src);
+    addHint(video.poster);
+  });
+
+  return hints;
+}
+
+function mediaMatchesElementHints(media, hints) {
+  if (!media?.videoId || !hints?.size) return false;
+
+  const candidates = [
+    media.url,
+    media.coverImage,
+    media.dynamicCover,
+    media.originCover,
+    ...(Array.isArray(media.imagePostImages) ? media.imagePostImages : []),
+  ];
+
+  return candidates.some((candidate) => {
+    const normalized = normalizeMediaAssetUrl(candidate);
+    return normalized ? hints.has(normalized) : false;
   });
 }
+
+function getReactFiberNode(element) {
+  if (!(element instanceof Element)) return null;
+
+  for (const key in element) {
+    if (key.startsWith("__reactFiber$")) {
+      return element[key];
+    }
+  }
+
+  return null;
+}
+
+function scoreFiberMediaCandidate(candidate) {
+  if (!candidate || typeof candidate !== "object") return -1;
+
+  let score = 0;
+  if (typeof candidate.id === "string" && candidate.id) score += 10;
+  if (candidate.video?.playAddr || candidate.video?.downloadAddr) score += 5;
+  if (candidate.imagePost?.images?.length) score += 4;
+  if (candidate.author?.uniqueId || candidate.author?.nickname) score += 3;
+  if (candidate.stats || candidate.statsV2) score += 2;
+  if (candidate.desc || candidate.createTime) score += 1;
+
+  return score;
+}
+
+function findFiberMediaForElement(element) {
+  const hints = collectMediaUrlHints(element);
+  let current = element instanceof Element ? element : null;
+  let bestMedia = null;
+  let bestScore = -1;
+
+  for (
+    let hop = 0;
+    current && hop < 5;
+    hop += 1, current = current.parentElement
+  ) {
+    const fiber = getReactFiberNode(current);
+    if (!fiber) continue;
+
+    const queue = [{ value: fiber, depth: 0 }];
+    const seen = new WeakSet();
+    let visits = 0;
+
+    while (queue.length && visits < 160) {
+      const { value, depth } = queue.shift();
+      if (!value || typeof value !== "object" || seen.has(value)) continue;
+
+      seen.add(value);
+      visits += 1;
+
+      const candidatePool = [
+        value,
+        value.item,
+        value.props?.item,
+        value.pendingProps?.item,
+        value.memoizedProps?.item,
+      ];
+
+      candidatePool.forEach((candidate) => {
+        const candidateScore = scoreFiberMediaCandidate(candidate);
+        if (candidateScore <= 0) return;
+
+        const media = buildVideoLinkMeta(candidate);
+        if (!media?.videoId) return;
+
+        const score =
+          candidateScore +
+          (mediaMatchesElementHints(media, hints) ? 50 : 0) -
+          depth -
+          hop;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestMedia = media;
+        }
+      });
+
+      if (depth >= 4) continue;
+
+      [
+        value.pendingProps,
+        value.memoizedProps,
+        value.props,
+        value.children,
+        value.child,
+        value.sibling,
+      ].forEach((nextValue) => {
+        if (nextValue && typeof nextValue === "object") {
+          queue.push({ value: nextValue, depth: depth + 1 });
+        }
+      });
+    }
+  }
+
+  return bestMedia;
+}
+
+function findKnownMediaForElement(element) {
+  const gridMedia = findVideoListGridMediaForElement(element);
+  if (gridMedia?.videoId) {
+    return gridMedia;
+  }
+
+  const hints = collectMediaUrlHints(element);
+
+  const knownDirectLinks = Array.isArray(AppState.allDirectLinks)
+    ? AppState.allDirectLinks
+    : [];
+
+  if (hints.size) {
+    for (const media of knownDirectLinks) {
+      if (mediaMatchesElementHints(media, hints)) {
+        return media;
+      }
+    }
+
+    for (const rawMedia of Object.values(AppState.allItemsEverSeen || {})) {
+      const media = buildVideoLinkMeta(rawMedia);
+      if (mediaMatchesElementHints(media, hints)) {
+        return media;
+      }
+    }
+  }
+
+  return findFiberMediaForElement(element);
+}
+
+function findVideoListGridMediaForElement(element) {
+  if (!(element instanceof Element)) return null;
+
+  const gridContainer = element.closest("div[class*='DivVideoListContainer']");
+  if (!gridContainer) return null;
+
+  const gridChildren = Array.from(gridContainer.children).filter(
+    (child) => child instanceof Element,
+  );
+  if (!gridChildren.length) return null;
+
+  const gridChild =
+    gridChildren.find(
+      (child) => child === element || child.contains(element),
+    ) || null;
+  if (!gridChild) return null;
+
+  const itemIndex = gridChildren.indexOf(gridChild);
+  if (itemIndex < 0) return null;
+
+  const fiberItems = findFiberItemsInContainer(
+    gridContainer,
+    Math.max(300, gridChildren.length * 40),
+    18,
+  );
+  if (!fiberItems.length) return null;
+
+  const hints = collectMediaUrlHints(gridChild);
+  const orderedCandidates = [
+    fiberItems[itemIndex],
+    fiberItems[itemIndex - 1],
+    fiberItems[itemIndex + 1],
+  ].filter(Boolean);
+
+  for (const candidate of orderedCandidates) {
+    const media = buildVideoLinkMeta(candidate);
+    if (!media?.videoId) continue;
+    if (!hints.size || mediaMatchesElementHints(media, hints)) {
+      return media;
+    }
+  }
+
+  const fallbackCandidate = fiberItems[itemIndex];
+  return fallbackCandidate ? buildVideoLinkMeta(fallbackCandidate) : null;
+}
+
+function getCreatorVideosSidebarPostData(card) {
+  const href = getPostLinkHrefFromElement(card);
+  const matchedMedia = findKnownMediaForElement(card);
+  const videoId = extractVideoIdFromURL(href) || matchedMedia?.videoId || null;
+  const authorId = extractAuthorFromURL(href) || matchedMedia?.authorId || null;
+  const resolvedHref =
+    href ||
+    (videoId && authorId
+      ? `/@${authorId}/${matchedMedia?.isImage ? "photo" : "video"}/${videoId}`
+      : null);
+
+  return {
+    href: resolvedHref,
+    videoId,
+    authorId,
+    media: matchedMedia,
+  };
+}
+
+function getCreatorVideosSidebarCard(node) {
+  let current = node instanceof Element ? node : null;
+
+  while (current && current !== document.body) {
+    if (current.matches?.("div[id^='column-item-video-container-']")) {
+      return null;
+    }
+
+    if (current.tagName === "DIV") {
+      const className = String(current.className || "");
+      const wrapper = getImageDivPlayerContainerDownward(current);
+      const hasItemContainer = className.includes("DivItemContainer");
+      const hasCoverContainer = !!current.querySelector(
+        "div[class*='DivCoverContainer']",
+      );
+      const hasCoverMedia = !!current.querySelector(
+        "img[class*='ImgCover'], picture, video",
+      );
+      const hasPlayCount = !!current.querySelector(
+        "div[class*='DivPlayCount']",
+      );
+
+      if (
+        hasItemContainer &&
+        hasCoverContainer &&
+        (wrapper?.className.includes("DivPlayerWrapper") ||
+          hasCoverMedia ||
+          hasPlayCount)
+      ) {
+        return current;
+      }
+    }
+
+    current = current.parentElement;
+  }
+
+  return null;
+}
+
+function getCreatorVideosSidebarPostHref(card) {
+  return getCreatorVideosSidebarPostData(card).href;
+}
+
+function getCreatorVideosSidebarPostId(card) {
+  return getCreatorVideosSidebarPostData(card).videoId;
+}
+
+let activeCreatorVideosSidebarCard = null;
+
+function syncCreatorVideosSidebarDownloadButton(card) {
+  if (
+    activeCreatorVideosSidebarCard &&
+    activeCreatorVideosSidebarCard !== card
+  ) {
+    removeAllInjectedDownloadButtons(activeCreatorVideosSidebarCard);
+    activeCreatorVideosSidebarCard = null;
+  }
+
+  const postData = getCreatorVideosSidebarPostData(card);
+  const videoId = postData.videoId;
+  if (!videoId) return;
+
+  if (!card.matches(":hover")) {
+    removeAllInjectedDownloadButtons(card);
+    if (activeCreatorVideosSidebarCard === card) {
+      activeCreatorVideosSidebarCard = null;
+    }
+    return;
+  }
+
+  const wrapper = getImageDivPlayerContainerDownward(card);
+
+  const parentEl =
+    wrapper?.closest("div[class*='DivCoverContainer']") ||
+    card.querySelector("div[class*='DivCoverContainer']") ||
+    wrapper?.parentElement?.parentElement ||
+    wrapper?.parentElement ||
+    card;
+  if (!parentEl) {
+    removeAllInjectedDownloadButtons(card);
+    if (activeCreatorVideosSidebarCard === card) {
+      activeCreatorVideosSidebarCard = null;
+    }
+    return;
+  }
+
+  if (card.querySelector(`button.download-btn.${CSS.escape(videoId)}`)) {
+    activeCreatorVideosSidebarCard = card;
+    return;
+  }
+
+  const author =
+    postData.authorId ||
+    getVideoUsernameFromAllDirectLinks(videoId) ||
+    getPostInfoFrom(card, {
+      origin: "creatorVideosSidebar",
+    })?.username ||
+    getCurrentPageUsername() ||
+    "username";
+
+  const getVideoSrc = () =>
+    getImageDivPlayerContainerDownward(card)?.querySelector("video source")
+      ?.src ||
+    getImageDivPlayerContainerDownward(card)?.querySelector("video")?.src ||
+    getSrcById(videoId) ||
+    (postData.media?.url?.startsWith("http") ? postData.media.url : "");
+
+  createDownloadButton({
+    wrapperId: `creator-sidebar-${videoId}`,
+    author,
+    videoId,
+    getVideoSrc,
+    parentEl,
+    isSmallView: true,
+    from: "creatorVideosSidebar",
+  });
+  activeCreatorVideosSidebarCard = card;
+}
+
+let creatorVideosSidebarHoverListenersBound = false;
+
+function ensureCreatorVideosSidebarHoverListeners() {
+  if (creatorVideosSidebarHoverListenersBound || !document?.addEventListener) {
+    return;
+  }
+
+  document.addEventListener("mouseover", (event) => {
+    const card = getCreatorVideosSidebarCard(event.target);
+    if (!card) return;
+
+    const relatedCard = getCreatorVideosSidebarCard(event.relatedTarget);
+    if (relatedCard === card) return;
+
+    syncCreatorVideosSidebarDownloadButton(card);
+  });
+
+  document.addEventListener("mouseout", (event) => {
+    const card = getCreatorVideosSidebarCard(event.target);
+    if (!card) return;
+
+    const relatedCard = getCreatorVideosSidebarCard(event.relatedTarget);
+    if (relatedCard === card) return;
+
+    removeAllInjectedDownloadButtons(card);
+    if (activeCreatorVideosSidebarCard === card) {
+      activeCreatorVideosSidebarCard = null;
+    }
+  });
+
+  creatorVideosSidebarHoverListenersBound = true;
+}
+
+function injectCreatorVideosSidebarDownloadButtons() {
+  ensureCreatorVideosSidebarHoverListeners();
+}
+
+function getYouMayLikeGridCard(node) {
+  const card =
+    node instanceof Element
+      ? node.closest("div[class*='DivCoverContainer']")
+      : null;
+
+  if (!card) return null;
+
+  if (card.closest('div[data-e2e="user-post-item"]')) {
+    return null;
+  }
+
+  if (card.closest("div[id^='column-item-video-container-']")) {
+    return null;
+  }
+
+  if (card.closest('div[data-e2e="explore-item"]')) {
+    return null;
+  }
+
+  if (getCreatorVideosSidebarCard(card)) {
+    return null;
+  }
+
+  if (getMainVideoSideGridCard(card)) {
+    return null;
+  }
+
+  const href = getPostLinkHrefFromElement(card);
+  if (!href?.includes("/video/")) {
+    return null;
+  }
+
+  if (!card.querySelector("a[href*='/video/']")) {
+    return null;
+  }
+
+  if (!card.querySelector("picture, img, video")) {
+    return null;
+  }
+
+  return card;
+}
+
+function getYouMayLikeGridPostHref(card) {
+  return getPostLinkHrefFromElement(card);
+}
+
+function getYouMayLikeGridPostId(card) {
+  return extractVideoIdFromURL(getYouMayLikeGridPostHref(card));
+}
+
+let activeYouMayLikeGridCard = null;
+
+function syncYouMayLikeGridDownloadButton(card) {
+  if (activeYouMayLikeGridCard && activeYouMayLikeGridCard !== card) {
+    removeAllInjectedDownloadButtons(activeYouMayLikeGridCard);
+    activeYouMayLikeGridCard = null;
+  }
+
+  const videoId = getYouMayLikeGridPostId(card);
+  if (!videoId) return;
+
+  if (!card.matches(":hover")) {
+    removeAllInjectedDownloadButtons(card);
+    if (activeYouMayLikeGridCard === card) {
+      activeYouMayLikeGridCard = null;
+    }
+    return;
+  }
+
+  if (card.querySelector(`button.download-btn.${CSS.escape(videoId)}`)) {
+    activeYouMayLikeGridCard = card;
+    return;
+  }
+
+  const href = getYouMayLikeGridPostHref(card);
+  const author =
+    extractAuthorFromURL(href) ||
+    getVideoUsernameFromAllDirectLinks(videoId) ||
+    getPostInfoFrom(card, {
+      origin: "youMayLikeGrid",
+    })?.username ||
+    getCurrentPageUsername() ||
+    "username";
+
+  const getVideoSrc = () =>
+    card.querySelector("video source")?.src ||
+    card.querySelector("video")?.src ||
+    getSrcById(videoId) ||
+    "";
+
+  createDownloadButton({
+    wrapperId: `you-may-like-${videoId}`,
+    author,
+    videoId,
+    getVideoSrc,
+    parentEl: card,
+    isSmallView: true,
+    from: "youMayLikeGrid",
+  });
+  activeYouMayLikeGridCard = card;
+}
+
+let youMayLikeGridHoverListenersBound = false;
+
+function ensureYouMayLikeGridHoverListeners() {
+  if (youMayLikeGridHoverListenersBound || !document?.addEventListener) {
+    return;
+  }
+
+  document.addEventListener("mouseover", (event) => {
+    const card = getYouMayLikeGridCard(event.target);
+    if (!card) return;
+
+    const relatedCard = getYouMayLikeGridCard(event.relatedTarget);
+    if (relatedCard === card) return;
+
+    syncYouMayLikeGridDownloadButton(card);
+  });
+
+  document.addEventListener("mouseout", (event) => {
+    const card = getYouMayLikeGridCard(event.target);
+    if (!card) return;
+
+    const relatedCard = getYouMayLikeGridCard(event.relatedTarget);
+    if (relatedCard === card) return;
+
+    removeAllInjectedDownloadButtons(card);
+    if (activeYouMayLikeGridCard === card) {
+      activeYouMayLikeGridCard = null;
+    }
+  });
+
+  youMayLikeGridHoverListenersBound = true;
+}
+
+function injectYouMayLikeGridDownloadButtons() {
+  ensureYouMayLikeGridHoverListeners();
+}
+
+function getMainVideoSideGridCard(node) {
+  let current = node instanceof Element ? node : null;
+
+  while (current && current !== document.body) {
+    if (current.matches?.("div[id^='column-item-video-container-']")) {
+      return null;
+    }
+
+    if (current.tagName === "DIV") {
+      const link = current.querySelector("a[href*='/video/']");
+      const wrapper = getImageDivPlayerContainerDownward(current);
+
+      if (link && wrapper?.className.includes("DivPlayerWrapper")) {
+        return current;
+      }
+    }
+
+    current = current.parentElement;
+  }
+
+  return null;
+}
+
+function getMainVideoSideGridPostId(card) {
+  const href = card?.querySelector("a[href*='/video/']")?.getAttribute("href");
+  return href?.match(/\/video\/(\d+)/)?.[1] || null;
+}
+
+let activeMainVideoSideGridCard = null;
+
+function syncMainVideoSideGridDownloadButton(card) {
+  if (activeMainVideoSideGridCard && activeMainVideoSideGridCard !== card) {
+    removeAllInjectedDownloadButtons(activeMainVideoSideGridCard);
+    activeMainVideoSideGridCard = null;
+  }
+
+  const videoId = getMainVideoSideGridPostId(card);
+  if (!videoId) return;
+
+  if (!card.matches(":hover")) {
+    removeAllInjectedDownloadButtons(card);
+    if (activeMainVideoSideGridCard === card) {
+      activeMainVideoSideGridCard = null;
+    }
+    return;
+  }
+
+  const wrapper = getImageDivPlayerContainerDownward(card);
+  if (!wrapper || !wrapper.className.includes("DivPlayerWrapper")) {
+    removeAllInjectedDownloadButtons(card);
+    if (activeMainVideoSideGridCard === card) {
+      activeMainVideoSideGridCard = null;
+    }
+    return;
+  }
+
+  const parentEl = wrapper.parentElement?.parentElement;
+  if (!parentEl) {
+    removeAllInjectedDownloadButtons(card);
+    if (activeMainVideoSideGridCard === card) {
+      activeMainVideoSideGridCard = null;
+    }
+    return;
+  }
+
+  if (parentEl.querySelector(`button.download-btn.${CSS.escape(videoId)}`)) {
+    activeMainVideoSideGridCard = card;
+    return;
+  }
+
+  const author =
+    getVideoUsernameFromAllDirectLinks(videoId) ||
+    getPostInfoFrom(card, {
+      origin: "safeGridObserver",
+    })?.username ||
+    getCurrentPageUsername() ||
+    "username";
+
+  const getVideoSrc = () =>
+    wrapper.querySelector("video source")?.src ||
+    wrapper.querySelector("video")?.src ||
+    getSrcById(videoId);
+
+  createDownloadButton({
+    wrapperId: `grid-${videoId}`,
+    author,
+    videoId,
+    getVideoSrc,
+    parentEl,
+    isSmallView: true,
+    from: "safeGridObserver",
+  });
+  activeMainVideoSideGridCard = card;
+}
+
+let mainVideoSideGridHoverListenersBound = false;
+
+function ensureMainVideoSideGridHoverListeners() {
+  if (mainVideoSideGridHoverListenersBound || !document?.addEventListener) {
+    return;
+  }
+
+  document.addEventListener("mouseover", (event) => {
+    const card = getMainVideoSideGridCard(event.target);
+    if (!card) return;
+
+    const relatedCard = getMainVideoSideGridCard(event.relatedTarget);
+    if (relatedCard === card) return;
+
+    syncMainVideoSideGridDownloadButton(card);
+  });
+
+  document.addEventListener("mouseout", (event) => {
+    const card = getMainVideoSideGridCard(event.target);
+    if (!card) return;
+
+    const relatedCard = getMainVideoSideGridCard(event.relatedTarget);
+    if (relatedCard === card) return;
+
+    removeAllInjectedDownloadButtons(card);
+    if (activeMainVideoSideGridCard === card) {
+      activeMainVideoSideGridCard = null;
+    }
+  });
+
+  mainVideoSideGridHoverListenersBound = true;
+}
+
+function downloadBtnInjectorForMainVideoSideGrid() {
+  ensureMainVideoSideGridHoverListeners();
+}
+
+ensureSideGridHoverListeners();
+ensureCreatorVideosSidebarHoverListeners();
+ensureYouMayLikeGridHoverListeners();
+ensureMainVideoSideGridHoverListeners();
 /**
  * Scans the current TikTok page for various post containers (explore items, feed wrappers, and side grid)
  * and attaches appropriate download buttons to each, if not already present.
@@ -6757,6 +7808,8 @@ function downloadBtnInjectorForMainVideoSideGrid() {
  * - `injectExploreDownloadButtons` handles explore page grid items.
  * - `injectFeedWrapperDownloadButtons` handles feed-style video wrappers.
  * - `injectSideGridDownloadButtons` handles main video/photo containers in side grid view.
+ * - `injectCreatorVideosSidebarDownloadButtons` handles the creator videos sidebar preview cards.
+ * - `injectYouMayLikeGridDownloadButtons` handles static You May Like cover-grid cards.
  * - `downloadBtnInjectorForMainVideoSideGrid` handles download button injection for the floating side grid.
  *
  * This method is intended to be called periodically or in response to DOM changes (e.g., scroll, navigation)
@@ -6765,7 +7818,10 @@ function downloadBtnInjectorForMainVideoSideGrid() {
 export function attachDownloadButtons() {
   injectExploreDownloadButtons();
   injectFeedWrapperDownloadButtons();
+  injectProfileGridDownloadButtons();
   injectSideGridDownloadButtons();
+  injectCreatorVideosSidebarDownloadButtons();
+  injectYouMayLikeGridDownloadButtons();
   // injectImageFeedDownloadButtons(); // optional
   downloadBtnInjectorForMainVideoSideGrid();
 }
@@ -6863,7 +7919,7 @@ export function handleSwiper(swiper) {
   const photoIndex = Number(
     document
       .querySelector(".swiper-slide-active")
-      ?.getAttribute("data-swiper-slide-index") || "0"
+      ?.getAttribute("data-swiper-slide-index") || "0",
   );
 
   const isFeedVideo = section.getAttribute("data-e2e") === "feed-video";
@@ -6910,7 +7966,7 @@ export function handleSingleImage(picture) {
 
   const wrapper = findAncestor(
     picture,
-    (el) => el.getAttribute("data-e2e") === "user-post-item"
+    (el) => el.getAttribute("data-e2e") === "user-post-item",
   );
   if (!wrapper) return;
 
@@ -6970,8 +8026,8 @@ export function clearDownloadContainers() {
   console.log(
     "IMAGES_DL photo/video match cleaning buttons...",
     document.querySelectorAll(
-      ".photo-download-btn-container, .download-btn-container"
-    )
+      ".photo-download-btn-container, .download-btn-container",
+    ),
   );
 
   document
@@ -7102,10 +8158,108 @@ function makeButton(text, onClick) {
 function getVisibleImageVidPlayer() {
   const container = Array.from(document.querySelectorAll("div")).find(
     (el) =>
-      el.className.includes("DivPlayerContainer") && el.offsetParent !== null // visible in layout flow
+      el.className.includes("DivPlayerContainer") && el.offsetParent !== null, // visible in layout flow
   );
 
   return container;
+}
+
+function clearPendingResumeDownload() {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.PENDING_RESUME_DOWNLOAD);
+  } catch {}
+}
+
+function processResumeDownloadPayload(payload) {
+  clearPendingResumeDownload();
+
+  const { username, tabName, isCollection, collectionUrl } = payload || {};
+  console.log("[Resume Download] Received resume request:", {
+    username,
+    tabName,
+    isCollection,
+    collectionUrl,
+  });
+
+  // If we have a collection URL and we're not on that page, navigate to it
+  if (
+    isCollection &&
+    collectionUrl &&
+    window.location.pathname !== collectionUrl
+  ) {
+    console.log(
+      "[Resume Download] Navigating to collection URL:",
+      collectionUrl,
+    );
+
+    // Set the state before navigation so it persists after page reload
+    AppState.scrapperDetails.selectedTab = "collection";
+    AppState.scrapperDetails.selectedCollectionName = tabName;
+    AppState.scrapperDetails.originalUsername = username;
+    AppState.scrapperDetails.scrappingStage = "initiated";
+    localStorage.setItem(
+      STORAGE_KEYS.SCRAPPER_DETAILS,
+      JSON.stringify(AppState.scrapperDetails),
+    );
+
+    window.location.href = `https://www.tiktok.com${collectionUrl}`;
+    return;
+  }
+
+  // Use handler for business logic
+  const result = handleResumeDownload(username, tabName, isCollection);
+
+  if (!result.success) {
+    console.warn("[Resume Download]", result.error);
+    showToast(
+      "Resume Failed",
+      result.needsNavigation
+        ? `Please navigate to @${username}'s profile first.`
+        : result.error,
+    );
+    return;
+  }
+
+  // Set the selected tab in AppState before starting scrapping
+  AppState.scrapperDetails.selectedTab = result.tabKey;
+  if (isCollection && result.collectionName) {
+    AppState.scrapperDetails.selectedCollectionName = result.collectionName;
+  }
+
+  // Persist state to localStorage
+  localStorage.setItem(
+    STORAGE_KEYS.SCRAPPER_DETAILS,
+    JSON.stringify(AppState.scrapperDetails),
+  );
+
+  // Start the scrapping process (UI action)
+  startScrappingProcess(result.tabKey, result.pageInfo).catch((err) => {
+    console.error("[Resume Download] Failed to start:", err);
+    showToast("Resume Failed", "Failed to start download process.");
+  });
+}
+
+function consumePendingResumeDownload() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.PENDING_RESUME_DOWNLOAD);
+    if (!raw) return;
+
+    const payload = JSON.parse(raw);
+    if (!payload?.username || !payload?.tabName) {
+      clearPendingResumeDownload();
+      return;
+    }
+
+    setTimeout(() => {
+      if (!localStorage.getItem(STORAGE_KEYS.PENDING_RESUME_DOWNLOAD)) {
+        return;
+      }
+      processResumeDownloadPayload(payload);
+    }, 0);
+  } catch (error) {
+    console.warn("[Resume Download] Failed to consume pending request:", error);
+    clearPendingResumeDownload();
+  }
 }
 
 // Listen for resume download messages from popup
@@ -7115,71 +8269,8 @@ window.addEventListener("message", (event) => {
 
   const data = event.data;
   if (data?.type === "RESUME_DOWNLOAD") {
-    const { payload } = data;
-    const { username, tabName, isCollection, collectionUrl } = payload || {};
-    console.log("[Resume Download] Received resume request:", {
-      username,
-      tabName,
-      isCollection,
-      collectionUrl,
-    });
-
-    // If we have a collection URL and we're not on that page, navigate to it
-    if (
-      isCollection &&
-      collectionUrl &&
-      window.location.pathname !== collectionUrl
-    ) {
-      console.log(
-        "[Resume Download] Navigating to collection URL:",
-        collectionUrl
-      );
-
-      // Set the state before navigation so it persists after page reload
-      AppState.scrapperDetails.selectedTab = "collection";
-      AppState.scrapperDetails.selectedCollectionName = tabName;
-      AppState.scrapperDetails.originalUsername = username;
-      AppState.scrapperDetails.scrappingStage = "initiated";
-      localStorage.setItem(
-        STORAGE_KEYS.SCRAPPER_DETAILS,
-        JSON.stringify(AppState.scrapperDetails)
-      );
-
-      window.location.href = `https://www.tiktok.com${collectionUrl}`;
-      // The scrapping will be triggered after navigation via polling mechanism
-      return;
-    }
-
-    // Use handler for business logic
-    const result = handleResumeDownload(username, tabName, isCollection);
-
-    if (!result.success) {
-      console.warn("[Resume Download]", result.error);
-      showToast(
-        "Resume Failed",
-        result.needsNavigation
-          ? `Please navigate to @${username}'s profile first.`
-          : result.error
-      );
-      return;
-    }
-
-    // Set the selected tab in AppState before starting scrapping
-    AppState.scrapperDetails.selectedTab = result.tabKey;
-    if (isCollection && result.collectionName) {
-      AppState.scrapperDetails.selectedCollectionName = result.collectionName;
-    }
-
-    // Persist state to localStorage
-    localStorage.setItem(
-      STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
-    );
-
-    // Start the scrapping process (UI action)
-    startScrappingProcess(result.tabKey, result.pageInfo).catch((err) => {
-      console.error("[Resume Download] Failed to start:", err);
-      showToast("Resume Failed", "Failed to start download process.");
-    });
+    processResumeDownloadPayload(data.payload);
   }
 });
+
+consumePendingResumeDownload();

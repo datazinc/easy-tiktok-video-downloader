@@ -101,16 +101,13 @@ export function detectCurrentTabName() {
           return pageInfo.collectionName;
         })();
       if (collectionName) {
-        console.log(
-          "[Tab Detection] Using collection name:",
-          collectionName
-        );
+        console.log("[Tab Detection] Using collection name:", collectionName);
         return collectionName;
       }
     }
     console.log(
       "[Tab Detection] Using scrapper selectedTab:",
-      AppState.scrapperDetails.selectedTab
+      AppState.scrapperDetails.selectedTab,
     );
     return AppState.scrapperDetails.selectedTab;
   }
@@ -120,7 +117,7 @@ export function detectCurrentTabName() {
   if (pageInfo.isCollection && pageInfo.collectionName) {
     console.log(
       "[Tab Detection] Using collection name:",
-      pageInfo.collectionName
+      pageInfo.collectionName,
     );
     return pageInfo.collectionName;
   }
@@ -136,7 +133,7 @@ export function detectCurrentTabName() {
       const collectionName = raw.replace(/-\d+$/, "");
       console.log(
         "[Tab Detection] Detected collection from URL:",
-        collectionName
+        collectionName,
       );
       return collectionName;
     } catch (e) {
@@ -177,7 +174,7 @@ export function getDisplayedItemsHash(items = []) {
 // Find "Liked" tab element
 export function getLikedTab() {
   return Array.from(document.querySelectorAll('p[role="tab"]')).find(
-    (tab) => tab.textContent.trim() === "Liked"
+    (tab) => tab.textContent.trim() === "Liked",
   );
 }
 
@@ -185,7 +182,7 @@ export function getPostInfoFrom(startElement, options) {
   function logStrategy(name, value) {
     if (value) {
       console.log(
-        `ETTVD_INFO_DEBUG-${options?.origin} strategy-${name}: ${value}`
+        `ETTVD_INFO_DEBUG-${options?.origin} strategy-${name}: ${value}`,
       );
     }
   }
@@ -218,7 +215,7 @@ export function getPostInfoFrom(startElement, options) {
   function findAuthorUsernameUsingAvatarBlock(container) {
     if (!container) return;
     const avatarAnchor = container.querySelector(
-      'a[data-e2e="browse-user-avatar"]'
+      'a[data-e2e="browse-user-avatar"]',
     );
     if (!avatarAnchor) return null;
 
@@ -252,7 +249,7 @@ export function getPostInfoFrom(startElement, options) {
     const description = descEl?.textContent?.trim() || null;
     if (description) {
       console.log(
-        `ETTVD_INFO_DEBUG-${options?.origin}  description-found: ${description}`
+        `ETTVD_INFO_DEBUG-${options?.origin}  description-found: ${description}`,
       );
     }
     return description;
@@ -277,7 +274,7 @@ export function getPostInfoFrom(startElement, options) {
   let current = startElement;
   if (!current) {
     console.log(
-      `ETTVD_INFO_DEBUG-${options?.origin}  strategy-5-no-explore-item, fallback to startElement`
+      `ETTVD_INFO_DEBUG-${options?.origin}  strategy-5-no-explore-item, fallback to startElement`,
     );
     current = startElement;
   }
@@ -293,7 +290,7 @@ export function getPostInfoFrom(startElement, options) {
 
   if (!current) {
     console.log(
-      `ETTVD_INFO_DEBUG-${options?.origin}  strategy-5-no-explore-item, fallback to startElement`
+      `ETTVD_INFO_DEBUG-${options?.origin}  strategy-5-no-explore-item, fallback to startElement`,
     );
     current = startElement;
   }
@@ -349,7 +346,7 @@ export function setDownloadFolderName(folderName) {
       /[<>:"\\|?*\x00-\x1F]/.test(segment)
     ) {
       throw new Error(
-        "Invalid folder name: Contains invalid characters or segments."
+        "Invalid folder name: Contains invalid characters or segments.",
       );
     }
   }
@@ -367,7 +364,7 @@ export function setDownloadFolderName(folderName) {
 
 export function getDownloadFilePath(
   media,
-  { imageIndex = 0, options = {} } = {}
+  { imageIndex = 0, options = {} } = {},
 ) {
   try {
     const template =
@@ -439,10 +436,7 @@ export function getDownloadFilePath(
       videoId: rawVideoId,
       authorUsername: media.authorId,
       authorNickname: sanitize(media.authorNickname),
-      desc: sanitizeDesc(
-        media.desc,
-        isDescMaxLenDefined ? descMaxLen : 100
-      ),
+      desc: sanitizeDesc(media.desc, isDescMaxLenDefined ? descMaxLen : 100),
       musicTitle: sanitize(media.musicTitle),
       musicAuthor: sanitize(media.musicAuthor),
       views: sanitize(media.views),
@@ -456,7 +450,7 @@ export function getDownloadFilePath(
         })
         .join(""),
       createTime: sanitize(
-        media.createTime ? formattedDate(media.createTime) : "-"
+        media.createTime ? formattedDate(media.createTime) : "-",
       ),
       downloadTime: formattedDate(new Date()),
       isImage: media.isImage,
@@ -475,15 +469,17 @@ export function getDownloadFilePath(
             sequenceNumber,
             isMultiImage,
             collectionName: sanitize(
-              AppState.scrapperDetails.selectedCollectionName || "collection"
+              AppState.scrapperDetails.selectedCollectionName || "collection",
             ),
-          }
+          },
         )
       : `${DOWNLOAD_FOLDER_DEFAULT}@${
           fieldValues.authorUsername || "unknown"
         }/${fieldValues.authorUsername || "user"}-${fieldValues.videoId}`;
 
-    return `${cleanupPath(resolvedPath) || "download"}${extension}`;
+    return sanitizeDownloadFilename(
+      `${cleanupPath(resolvedPath) || "download"}${extension}`,
+    );
   } catch (err) {
     console.error(err);
     return `tiktok-${media?.isImage ? "image.jpeg" : "video.mp4"}`;
@@ -493,7 +489,7 @@ export function getDownloadFilePath(
 export const applyTemplate = (
   tpl,
   fieldValues,
-  { sequenceNumber, isMultiImage, collectionName }
+  { sequenceNumber, isMultiImage, collectionName },
 ) => {
   const tplHasTabName = /\{tabName(?:[:|}])/.test(tpl);
 
@@ -512,6 +508,13 @@ export const applyTemplate = (
 
       if (key === "ad") return fieldValues.isAd ? "ad" : "";
       if (key === "mediaType") return fieldValues.isImage ? "image" : "video";
+
+      if (key === "tabName" && fieldValues.tabName) {
+        if (fieldValues.tabName === "collection" && collectionName) {
+          return `Collections/${collectionName}`;
+        }
+        return toTitleCase(fieldValues.tabName);
+      }
 
       if (
         key === "tabName" &&
@@ -564,30 +567,119 @@ export const applyTemplate = (
         }
       }
       return val;
-    }
+    },
   );
 };
 
-export const cleanupPath = (path) =>
-  path
-    // Remove known extensions from last segment
-    .replace(
-      /\/?([^/]+)\.(jpeg|jpg|png|gif|webp|mp4|mov|avi|mkv|webm|tiff|bmp|svg)$/i,
-      "/$1"
-    )
-    // Collapse multiple slashes
-    .replace(/\/+/g, "/")
-    // Collapse multiple dashes or underscores
+const WINDOWS_RESERVED_FILE_NAMES = new Set([
+  "CON",
+  "PRN",
+  "AUX",
+  "NUL",
+  "COM1",
+  "COM2",
+  "COM3",
+  "COM4",
+  "COM5",
+  "COM6",
+  "COM7",
+  "COM8",
+  "COM9",
+  "LPT1",
+  "LPT2",
+  "LPT3",
+  "LPT4",
+  "LPT5",
+  "LPT6",
+  "LPT7",
+  "LPT8",
+  "LPT9",
+]);
+
+function splitTrailingExtension(value) {
+  const str = (value ?? "").toString();
+  const match = str.match(/(\.[A-Za-z0-9]{1,10})$/u);
+  if (!match || match.index <= 0) {
+    return { stem: str, extension: "" };
+  }
+
+  return {
+    stem: str.slice(0, -match[1].length),
+    extension: match[1],
+  };
+}
+
+function cleanDownloadPathSegment(segment, fallback = "download") {
+  const raw = (segment ?? "").toString().normalize("NFKC").trim();
+  const hasAtPrefix = raw.startsWith("@");
+  let body = hasAtPrefix ? raw.slice(1) : raw;
+  const hadLeadingDot = /^\.+/.test(body);
+
+  body = body
+    .replace(/[<>:"/\\|?*\x00-\x1F{}]+/g, "-")
+    .replace(/\s+/g, " ")
     .replace(/--+/g, "-")
     .replace(/__+/g, "_")
-    // Reduce mixed dash/underscore groups
     .replace(/[-_]+/g, (m) => m[0])
-    // Trim -/_ at start of each segment
-    .replace(/(^|\/)[-_]+/g, "$1")
-    // Trim -/_ at end of each segment
-    .replace(/[-_]+($|\/)/g, "$1")
-    // Remove leading/trailing slashes
-    .replace(/^\/+|\/+$/g, "");
+    .trim()
+    .replace(/^[.\-_ ]+/g, "")
+    .replace(/[.\-_ ]+$/g, "");
+
+  if (hadLeadingDot && body) {
+    body = `_${body}`;
+  }
+
+  if (!body || body === "." || body === "..") {
+    body = fallback;
+  }
+
+  if (WINDOWS_RESERVED_FILE_NAMES.has(body.toUpperCase())) {
+    body = `${body}-file`;
+  }
+
+  return hasAtPrefix ? `@${body}` : body;
+}
+
+export const cleanupPath = (path) => {
+  const normalizedPath = (path ?? "").toString().replace(/\\+/g, "/").trim();
+
+  if (!normalizedPath) return "";
+
+  const segments = normalizedPath.split("/").filter(Boolean);
+  if (!segments.length) return "";
+
+  return segments
+    .map((segment, index) => {
+      const isLastSegment = index === segments.length - 1;
+      const stem = isLastSegment
+        ? splitTrailingExtension(segment).stem
+        : segment;
+      return cleanDownloadPathSegment(
+        stem,
+        isLastSegment ? "download" : "unknown",
+      );
+    })
+    .filter(Boolean)
+    .join("/");
+};
+
+function sanitizeDownloadFilename(filename) {
+  const normalizedFilename = (filename ?? "")
+    .toString()
+    .replace(/\\+/g, "/")
+    .trim();
+
+  if (!normalizedFilename) return "download";
+
+  const segments = normalizedFilename.split("/").filter(Boolean);
+  const lastSegment = segments.pop() || "download";
+  const { stem, extension } = splitTrailingExtension(lastSegment);
+  const cleanedBasePath = cleanupPath(
+    [...segments, stem || "download"].join("/"),
+  );
+
+  return `${cleanedBasePath || "download"}${extension}`;
+}
 
 export function getSrcById(id) {
   // Helper to extract video URL from various item structures
@@ -652,7 +744,7 @@ export function getSrcById(id) {
     const offsetParent = video?.offsetParent;
     if (offsetParent) {
       const fiberKey = Object.keys(offsetParent).find((k) =>
-        k.startsWith("__reactFiber$")
+        k.startsWith("__reactFiber$"),
       );
       const fiberNode = offsetParent[fiberKey];
       const fiberItem = fiberNode?.child?.pendingProps;
@@ -668,7 +760,7 @@ export function getSrcById(id) {
           "reactFiber No valid video source found in fiber item",
           fiberItem.id,
           id,
-          fiberItem
+          fiberItem,
         );
       }
     }
@@ -676,7 +768,7 @@ export function getSrcById(id) {
     if (AppState.debug.active)
       console.warn(
         "reactFiber Error in getting src by id (React Fiber)",
-        error
+        error,
       );
   }
 
@@ -696,7 +788,11 @@ export function getSrcById(id) {
       }
 
       // Check for .item property
-      if (obj.item && typeof obj.item === "object" && typeof obj.item.id === "string") {
+      if (
+        obj.item &&
+        typeof obj.item === "object" &&
+        typeof obj.item.id === "string"
+      ) {
         return obj.item;
       }
 
@@ -711,7 +807,7 @@ export function getSrcById(id) {
         for (const child of obj.children) {
           const found = findItemInObject(child, depth + 1, maxDepth);
           if (found) return found;
-        } 
+        }
       } else if (obj.children && typeof obj.children === "object") {
         const found = findItemInObject(obj.children, depth + 1, maxDepth);
         if (found) return found;
@@ -720,10 +816,12 @@ export function getSrcById(id) {
       return null;
     };
 
-    const storiesContainers = document.querySelectorAll('[class*="DivStoriesPlayer"]');
+    const storiesContainers = document.querySelectorAll(
+      '[class*="DivStoriesPlayer"]',
+    );
     for (const container of storiesContainers) {
       const fiberKey = Object.keys(container).find((k) =>
-        k.startsWith("__reactFiber$")
+        k.startsWith("__reactFiber$"),
       );
       if (!fiberKey) continue;
 
@@ -749,7 +847,7 @@ export function getSrcById(id) {
 
 export function getCurrentPlayingArticle() {
   const progressBar = document.querySelector(
-    'div[role="slider"][aria-valuenow]:not([aria-valuenow="0"])'
+    'div[role="slider"][aria-valuenow]:not([aria-valuenow="0"])',
   );
   if (progressBar) {
     return progressBar.closest("article");
@@ -761,7 +859,7 @@ export function getCurrentPlayingArticle() {
   }
 
   const unmuted = document.querySelector(
-    'div[data-e2e="video-sound"][aria-pressed="true"]'
+    'div[data-e2e="video-sound"][aria-pressed="true"]',
   );
   if (unmuted) {
     return unmuted.closest("article");
@@ -804,7 +902,7 @@ export function expectSmallViewer() {
 export function getVideoUsernameFromAllDirectLinks(videoId) {
   try {
     const match = AppState.allDirectLinks?.find(
-      (item) => item.videoId === videoId
+      (item) => item.videoId === videoId,
     );
     return match?.authorId || null;
   } catch (error) {
@@ -831,7 +929,7 @@ function getPostListContext(options) {
     const items = list.querySelectorAll('[data-e2e="challenge-item"]');
     if (items.length > 0) {
       console.log(
-        `ETTVD_INFO_DEBUG-${options?.origin} strategy-challenge-list`
+        `ETTVD_INFO_DEBUG-${options?.origin} strategy-challenge-list`,
       );
       return { list, items, strategy: "challenge-list" };
     }
@@ -950,7 +1048,7 @@ function isSpinnerInPostListParentVisible() {
   if (!postList || !postList.parentElement) return false;
 
   const spinner = postList.parentElement.querySelector(
-    'svg[class*="SvgContainer"]'
+    'svg[class*="SvgContainer"]',
   );
   return spinner ? isElementInViewport(spinner) : false;
 }
@@ -995,7 +1093,7 @@ export function isVideoAd(videoEl) {
 
   // Look for the word "Sponsored" somewhere in author/metadata area
   const sponsoredTextNode = Array.from(el.querySelectorAll("*")).find(
-    (node) => node.textContent?.trim().toLowerCase() === "sponsored"
+    (node) => node.textContent?.trim().toLowerCase() === "sponsored",
   );
 
   // Also catch common marketing terms in description or music link
@@ -1008,7 +1106,7 @@ export function isVideoAd(videoEl) {
 
   const keywords = ["sponsored", "promoted", "partnered"];
   const containsAdKeywords = keywords.some(
-    (k) => descText.includes(k) || musicText.includes(k)
+    (k) => descText.includes(k) || musicText.includes(k),
   );
 
   // Additional fallback: links in author anchor
@@ -1024,7 +1122,7 @@ export function isVideoAd(videoEl) {
 export function canClickNextButton() {
   // Primary selector
   const buttons = document.querySelectorAll(
-    "button.TUXButton--capsule.action-item"
+    "button.TUXButton--capsule.action-item",
   );
 
   for (const btn of buttons) {
@@ -1048,7 +1146,7 @@ export function clickNextButton() {
       console.warn(
         "SWIPE UP❌ Cannot click swipe button — not available or disabled.",
         AppState.downloadPreferences.autoScrollMode,
-        !canClickNextButton()
+        !canClickNextButton(),
       );
     return;
   }
@@ -1057,7 +1155,7 @@ export function clickNextButton() {
 
   // Try primary button
   const buttons = document.querySelectorAll(
-    "button.TUXButton--capsule.action-item"
+    "button.TUXButton--capsule.action-item",
   );
   buttons.forEach((btn) => {
     const svgPath = btn.querySelector("svg path");
@@ -1095,7 +1193,7 @@ export function saveCSVFile(dataArray) {
   // Gather all unique keys across all objects
   const standardFields = ["filename", "filepath"];
   const dynamicFields = Array.from(
-    new Set(dataArray.flatMap((item) => Object.keys(item)))
+    new Set(dataArray.flatMap((item) => Object.keys(item))),
   ).filter((key) => !standardFields.includes(key));
 
   const headers = ["index", ...dynamicFields.sort(), ...standardFields];
@@ -1246,7 +1344,7 @@ export function buildVideoLinkMeta(media, index) {
       ? new Date(Number(media.createTime) * 1000)
       : "",
     imagePostImages: media?.imagePost?.images.map((it) =>
-      it.imageURL.urlList?.at(0)
+      it.imageURL.urlList?.at(0),
     ),
     duration: media?.video?.duration,
     videoRatio: media?.video?.ratio,
@@ -1276,92 +1374,189 @@ export function buildVideoLinkMeta(media, index) {
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function downloadAllPostImagesHandler(e, media) {
-  return new Promise(async (resolve) => {
-    if (e) e.stopPropagation();
+const DOWNLOAD_ACTION_CODES = {
+  refreshPage: "ERR_REFRESH_PAGE",
+  manualSave: "ERR_FALLBACK_MANUAL",
+  skipFile: "ERR_SKIP_FILE",
+  stopBatch: "ERR_STOP_BATCH",
+  cancel: "ERR_CANCELLED_FAILED_DOWNLOAD",
+};
 
-    const downloadAllBtn = e?.currentTarget;
-    let originalContent;
-    if (downloadAllBtn) {
-      originalContent = downloadAllBtn.cloneNode(true);
-      downloadAllBtn.textContent = "";
-      const downloadingIcon5 = createIcon("hourglass", 16);
-      downloadingIcon5.style.marginRight = "4px";
-      downloadAllBtn.appendChild(downloadingIcon5);
-      downloadAllBtn.appendChild(document.createTextNode("Downloading..."));
-      downloadAllBtn.disabled = true;
+function createDownloadActionError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
 
-      AppState.downloading.isActive = true;
-      AppState.downloading.isDownloadingAll = true;
-    }
+function isStopBatchError(error) {
+  return error?.code === DOWNLOAD_ACTION_CODES.stopBatch;
+}
 
-    try {
-      let successfulDownloads = 0;
-      for (let i = 0; i < media.imagePostImages.length; i++) {
-        console.log(
-          "DEBUG_DL_ALLA Inside loop images dl ",
-          i,
-          media.imagePostImages.length
-        );
-        try {
-          if (downloadAllBtn) {
-            downloadAllBtn.textContent = "";
-            const downloadingIcon6 = createIcon("hourglass", 16);
-            downloadingIcon6.style.marginRight = "4px";
-            downloadAllBtn.appendChild(downloadingIcon6);
-            downloadAllBtn.appendChild(document.createTextNode(`Downloading ${i}/${media.imagePostImages.length}...`));
-          }
-          // downloadSingleMedia will track the download automatically
-          await downloadSingleMedia(media, { imageIndex: i });
-          successfulDownloads += 1;
-        } catch (err) {
-          console.error(`Download failed for image ${i}`, err);
-          if (downloadAllBtn) {
-            downloadAllBtn.textContent = "";
-            const failedIcon5 = createIcon("error", 16);
-            failedIcon5.style.marginRight = "4px";
-            downloadAllBtn.appendChild(failedIcon5);
-            downloadAllBtn.appendChild(document.createTextNode(`Failed at ${i}/${media.imagePostImages.length}...`));
-          }
-          await sleep(2000);
-        }
-      }
-      if (successfulDownloads && !AppState.downloading.isDownloadingAll) {
-        showCelebration(
-          "downloads",
-          getRandomDownloadSuccessMessage("photo", successfulDownloads),
-          successfulDownloads
-        );
-      }
-    } catch (error) {
-      console.warn("Unexpected error during bulk download:", error);
-    } finally {
-      if (downloadAllBtn) {
-        AppState.downloading.isActive = false;
-        AppState.downloading.isDownloadingAll = false;
-        downloadAllBtn.textContent = "";
-        const doneIcon5 = createIcon("check", 16);
-        doneIcon5.style.marginRight = "4px";
-        downloadAllBtn.appendChild(doneIcon5);
-        downloadAllBtn.appendChild(document.createTextNode("All Done!"));
-        setTimeout(() => {
-          if (downloadAllBtn && originalContent) {
-            downloadAllBtn.textContent = originalContent.textContent || originalContent.innerText || "";
-            downloadAllBtn.disabled = false;
-          }
-          displayFoundUrls({ forced: true });
-          resolve();
-        }, 3000);
-      } else {
-        resolve();
-      }
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return char;
     }
   });
 }
 
+export function stopActiveBatchDownload() {
+  AppState.downloadPreferences.autoScrollMode = "off";
+  AppState.downloading.isActive = false;
+  AppState.downloading.isDownloadingAll = false;
+  AppState.downloading.pausedAll = false;
+
+  if (
+    AppState.scrapperDetails.isAutoBatchDownloading ||
+    AppState.scrapperDetails.scrappingStage === "initiated" ||
+    AppState.scrapperDetails.scrappingStage === "ongoing" ||
+    AppState.scrapperDetails.scrappingStage === "downloading"
+  ) {
+    AppState.scrapperDetails.isAutoBatchDownloading = false;
+    AppState.scrapperDetails.scrappingStage = "completed";
+    AppState.scrapperDetails.selectedTab = null;
+    AppState.scrapperDetails.selectedCollectionName = null;
+    AppState.scrapperDetails.originalPath = null;
+    AppState.scrapperDetails.originalUsername = null;
+    AppState.scrapperDetails.originalCollectionName = null;
+    AppState.scrapperDetails.paused = false;
+    AppState.scrapperDetails.currentBatch = 0;
+    AppState.scrapperDetails.downloadedInBatches = 0;
+    localStorage.setItem(
+      STORAGE_KEYS.SCRAPPER_DETAILS,
+      JSON.stringify(AppState.scrapperDetails),
+    );
+  }
+
+  try {
+    updateDownloadButtonLabelSimple();
+    displayFoundUrls({ forced: true });
+  } catch {}
+}
+
+export async function downloadAllPostImagesHandler(e, media) {
+  if (e) e.stopPropagation();
+
+  const downloadAllBtn = e?.currentTarget;
+  let originalContent;
+  let successfulDownloads = 0;
+  let stopRequested = false;
+
+  if (downloadAllBtn) {
+    originalContent = downloadAllBtn.cloneNode(true);
+    downloadAllBtn.textContent = "";
+    const downloadingIcon5 = createIcon("hourglass", 16);
+    downloadingIcon5.style.marginRight = "4px";
+    downloadAllBtn.appendChild(downloadingIcon5);
+    downloadAllBtn.appendChild(document.createTextNode("Downloading..."));
+    downloadAllBtn.disabled = true;
+
+    AppState.downloading.isActive = true;
+    AppState.downloading.isDownloadingAll = true;
+  }
+
+  try {
+    for (let i = 0; i < media.imagePostImages.length; i++) {
+      console.log(
+        "DEBUG_DL_ALLA Inside loop images dl ",
+        i,
+        media.imagePostImages.length,
+      );
+      try {
+        if (downloadAllBtn) {
+          downloadAllBtn.textContent = "";
+          const downloadingIcon6 = createIcon("hourglass", 16);
+          downloadingIcon6.style.marginRight = "4px";
+          downloadAllBtn.appendChild(downloadingIcon6);
+          downloadAllBtn.appendChild(
+            document.createTextNode(
+              `Downloading ${i}/${media.imagePostImages.length}...`,
+            ),
+          );
+        }
+
+        const didDownload = await downloadSingleMedia(media, {
+          imageIndex: i,
+        });
+        if (didDownload) successfulDownloads += 1;
+      } catch (err) {
+        if (isStopBatchError(err)) {
+          stopRequested = true;
+          break;
+        }
+
+        console.error(`Download failed for image ${i}`, err);
+        if (downloadAllBtn) {
+          downloadAllBtn.textContent = "";
+          const failedIcon5 = createIcon("error", 16);
+          failedIcon5.style.marginRight = "4px";
+          downloadAllBtn.appendChild(failedIcon5);
+          downloadAllBtn.appendChild(
+            document.createTextNode(
+              `Failed at ${i}/${media.imagePostImages.length}...`,
+            ),
+          );
+        }
+        await sleep(2000);
+      }
+    }
+
+    if (successfulDownloads && !AppState.downloading.isDownloadingAll) {
+      showCelebration(
+        "downloads",
+        getRandomDownloadSuccessMessage("photo", successfulDownloads),
+        successfulDownloads,
+      );
+    }
+  } catch (error) {
+    console.warn("Unexpected error during bulk download:", error);
+    if (isStopBatchError(error)) stopRequested = true;
+  } finally {
+    if (downloadAllBtn) {
+      AppState.downloading.isActive = false;
+      AppState.downloading.isDownloadingAll = false;
+      downloadAllBtn.textContent = "";
+      const statusIcon = createIcon(stopRequested ? "pause" : "check", 16);
+      statusIcon.style.marginRight = "4px";
+      downloadAllBtn.appendChild(statusIcon);
+      downloadAllBtn.appendChild(
+        document.createTextNode(stopRequested ? "Stopped" : "All Done!"),
+      );
+      setTimeout(() => {
+        if (downloadAllBtn && originalContent) {
+          downloadAllBtn.textContent =
+            originalContent.textContent || originalContent.innerText || "";
+          downloadAllBtn.disabled = false;
+        }
+        displayFoundUrls({ forced: true });
+      }, 3000);
+    }
+  }
+
+  if (!downloadAllBtn && stopRequested) {
+    throw createDownloadActionError(
+      DOWNLOAD_ACTION_CODES.stopBatch,
+      "Batch stopped after failed image download.",
+    );
+  }
+
+  return successfulDownloads;
+}
+
 export async function downloadSingleMedia(
   media,
-  { imageIndex = 0 } = { imageIndex: 0 }
+  { imageIndex = 0 } = { imageIndex: 0 },
 ) {
   console.log("DEBUG_DL_ALLA ondownload received ", {
     imageIndex,
@@ -1394,7 +1589,7 @@ export async function downloadSingleMedia(
               username,
               tabName,
               videoId,
-              imageIndex
+              imageIndex,
             );
             if (exists) {
               console.log(
@@ -1404,9 +1599,9 @@ export async function downloadSingleMedia(
                   username,
                   tabName,
                   imageIndex,
-                }
+                },
               );
-              return; // Skip download
+              return false; // Skip download
             }
           } else {
             // For videos, check with null imageIndex
@@ -1418,9 +1613,9 @@ export async function downloadSingleMedia(
                   videoId,
                   username,
                   tabName,
-                }
+                },
               );
-              return; // Skip download
+              return false; // Skip download
             }
           }
         }
@@ -1428,7 +1623,7 @@ export async function downloadSingleMedia(
     } catch (checkErr) {
       console.warn(
         "[Download] Failed to check if video should be skipped:",
-        checkErr
+        checkErr,
       );
       // Continue with download if check fails (fail open)
     }
@@ -1453,7 +1648,7 @@ export async function downloadSingleMedia(
           isImage: media.isImage,
           imageIndex,
           mediaKeys: Object.keys(media),
-        }
+        },
       );
 
       if (videoId) {
@@ -1476,7 +1671,7 @@ export async function downloadSingleMedia(
             username,
             tabName,
             videoId,
-            media.isImage ? imageIndex : null
+            media.isImage ? imageIndex : null,
           );
         } else {
           console.warn(
@@ -1486,7 +1681,7 @@ export async function downloadSingleMedia(
               tabName,
               usernameValid: username && username !== "😃",
               tabNameValid: !!tabName,
-            }
+            },
           );
         }
       } else {
@@ -1499,16 +1694,27 @@ export async function downloadSingleMedia(
     if (!AppState.downloading.isDownloadingAll) {
       showCelebration(
         "downloads",
-        getRandomDownloadSuccessMessage(media.isImage ? "photo" : "video", 1)
+        getRandomDownloadSuccessMessage(media.isImage ? "photo" : "video", 1),
       );
     }
+
+    return true;
   } catch (err) {
+    console.error("[Download] downloadSingleMedia failed", {
+      filename,
+      mediaId: media?.id || media?.videoId || null,
+      isImage: !!media?.isImage,
+      imageIndex,
+      code: err?.code || null,
+      error: err?.message || String(err),
+    });
     AppState.debug.active ? console.warn(err) : null;
     console.log("DEBUG_DL_ALLA ondownload errored ", {
       imageIndex,
       media,
       err,
     });
+    throw err;
   }
 }
 
@@ -1516,7 +1722,7 @@ export async function downloadSingleMedia(
 export async function downloadBatch(items, batchNumber) {
   if (AppState.debug.active)
     console.log(
-      `[Batch ${batchNumber}] Starting batch download of ${items.length} items`
+      `[Batch ${batchNumber}] Starting batch download of ${items.length} items`,
     );
 
   AppState.downloading.isActive = true;
@@ -1525,11 +1731,22 @@ export async function downloadBatch(items, batchNumber) {
 
   let newVideoDownloadedCount = 0;
   let hasImage = false;
+  let stoppedByUser = false;
 
   try {
     for (let i = 0; i < items.length; i++) {
+      if (!AppState.downloading.isDownloadingAll) {
+        stoppedByUser = true;
+        break;
+      }
+
       // Respect pause state
       while (AppState.scrapperDetails.paused) await sleep(800);
+
+      if (!AppState.downloading.isDownloadingAll) {
+        stoppedByUser = true;
+        break;
+      }
 
       const media = items[i];
 
@@ -1537,7 +1754,7 @@ export async function downloadBatch(items, batchNumber) {
       if (AppState.downloadedURLs.includes(media.url)) {
         console.log(
           `[Batch ${batchNumber}] Item ${i + 1} saved (session):`,
-          media.videoId
+          media.videoId,
         );
         continue;
       }
@@ -1545,13 +1762,16 @@ export async function downloadBatch(items, batchNumber) {
       // Note: Skip check for already-downloaded items is now handled in downloadSingleMedia
       // before calling downloadURLToDisk, so we don't need to check here
 
-      AppState.downloadedURLs.push(media.url);
-
       try {
         updateDownloadButtonLabelSimple();
-        await (!media.isImage
+        const result = await (!media.isImage
           ? downloadSingleMedia(media)
           : downloadAllPostImagesHandler(null, media));
+
+        const didDownload = media.isImage ? result > 0 : result !== false;
+        if (!didDownload) continue;
+
+        AppState.downloadedURLs.push(media.url);
 
         // Load confirmed downloaded urls
         AppState.leaderboard.newlyConfirmedMedia.push(media);
@@ -1563,12 +1783,17 @@ export async function downloadBatch(items, batchNumber) {
         AppState.scrapperDetails.downloadedInBatches += 1;
         localStorage.setItem(
           STORAGE_KEYS.SCRAPPER_DETAILS,
-          JSON.stringify(AppState.scrapperDetails)
+          JSON.stringify(AppState.scrapperDetails),
         );
       } catch (err) {
+        if (isStopBatchError(err)) {
+          stoppedByUser = true;
+          break;
+        }
+
         console.log(
           `[Batch ${batchNumber}] Failed to download item ${i + 1}:`,
-          err
+          err,
         );
         if (AppState.debug.active) console.warn(err);
       }
@@ -1576,13 +1801,14 @@ export async function downloadBatch(items, batchNumber) {
 
     if (AppState.debug.active)
       console.log(
-        `[Batch ${batchNumber}] Completed: ${newVideoDownloadedCount} new items downloaded`
+        `[Batch ${batchNumber}] Completed: ${newVideoDownloadedCount} new items downloaded`,
       );
 
     return {
-      success: true,
+      success: !stoppedByUser,
       downloaded: newVideoDownloadedCount,
       hasImage,
+      stopped: stoppedByUser,
     };
   } catch (error) {
     console.error(`[Batch ${batchNumber}] Error:`, error);
@@ -1591,6 +1817,7 @@ export async function downloadBatch(items, batchNumber) {
       downloaded: newVideoDownloadedCount,
       hasImage,
       error,
+      stopped: stoppedByUser,
     };
   } finally {
     AppState.downloading.isActive = false;
@@ -1709,20 +1936,10 @@ function uuid() {
 }
 
 function postBlobDownloadRequest({ id, blobUrl, filename, showFolderPicker }) {
-  // Log filename for debugging (using console.log instead of console.error for non-errors)
-  if (AppState?.debug?.active) {
-    console.log("[Download] Requesting download with filename:", {
-      filename,
-      length: filename?.length,
-      hasUnicode: /[^\x00-\x7F]/.test(filename || ""),
-      sanitized: filename?.replace(/[{}]/g, ""),
-    });
-  }
-
   // Validate filename before sending
   if (!filename || typeof filename !== "string" || !filename.trim()) {
     const err = new Error(
-      `Invalid filename provided to postBlobDownloadRequest: ${typeof filename} - "${filename}"`
+      `Invalid filename provided to postBlobDownloadRequest: ${typeof filename} - "${filename}"`,
     );
     err.code = "ERR_INVALID_FILENAME";
     console.error("[Download] ❌ Invalid filename:", {
@@ -1734,7 +1951,22 @@ function postBlobDownloadRequest({ id, blobUrl, filename, showFolderPicker }) {
     throw err;
   }
 
-  const sanitizedFilename = filename.replace(/[{}]/g, "");
+  const sanitizedFilename = sanitizeDownloadFilename(
+    filename.replace(/[{}]/g, ""),
+  );
+
+  if (AppState?.debug?.active) {
+    console.warn("[Download] Posting blob download request", {
+      requestId: id,
+      filename,
+      filenameLength: filename?.length ?? null,
+      hasUnicode: /[^\x00-\x7F]/.test(filename || ""),
+      sanitizedFilenameChanged: sanitizedFilename !== filename,
+      showFolderPicker: !!showFolderPicker,
+      blobUrlPrefix:
+        typeof blobUrl === "string" ? blobUrl.slice(0, 32) : typeof blobUrl,
+    });
+  }
 
   window.postMessage(
     {
@@ -1743,10 +1975,11 @@ function postBlobDownloadRequest({ id, blobUrl, filename, showFolderPicker }) {
       payload: {
         blobUrl,
         filename: sanitizedFilename,
+        requestId: id,
         showFolderPicker: !!showFolderPicker,
       },
     },
-    "*"
+    "*",
   );
 }
 
@@ -1770,10 +2003,27 @@ function waitForBlobDownloadResponse(id, timeoutMs = 25000) {
         d.id !== id
       )
         return;
+
+      if (d?.success !== true) {
+        console.error("[Download] Content script reported a failed save", {
+          requestId: id,
+          code: d?.code || null,
+          error: d?.error || null,
+          downloadId: d?.downloadId ?? null,
+        });
+      }
+
       finish(d);
     }
 
     const timer = setTimeout(() => {
+      console.error(
+        "[Download] Timed out waiting for content-script response",
+        {
+          requestId: id,
+          timeoutMs,
+        },
+      );
       finish({
         success: false,
         code: "ERR_PAGE_TIMEOUT",
@@ -1786,9 +2036,11 @@ function waitForBlobDownloadResponse(id, timeoutMs = 25000) {
 }
 window.__dl = downloadURLToDisk;
 export async function downloadURLToDisk(url, filename, options = {}) {
-  console.log("FFDEBUGG", { url, filename, options });
   const maxRetries = 3;
   let attempt = options.retryCount || 1;
+  let activeUrl = url;
+  const getFreshUrl =
+    typeof options.getFreshUrl === "function" ? options.getFreshUrl : null;
 
   const setActive = (val) => {
     try {
@@ -1798,17 +2050,77 @@ export async function downloadURLToDisk(url, filename, options = {}) {
   };
 
   while (attempt <= maxRetries) {
+    const requestId = uuid();
+    const currentUrl = activeUrl;
     const omitCookies = options.omitCookies ?? attempt === 2; // 2nd try: omit cookies
+    const browserType = detectBrowserType();
+    const useNativeDownload = AppState?.downloadPreferences?.useNativeDownload;
+    const shouldUseNative =
+      useNativeDownload === true ||
+      (useNativeDownload === null && browserType === "brave");
+    const showFolderPicker = shouldUseNative
+      ? false
+      : AppState?.downloadPreferences?.showFolderPicker;
+
+    if (AppState?.debug?.active) {
+      console.warn("[Download] Starting automatic save attempt", {
+        requestId,
+        attempt,
+        maxRetries,
+        filename,
+        omitCookies,
+        browserType,
+        useNativeDownloadPreference: useNativeDownload,
+        showFolderPicker,
+        url:
+          typeof currentUrl === "string"
+            ? currentUrl.slice(0, 160)
+            : typeof currentUrl,
+      });
+    }
+
     try {
       setActive(true);
-      const resp = await fetch(url, {
-        credentials: omitCookies ? "omit" : "include",
-      });
+      let resp;
+      try {
+        resp = await fetch(currentUrl, {
+          credentials: omitCookies ? "omit" : "include",
+        });
+      } catch (fetchError) {
+        console.error("[Download] Source fetch threw before browser save", {
+          requestId,
+          attempt,
+          filename,
+          omitCookies,
+          isBlobUrl:
+            typeof currentUrl === "string" && /^blob:/i.test(currentUrl),
+          url:
+            typeof currentUrl === "string"
+              ? currentUrl.slice(0, 160)
+              : typeof currentUrl,
+          error: fetchError?.message || String(fetchError),
+        });
+        const err = new Error(fetchError?.message || String(fetchError));
+        err.code =
+          typeof currentUrl === "string" && /^blob:/i.test(currentUrl)
+            ? "ERR_BLOB_FETCH"
+            : "ERR_FETCH";
+        err.cause = fetchError;
+        throw err;
+      }
       setActive(false);
 
       if (!resp.ok) {
+        console.error("[Download] Fetch failed before browser save", {
+          requestId,
+          attempt,
+          filename,
+          status: resp.status,
+          statusText: resp.statusText || null,
+          omitCookies,
+        });
         const err = new Error(
-          `HTTP ${resp.status} ${resp.statusText || ""}`.trim()
+          `HTTP ${resp.status} ${resp.statusText || ""}`.trim(),
         );
         err.code = "ERR_HTTP";
         throw err;
@@ -1816,6 +2128,13 @@ export async function downloadURLToDisk(url, filename, options = {}) {
 
       const blob = await resp.blob();
       if (!blob || blob.size === 0) {
+        console.error("[Download] Fetch returned an empty blob", {
+          requestId,
+          attempt,
+          filename,
+          blobSize: blob?.size ?? 0,
+          contentType: blob?.type || null,
+        });
         const err = new Error("Empty file");
         err.code = "ERR_EMPTY_BLOB";
         throw err;
@@ -1823,29 +2142,17 @@ export async function downloadURLToDisk(url, filename, options = {}) {
 
       const blobUrl = URL.createObjectURL(blob);
 
-      // Check if we should use native download (chrome.downloads with saveAs: false)
-      const useNativeDownload = AppState?.downloadPreferences?.useNativeDownload;
-      const shouldUseNative = 
-        useNativeDownload === true || 
-        (useNativeDownload === null && detectBrowserType() === "brave");
-
-      // Use chrome.downloads API (with saveAs: false when native download is enabled)
-      const id = uuid();
       try {
         // ask background to save to disk
         // When native download is enabled, force saveAs: false to prevent save dialog
-        const showFolderPicker = shouldUseNative 
-          ? false 
-          : AppState?.downloadPreferences?.showFolderPicker;
-        
         postBlobDownloadRequest({
-          id,
+          id: requestId,
           blobUrl,
           filename,
           showFolderPicker,
         });
 
-        const res = await waitForBlobDownloadResponse(id, 25000);
+        const res = await waitForBlobDownloadResponse(requestId, 25000);
 
         // always revoke, regardless of result
         try {
@@ -1860,6 +2167,14 @@ export async function downloadURLToDisk(url, filename, options = {}) {
           return true;
         }
 
+        console.error("[Download] Browser save request failed", {
+          requestId,
+          attempt,
+          filename,
+          code: res?.code || null,
+          error: res?.error || res?.message || "Unknown download error",
+        });
+
         const err = new Error(res?.error || "Unknown download error");
         err.code = res?.code || "ERR_UNKNOWN";
         throw err;
@@ -1871,53 +2186,151 @@ export async function downloadURLToDisk(url, filename, options = {}) {
         throw e;
       }
     } catch (err) {
-      console.error(err);
+      console.error("[Download] Automatic save attempt failed", {
+        requestId,
+        attempt,
+        maxRetries,
+        filename,
+        omitCookies,
+        url:
+          typeof currentUrl === "string"
+            ? currentUrl.slice(0, 160)
+            : typeof currentUrl,
+        code: err?.code || null,
+        error: err?.message || String(err),
+      });
       setActive(false);
       if (AppState?.debug?.active)
         console.warn(
           `❌ Download error [attempt ${attempt}/${maxRetries}]`,
-          err
+          err,
         );
 
       if (attempt < maxRetries) {
+        if (getFreshUrl) {
+          try {
+            const refreshedUrl = await getFreshUrl({
+              attempt,
+              error: err,
+              url: currentUrl,
+              filename,
+            });
+
+            if (typeof refreshedUrl === "string" && refreshedUrl.trim()) {
+              activeUrl = refreshedUrl.trim();
+
+              if (AppState?.debug?.active || activeUrl !== currentUrl) {
+                console.warn("[Download] Refreshed source URL before retry", {
+                  requestId,
+                  attempt,
+                  filename,
+                  previousUrl:
+                    typeof currentUrl === "string"
+                      ? currentUrl.slice(0, 160)
+                      : typeof currentUrl,
+                  nextUrl: activeUrl.slice(0, 160),
+                  changed: activeUrl !== currentUrl,
+                  code: err?.code || null,
+                });
+              }
+            }
+          } catch (resolverError) {
+            console.error(
+              "[Download] Failed to refresh source URL before retry",
+              {
+                requestId,
+                attempt,
+                filename,
+                error: resolverError?.message || String(resolverError),
+              },
+            );
+          }
+        }
+
+        if (AppState?.debug?.active) {
+          console.warn("[Download] Retrying automatic save", {
+            requestId,
+            currentAttempt: attempt,
+            nextAttempt: attempt + 1,
+            nextAttemptOmitCookies: attempt + 1 === 2,
+            filename,
+            urlChanged: activeUrl !== currentUrl,
+          });
+        }
         attempt += 1;
         continue; // retry
       }
 
       // final failure path -> optional fallback
       if (AppState?.downloadPreferences?.skipFailedDownloads) {
+        console.error(
+          "[Download] Exhausted automatic save attempts; skipping failed download",
+          {
+            requestId,
+            filename,
+            code: err?.code || null,
+            error: err?.message || String(err),
+          },
+        );
         // propagate the real error up
         throw err;
       }
 
-      // user-visible fallback + propagate a structured error
-      const shouldContinue = await showAlertModal(
-        `⚠️ <b>Download failed.</b><br><br>
-We couldn't save this file automatically, but we'll open it in a new tab so you can use <b>Right-click → Save As</b>.<br><br>
-This often happens with <b>private</b> or <b>Only Me</b> posts.<br><br>
-<b>File:</b> ${filename.split("/").pop() || "Unknown"}<br><br>
-Tip: You can skip failed downloads automatically for the rest of this session.`,
-        "Skip Failed Downloads",
-        () => {
-          AppState.downloadPreferences.skipFailedDownloads = true;
-          showToast(
-            "Settings updated",
-            "✅ Failed downloads will now be skipped for this session."
-          );
-        }
+      console.error(
+        "[Download] Exhausted automatic save attempts; using manual fallback",
+        {
+          requestId,
+          filename,
+          code: err?.code || null,
+          error: err?.message || String(err),
+          url:
+            typeof currentUrl === "string"
+              ? currentUrl.slice(0, 160)
+              : typeof currentUrl,
+        },
       );
-      if (!shouldContinue) throw new Error("Couldn't save this one file!");
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.target = "_blank";
-      document.body?.appendChild(a);
-      a.click();
-      document.body?.removeChild(a);
 
-      const fallErr = new Error("Fell back to manual save");
-      fallErr.code = "ERR_FALLBACK_MANUAL";
-      throw fallErr;
+      const nextAction = await showDownloadFailureModal({
+        filename,
+        url: currentUrl,
+      });
+
+      if (nextAction === "refresh-page") {
+        try {
+          window.location.reload();
+        } catch {}
+        throw createDownloadActionError(
+          DOWNLOAD_ACTION_CODES.refreshPage,
+          "Refreshing page after failed download.",
+        );
+      }
+
+      if (nextAction === "manual-save") {
+        throw createDownloadActionError(
+          DOWNLOAD_ACTION_CODES.manualSave,
+          "Opened manual save in a new tab.",
+        );
+      }
+
+      if (nextAction === "skip-file") {
+        throw createDownloadActionError(
+          DOWNLOAD_ACTION_CODES.skipFile,
+          "Skipped failed download.",
+        );
+      }
+
+      if (nextAction === "stop-batch") {
+        stopActiveBatchDownload();
+        throw createDownloadActionError(
+          DOWNLOAD_ACTION_CODES.stopBatch,
+          "Stopped batch after failed download.",
+        );
+      }
+
+      throw createDownloadActionError(
+        DOWNLOAD_ACTION_CODES.cancel,
+        "Cancelled failed download fallback.",
+      );
     }
   }
 
@@ -1964,7 +2377,7 @@ export function displayFoundUrls({ forced } = {}) {
             forced,
             isActive: AppState.downloading.isActive,
             isDownloadingAll: AppState.downloading.isDownloadingAll,
-          }
+          },
         );
       }
       return;
@@ -2025,7 +2438,7 @@ export function displayFoundUrls({ forced } = {}) {
         } else {
           console.warn(
             "❌ updateDownloaderList did not return a Node emptyListEl",
-            emptyListEl
+            emptyListEl,
           );
         }
         return;
@@ -2052,13 +2465,13 @@ export function displayFoundUrls({ forced } = {}) {
       } else {
         console.warn(
           "❌ updateDownloaderList did not return a Node listEl",
-          listEl
+          listEl,
         );
       }
     } else {
       console.warn(
         "Something very unexpected happened(Document Body Not Available). If downloader fails, refresh this page!",
-        document?.body
+        document?.body,
       );
     }
   } catch (err) {
@@ -2079,12 +2492,17 @@ export function displayFoundUrls({ forced } = {}) {
 }
 
 export function sendBasicBlobDownloadRequest(payload) {
+  const sanitizedFilename = sanitizeDownloadFilename(payload?.filename);
+
   window.postMessage(
     {
       type: "BLOB_DOWNLOAD_REQUEST",
-      payload,
+      payload: {
+        ...payload,
+        filename: sanitizedFilename,
+      },
     },
-    "*"
+    "*",
   );
 }
 
@@ -2098,16 +2516,23 @@ export async function downloadAllLinks(mainBtn) {
 
   AppState.downloading.isActive = true;
   AppState.downloading.isDownloadingAll = true;
-   AppState.downloading.pausedAll = false;
+  AppState.downloading.pausedAll = false;
   AppState.downloadPreferences.autoScrollMode = "off"; // Turn off scroll for now.
 
   const links = AppState.allDirectLinks || [];
   let newVideoDownloadedCount = 0;
   let hasImage = false;
+  let stoppedByUser = false;
 
   try {
     console.log("DEBUG_DL_ALLA before loop ", links.length);
     for (let i = 0; i < links.length; i++) {
+      if (!AppState.downloading.isDownloadingAll) {
+        stoppedByUser = true;
+        updateDownloadButtonLabel(mainBtn, "Batch stopped");
+        break;
+      }
+
       // Respect pause state:
       if (!isUserTriggered) {
         // Scrapper auto-batch pause
@@ -2117,6 +2542,12 @@ export async function downloadAllLinks(mainBtn) {
         while (AppState.downloading.pausedAll) await sleep(800);
       }
 
+      if (!AppState.downloading.isDownloadingAll) {
+        stoppedByUser = true;
+        updateDownloadButtonLabel(mainBtn, "Batch stopped");
+        break;
+      }
+
       const media = links[i];
 
       // Skip if saved in this session
@@ -2124,7 +2555,7 @@ export async function downloadAllLinks(mainBtn) {
         console.log(
           "DEBUG_DL_ALLA inside loop url saved for",
           media.videoId,
-          media.isImage
+          media.isImage,
         );
         continue;
       }
@@ -2132,13 +2563,17 @@ export async function downloadAllLinks(mainBtn) {
       // Note: Skip check for already-downloaded items is now handled in downloadSingleMedia
       // before calling downloadURLToDisk, so we don't need to check here
 
-      AppState.downloadedURLs.push(media.url);
-
       try {
         updateDownloadButtonLabelSimple();
-        await (!media.isImage
+        const result = await (!media.isImage
           ? downloadSingleMedia(media)
           : downloadAllPostImagesHandler(null, media));
+
+        const didDownload = media.isImage ? result > 0 : result !== false;
+        if (!didDownload) continue;
+
+        AppState.downloadedURLs.push(media.url);
+
         // Load confirmed downloaded urls
         AppState.leaderboard.newlyConfirmedMedia.push(media);
         console.log(
@@ -2146,11 +2581,17 @@ export async function downloadAllLinks(mainBtn) {
           media.isImage,
           !media.isImage
             ? downloadSingleMedia.name
-            : downloadAllPostImagesHandler.name
+            : downloadAllPostImagesHandler.name,
         );
         if (media.isImage) hasImage = true;
         newVideoDownloadedCount += 1;
       } catch (err) {
+        if (isStopBatchError(err)) {
+          stoppedByUser = true;
+          updateDownloadButtonLabel(mainBtn, "Batch stopped");
+          break;
+        }
+
         console.log("DEBUG_DL_ALLA inside loop failed: ", err);
         if (AppState.debug.active) console.warn(err);
         updateDownloadButtonLabel(mainBtn, `Error at ${i + 1}/${links.length}`);
@@ -2164,28 +2605,41 @@ export async function downloadAllLinks(mainBtn) {
     if (newVideoDownloadedCount) {
       updateAllTimeDownloadsAndLeaderBoard(AppState.displayedState.itemsHash);
     }
-
-    console.log("DEBUG_DL_ALLA outside failed: ", media.isImage, err);
-
+    console.error("DEBUG_DL_ALLA outside failed", {
+      error: error?.message || String(error),
+      code: error?.code || null,
+      downloadedCount: newVideoDownloadedCount,
+      stoppedByUser,
+    });
+    if (AppState.debug.active) console.warn(error);
+  } finally {
     AppState.downloading.isActive = false;
     AppState.downloading.isDownloadingAll = false;
     AppState.downloading.pausedAll = false;
-    if (AppState.debug.active) console.warn(error);
   }
 
   console.log("DEBUG_DL_ALLA exited loop 2 ", links.length);
 
-  if (!newVideoDownloadedCount && AppState.downloadedURLs.length > 0) {
+  if (stoppedByUser) {
+    updateDownloadButtonLabel(
+      mainBtn,
+      newVideoDownloadedCount
+        ? `Stopped after ${newVideoDownloadedCount} Download${
+            newVideoDownloadedCount > 1 ? "s" : ""
+          }`
+        : "Batch stopped",
+    );
+  } else if (!newVideoDownloadedCount && AppState.downloadedURLs.length > 0) {
     updateDownloadButtonLabel(
       mainBtn,
       `All ${AppState.downloadedURLs.length} Post${
         AppState.downloadedURLs.length > 1 ? "s" : ""
-      } Already Downloaded!`
+      } Already Downloaded!`,
     );
   } else {
     updateDownloadButtonLabel(
       mainBtn,
-      `Downloaded ${AppState.downloadedURLs.length} Posts!`
+      `Downloaded ${AppState.downloadedURLs.length} Posts!`,
     );
     if (AppState.downloadPreferences.includeCSV) {
       saveCSVFile(AppState.allDirectLinks);
@@ -2200,16 +2654,16 @@ export async function downloadAllLinks(mainBtn) {
         "downloads",
         getRandomDownloadSuccessMessage(
           !hasImage ? "video" : "post",
-          newVideoDownloadedCount
+          newVideoDownloadedCount,
         ),
-        newVideoDownloadedCount
+        newVideoDownloadedCount,
       );
     }
   }
   AppState.downloading.isDownloadingAll = false;
   AppState.downloading.isActive = false;
   AppState.downloading.pausedAll = false;
-  const showRateDonateOn = shouldShowRateDonatePopup();
+  const showRateDonateOn = !stoppedByUser && shouldShowRateDonatePopup();
   if (showRateDonateOn) {
     setTimeout(() => {
       showMorpheusRateUsPage();
@@ -2222,7 +2676,7 @@ export async function downloadAllLinks(mainBtn) {
     AppState.scrapperDetails.selectedTab = null;
     localStorage.setItem(
       STORAGE_KEYS.SCRAPPER_DETAILS,
-      JSON.stringify(AppState.scrapperDetails)
+      JSON.stringify(AppState.scrapperDetails),
     );
     if (!showRateDonateOn)
       showCelebration("downloads", showRandomScraperDone());
@@ -2252,14 +2706,14 @@ export function getRecommendedPresetTemplate() {
 export function saveTemplates(templates) {
   localStorage.setItem(
     STORAGE_KEYS.FULL_PATH_TEMPLATES,
-    JSON.stringify(templates)
+    JSON.stringify(templates),
   );
 }
 
 export function saveSelectedTemplate() {
   localStorage.setItem(
     STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE,
-    JSON.stringify(AppState.downloadPreferences.fullPathTemplate)
+    JSON.stringify(AppState.downloadPreferences.fullPathTemplate),
   );
 }
 
@@ -2295,7 +2749,7 @@ export function checkAndUpgradeRecommendedTemplate() {
     // Update in saved templates if it exists there
     const savedTemplates = getSavedTemplates();
     const templateIndex = savedTemplates.findIndex(
-      (t) => t.label === recommendedTemplate.label
+      (t) => t.label === recommendedTemplate.label,
     );
     if (templateIndex !== -1) {
       savedTemplates[templateIndex] = updatedTemplate;
@@ -2309,7 +2763,7 @@ export function checkAndUpgradeRecommendedTemplate() {
     showToast(
       "Template Upgraded",
       `Your active template "${recommendedTemplate.label}" has been updated to the latest version.`,
-      6000
+      6000,
     );
 
     return true;
@@ -2327,7 +2781,7 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
       console.log(
         "LEADERBOARD ⚠️ Skipping — update already in progress",
         AppState.leaderboard.lastUpdateHash,
-        dataHash
+        dataHash,
       );
     }
     return;
@@ -2341,7 +2795,7 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
       console.log(
         "LEADERBOARD ⚠️ Skipping — hash already processed",
         AppState.leaderboard.lastUpdateHash,
-        dataHash
+        dataHash,
       );
     }
     return;
@@ -2357,7 +2811,7 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
 
     // All-time count
     const prevAllTime = Number(
-      localStorage.getItem(STORAGE_KEYS.DOWNLOADS_ALL_TIME_COUNT) || 0
+      localStorage.getItem(STORAGE_KEYS.DOWNLOADS_ALL_TIME_COUNT) || 0,
     );
     const updatedAllTime = prevAllTime + newCount;
     AppState.leaderboard.allTimeDownloadsCount = updatedAllTime;
@@ -2365,7 +2819,7 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
 
     // === FIX: Weekly counter as object { weekId, count }
     const weekDataRaw = localStorage.getItem(
-      STORAGE_KEYS.DOWNLOADS_WEEKLY_DATA
+      STORAGE_KEYS.DOWNLOADS_WEEKLY_DATA,
     );
     let weekData = { count: 0, weekId };
 
@@ -2385,15 +2839,15 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
     AppState.leaderboard.weekDownloadsData = weekData;
     localStorage.setItem(
       STORAGE_KEYS.DOWNLOADS_WEEKLY_DATA,
-      JSON.stringify(weekData)
+      JSON.stringify(weekData),
     );
 
     // Leaderboards
     const allTimeMap = JSON.parse(
-      localStorage.getItem(STORAGE_KEYS.DOWNLOADS_LEADERBOARD_ALL_TIME) || "{}"
+      localStorage.getItem(STORAGE_KEYS.DOWNLOADS_LEADERBOARD_ALL_TIME) || "{}",
     );
     const weeklyMap = JSON.parse(
-      localStorage.getItem(STORAGE_KEYS.DOWNLOADS_LEADERBOARD_WEEKLY) || "{}"
+      localStorage.getItem(STORAGE_KEYS.DOWNLOADS_LEADERBOARD_WEEKLY) || "{}",
     );
 
     newlyConfirmed
@@ -2430,7 +2884,7 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
     if (sortedWeekIds.length > DATA_PRUNE_MAX_WEEKS_TO_KEEP) {
       const weeksToDelete = sortedWeekIds.slice(
         0,
-        sortedWeekIds.length - DATA_PRUNE_MAX_WEEKS_TO_KEEP
+        sortedWeekIds.length - DATA_PRUNE_MAX_WEEKS_TO_KEEP,
       );
       for (const oldWeek of weeksToDelete) {
         delete weeklyMap[oldWeek];
@@ -2452,7 +2906,7 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
         }
         if (AppState.debug.active) {
           console.log(
-            `LEADERBOARD 🧹 Pruned ${authorId} — count=${count}, last active ${lastUpdatedAt}`
+            `LEADERBOARD 🧹 Pruned ${authorId} — count=${count}, last active ${lastUpdatedAt}`,
           );
         }
       }
@@ -2461,17 +2915,17 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
     // Save updated maps
     localStorage.setItem(
       STORAGE_KEYS.DOWNLOADS_LEADERBOARD_ALL_TIME,
-      JSON.stringify(allTimeMap)
+      JSON.stringify(allTimeMap),
     );
     localStorage.setItem(
       STORAGE_KEYS.DOWNLOADS_LEADERBOARD_WEEKLY,
-      JSON.stringify(weeklyMap)
+      JSON.stringify(weeklyMap),
     );
 
     // Did this user get into another all time tier?
     const currentProgressLevel = AppState.currentTierProgress.downloads || 0;
     const newTier = getUserDownloadsCurrentTier(
-      AppState.leaderboard.allTimeDownloadsCount
+      AppState.leaderboard.allTimeDownloadsCount,
     );
     const newTierLevel = newTier.min;
     if (newTierLevel > currentProgressLevel) {
@@ -2480,13 +2934,13 @@ export function updateAllTimeDownloadsAndLeaderBoard(dataHash) {
         AppState.currentTierProgress.downloads = newTierLevel;
         localStorage.setItem(
           STORAGE_KEYS.CURRENT_TIER_PROGRESS,
-          JSON.stringify(AppState.currentTierProgress)
+          JSON.stringify(AppState.currentTierProgress),
         );
 
         showCelebration(
           "tier",
           getTierHypeMessageDownloads(newTier),
-          newTier.min
+          newTier.min,
         );
       } catch (err) {
         console.log("Error displaying confetti", err);
@@ -2519,7 +2973,7 @@ export function updateAllTimeRecommendationsLeaderBoard(dataHash) {
       console.log(
         "RECOMMENDATIONS ⚠️ Skipping — update already in progress",
         AppState.recommendationsLeaderboard.lastUpdateHash,
-        dataHash
+        dataHash,
       );
     }
     return;
@@ -2532,7 +2986,7 @@ export function updateAllTimeRecommendationsLeaderBoard(dataHash) {
     if (AppState.debug.active) {
       console.log(
         "RECOMMENDATIONS ⚠️ Skipping — hash already processed",
-        dataHash
+        dataHash,
       );
     }
     return;
@@ -2548,13 +3002,13 @@ export function updateAllTimeRecommendationsLeaderBoard(dataHash) {
     const newCount = newlyRecommended.length;
 
     const prevAllTime = Number(
-      localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_ALL_TIME_COUNT) || 0
+      localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_ALL_TIME_COUNT) || 0,
     );
     const updatedAllTime = prevAllTime + newCount;
 
     // === FIX: Weekly object instead of just number
     const weekDataRaw = localStorage.getItem(
-      STORAGE_KEYS.RECOMMENDATIONS_WEEKLY_DATA
+      STORAGE_KEYS.RECOMMENDATIONS_WEEKLY_DATA,
     );
     let weekData = { count: 0, weekId };
 
@@ -2576,22 +3030,22 @@ export function updateAllTimeRecommendationsLeaderBoard(dataHash) {
 
     localStorage.setItem(
       STORAGE_KEYS.RECOMMENDATIONS_ALL_TIME_COUNT,
-      updatedAllTime
+      updatedAllTime,
     );
     if (weekData.weekId == "missing")
       throw Error("Tried to save missing to db::");
     localStorage.setItem(
       STORAGE_KEYS.RECOMMENDATIONS_WEEKLY_DATA,
-      JSON.stringify(weekData)
+      JSON.stringify(weekData),
     );
 
     const allTimeMap = JSON.parse(
       localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_LEADERBOARD_ALL_TIME) ||
-        "{}"
+        "{}",
     );
     const weeklyMap = JSON.parse(
       localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_LEADERBOARD_WEEKLY) ||
-        "{}"
+        "{}",
     );
 
     // === Apply updates
@@ -2628,7 +3082,7 @@ export function updateAllTimeRecommendationsLeaderBoard(dataHash) {
     if (sortedWeekIds.length > DATA_PRUNE_MAX_WEEKS_TO_KEEP) {
       const weeksToDelete = sortedWeekIds.slice(
         0,
-        sortedWeekIds.length - DATA_PRUNE_MAX_WEEKS_TO_KEEP
+        sortedWeekIds.length - DATA_PRUNE_MAX_WEEKS_TO_KEEP,
       );
       for (const oldWeek of weeksToDelete) {
         delete weeklyMap[oldWeek];
@@ -2650,7 +3104,7 @@ export function updateAllTimeRecommendationsLeaderBoard(dataHash) {
         }
         if (AppState.debug.active) {
           console.log(
-            `RECOMMENDATIONS 🧹 Pruned ${authorId} — count=${count}, last active ${lastUpdatedAt}`
+            `RECOMMENDATIONS 🧹 Pruned ${authorId} — count=${count}, last active ${lastUpdatedAt}`,
           );
         }
       }
@@ -2659,18 +3113,18 @@ export function updateAllTimeRecommendationsLeaderBoard(dataHash) {
     // Persist updates
     localStorage.setItem(
       STORAGE_KEYS.RECOMMENDATIONS_LEADERBOARD_ALL_TIME,
-      JSON.stringify(allTimeMap)
+      JSON.stringify(allTimeMap),
     );
     localStorage.setItem(
       STORAGE_KEYS.RECOMMENDATIONS_LEADERBOARD_WEEKLY,
-      JSON.stringify(weeklyMap)
+      JSON.stringify(weeklyMap),
     );
 
     // Did this user get into another all time tier?
     const currentProgressLevel =
       AppState.currentTierProgress.recommendations || 0;
     const newTier = getUserRecommendationsCurrentTier(
-      AppState.recommendationsLeaderboard.allTimeRecommendationsCount
+      AppState.recommendationsLeaderboard.allTimeRecommendationsCount,
     );
     const newTierLevel = newTier.min;
     if (newTierLevel > currentProgressLevel) {
@@ -2679,12 +3133,12 @@ export function updateAllTimeRecommendationsLeaderBoard(dataHash) {
         AppState.currentTierProgress.recommendations = newTierLevel;
         localStorage.setItem(
           STORAGE_KEYS.CURRENT_TIER_PROGRESS,
-          JSON.stringify(AppState.currentTierProgress)
+          JSON.stringify(AppState.currentTierProgress),
         );
         showCelebration(
           "tier",
           getTierHypeMessageRecommendations(newTier),
-          newTier.min
+          newTier.min,
         );
       } catch (err) {
         console.log("Error displaying confetti", err);
@@ -2770,7 +3224,7 @@ export function getCurrentWeekId() {
 
 export function getAllTimeRecommendationsLeaderBoardList(top = 5) {
   const raw = localStorage.getItem(
-    STORAGE_KEYS.RECOMMENDATIONS_LEADERBOARD_ALL_TIME
+    STORAGE_KEYS.RECOMMENDATIONS_LEADERBOARD_ALL_TIME,
   );
   if (!raw) return [];
 
@@ -2792,10 +3246,10 @@ export function getAllTimeRecommendationsLeaderBoardList(top = 5) {
 
 export function getWeeklyRecommendationsLeaderBoardList(
   weekId = getCurrentWeekId(),
-  top = 5
+  top = 5,
 ) {
   const raw = localStorage.getItem(
-    STORAGE_KEYS.RECOMMENDATIONS_LEADERBOARD_WEEKLY
+    STORAGE_KEYS.RECOMMENDATIONS_LEADERBOARD_WEEKLY,
   );
   if (!raw) return [];
 
@@ -2924,7 +3378,7 @@ export function showCelebration(type = "tier", message, count = 10) {
       const particleBase = Math.min(1000, 10 * count);
       const particleCount = Math.max(
         1,
-        Math.round(particleBase * (timeLeft / duration))
+        Math.round(particleBase * (timeLeft / duration)),
       );
 
       conf({
@@ -3171,7 +3625,7 @@ export async function getTabSpans(timeoutMs = 5000, intervalMs = 100) {
 
   // 2) Two frames wait
   await new Promise((r) =>
-    requestAnimationFrame(() => requestAnimationFrame(r))
+    requestAnimationFrame(() => requestAnimationFrame(r)),
   );
   first = immediateScan();
   if (hasAny(first)) return first;
@@ -3189,12 +3643,15 @@ export async function getTabSpans(timeoutMs = 5000, intervalMs = 100) {
     });
     if (document.body)
       obs.observe(document.body, { childList: true, subtree: true });
-    setTimeout(() => {
-      if (!done) {
-        obs.disconnect();
-        resolve(null);
-      }
-    }, Math.min(800, timeoutMs));
+    setTimeout(
+      () => {
+        if (!done) {
+          obs.disconnect();
+          resolve(null);
+        }
+      },
+      Math.min(800, timeoutMs),
+    );
   });
   if (foundViaObserver) return foundViaObserver;
 
@@ -3227,12 +3684,16 @@ export function getRenderedPostsMetadata() {
 
   // Get regular video containers
   const containers = Array.from(
-    document.querySelectorAll('[class*="DivPlayerContainer"]')
+    document.querySelectorAll('[class*="DivPlayerContainer"]'),
+  );
+
+  const gridContainers = Array.from(
+    document.querySelectorAll('[class*="DivVideoListContainer"]'),
   );
 
   // Get Stories containers (different class pattern)
   const storiesContainers = Array.from(
-    document.querySelectorAll('[class*="DivStoriesPlayer"]')
+    document.querySelectorAll('[class*="DivStoriesPlayer"]'),
   );
 
   const pickBestItemFromChildren = (children) => {
@@ -3285,7 +3746,7 @@ export function getRenderedPostsMetadata() {
 
       // Try pendingProps first, then memoizedProps
       const propsSources = [fiber?.pendingProps, fiber?.memoizedProps].filter(
-        Boolean
+        Boolean,
       );
 
       // Try to extract the rich media object
@@ -3339,7 +3800,11 @@ export function getRenderedPostsMetadata() {
     }
 
     // Check for .item property
-    if (obj.item && typeof obj.item === "object" && typeof obj.item.id === "string") {
+    if (
+      obj.item &&
+      typeof obj.item === "object" &&
+      typeof obj.item.id === "string"
+    ) {
       return obj.item;
     }
 
@@ -3388,16 +3853,32 @@ export function getRenderedPostsMetadata() {
     })
     .filter(Boolean);
 
-  // Merge and dedupe by id
-  const seenIds = new Set(posts.map((p) => String(p.id)));
-  for (const story of storiesPosts) {
-    if (story?.id && !seenIds.has(String(story.id))) {
-      posts.push(story);
-      seenIds.add(String(story.id));
-    }
-  }
+  const gridPosts = gridContainers.flatMap((el) => {
+    const mediaItems = findFiberItemsInContainer(el, 500, 18);
+    if (!mediaItems.length) return [];
 
-  return posts;
+    const username = getUsernameNear(el);
+    return mediaItems.map((media) => {
+      if (!media.authorId && username) {
+        media.authorId = username;
+      }
+      return media;
+    });
+  });
+
+  const mergedPosts = new Map();
+  const addPost = (media) => {
+    const id = media?.id == null ? "" : String(media.id).trim();
+    if (!id) return;
+
+    const existing = mergedPosts.get(id);
+    if (!existing || scoreMediaObj(media) > scoreMediaObj(existing)) {
+      mergedPosts.set(id, media);
+    }
+  };
+
+  [...posts, ...gridPosts, ...storiesPosts].forEach(addPost);
+  return Array.from(mergedPosts.values());
 }
 
 export function toTitleCase(str) {
@@ -3445,6 +3926,82 @@ export function showAlertModal(message, actionText = "OK", onAction = null) {
   });
 }
 
+function showDownloadFailureModal({ filename, url }) {
+  const fileLabel = escapeHtml(filename.split("/").pop() || "Unknown");
+  const discordUrl = "https://discord.gg/KpT7xdUUbM";
+  const isBlobUrl = typeof url === "string" && /^blob:/i.test(url);
+  const canOfferManualSave = typeof url === "string" && !!url && !isBlobUrl;
+  const closeResult = AppState.downloading.isDownloadingAll
+    ? "stop-batch"
+    : "skip-file";
+
+  return new Promise((resolve) => {
+    const content = document.createElement("div");
+    content.className = "alert";
+    content.innerHTML =
+      `⚠️ <b>Download failed.</b><br><br>` +
+      `We couldn't save <b>${fileLabel}</b> automatically.<br><br>` +
+      `This often happens with <b>private</b> or <b>Only Me</b> posts, or when TikTok makes breaking changes.<br><br>` +
+      `Try a refresh first. If that does not fix it, report the issue on Discord using the button below.<br><br>` +
+      `Choose what to do next:`;
+
+    const actionsContainer = document.createElement("div");
+    actionsContainer.className = "ettpd-modal-button-group";
+
+    let overlay = null;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (overlay?.parentNode) overlay.remove();
+      resolve(result);
+    };
+
+    const manualSaveBtn = document.createElement("button");
+    manualSaveBtn.className = "ettpd-modal-button ghost";
+    manualSaveBtn.textContent = "Open Manual Save";
+    manualSaveBtn.onclick = () => {
+      window.open(url, "_blank", "noopener,noreferrer");
+      finish("manual-save");
+    };
+
+    const refreshBtn = document.createElement("button");
+    refreshBtn.className = "ettpd-modal-button primary";
+    refreshBtn.textContent = "Refresh Page";
+    refreshBtn.onclick = () => finish("refresh-page");
+
+    const discordBtn = document.createElement("a");
+    discordBtn.className = "ettpd-modal-button discord";
+    discordBtn.href = discordUrl;
+    discordBtn.target = "_blank";
+    discordBtn.rel = "noopener noreferrer";
+    discordBtn.textContent = "Report on Discord";
+
+    const skipBtn = document.createElement("button");
+    skipBtn.className = "ettpd-modal-button secondary";
+    skipBtn.textContent = "Skip This File";
+    skipBtn.onclick = () => finish("skip-file");
+
+    const stopBtn = document.createElement("button");
+    stopBtn.className = "ettpd-modal-button danger";
+    stopBtn.textContent = "Stop Batch";
+    stopBtn.onclick = () => finish("stop-batch");
+
+    if (canOfferManualSave) {
+      actionsContainer.appendChild(manualSaveBtn);
+    }
+    actionsContainer.appendChild(refreshBtn);
+    actionsContainer.appendChild(discordBtn);
+    actionsContainer.appendChild(skipBtn);
+    actionsContainer.appendChild(stopBtn);
+
+    overlay = createModal({
+      children: [content, actionsContainer],
+      onClose: () => finish(closeResult),
+    });
+  });
+}
+
 /**
  * Detect the browser type based on user agent and browser-specific properties
  * @returns {string} Browser type: "chrome", "brave", "firefox", "edge", "opera", "safari", or "unknown"
@@ -3484,7 +4041,9 @@ export function detectBrowserType() {
 export function showBrowserCompatibilityAlert() {
   // Check if already dismissed
   try {
-    const dismissed = localStorage.getItem(STORAGE_KEYS.BROWSER_COMPAT_ALERT_DISMISSED);
+    const dismissed = localStorage.getItem(
+      STORAGE_KEYS.BROWSER_COMPAT_ALERT_DISMISSED,
+    );
     if (dismissed === "true") {
       return; // User has dismissed this alert
     }
@@ -3584,7 +4143,10 @@ export function showBrowserCompatibilityAlert() {
     // Save dismissal preference if checkbox is checked
     if (checkbox.checked) {
       try {
-        localStorage.setItem(STORAGE_KEYS.BROWSER_COMPAT_ALERT_DISMISSED, "true");
+        localStorage.setItem(
+          STORAGE_KEYS.BROWSER_COMPAT_ALERT_DISMISSED,
+          "true",
+        );
       } catch (e) {
         console.warn("Failed to save browser compat alert dismissal:", e);
       }
@@ -3803,6 +4365,157 @@ export function findFiberItemById(startEl, itemId, maxVisits = 20) {
   return null;
 }
 
+function looksLikeFiberMediaItem(obj) {
+  if (!obj || typeof obj !== "object") return false;
+
+  const rawId = obj.id ?? obj.aweme_id ?? obj.video?.id;
+  const id = rawId == null ? "" : String(rawId).trim();
+  if (!id || id.length < 6) return false;
+
+  return Boolean(
+    obj.video ||
+    obj.imagePost ||
+    obj.author ||
+    obj.authorId ||
+    obj.music ||
+    obj.stats ||
+    obj.statsV2 ||
+    obj.textExtra ||
+    obj.desc !== undefined ||
+    obj.createTime,
+  );
+}
+
+function extractFiberMediaCandidate(obj) {
+  if (!obj || typeof obj !== "object") return null;
+
+  const directCandidates = [
+    obj,
+    obj.item,
+    obj.props?.item,
+    obj.aweme,
+    obj.props?.aweme,
+    obj.itemStruct,
+    obj.props?.itemStruct,
+    obj.videoData,
+    obj.props?.videoData,
+  ];
+
+  for (const candidate of directCandidates) {
+    if (looksLikeFiberMediaItem(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function pushFiberTraversalNode(stack, node, path, depth, maxDepth) {
+  if (!node || typeof node !== "object" || depth > maxDepth) return;
+  stack.push({ node, path, depth });
+}
+
+export function findFiberItemsInContainer(
+  startEl,
+  maxVisits = 250,
+  maxDepth = 16,
+) {
+  const rootFiber = getReactFiber(startEl);
+  if (!rootFiber) return [];
+
+  const foundItems = new Map();
+  const visited = new Set();
+  const stack = [{ node: rootFiber, path: "fiber", depth: 0 }];
+  let visits = 0;
+
+  while (stack.length && visits < maxVisits) {
+    const current = stack.pop();
+    const { node, path, depth } = current;
+
+    if (!node || typeof node !== "object" || depth > maxDepth) {
+      continue;
+    }
+
+    if (visited.has(node)) {
+      continue;
+    }
+    visited.add(node);
+    visits += 1;
+
+    const candidate = extractFiberMediaCandidate(node);
+    if (candidate) {
+      const rawId = candidate.id ?? candidate.aweme_id ?? candidate.video?.id;
+      const id = rawId == null ? "" : String(rawId).trim();
+      if (id && !foundItems.has(id)) {
+        foundItems.set(id, candidate);
+      }
+    }
+
+    if (Array.isArray(node)) {
+      const rankedChildren = rankChildren(node);
+      for (let i = rankedChildren.length - 1; i >= 0; i--) {
+        const child = rankedChildren[i]?.node;
+        pushFiberTraversalNode(
+          stack,
+          child,
+          `${path}[${rankedChildren[i]?.idx ?? i}]`,
+          depth + 1,
+          maxDepth,
+        );
+      }
+      continue;
+    }
+
+    const traversalTargets = [
+      ["child", node.child],
+      ["sibling", node.sibling],
+      ["alternate", node.alternate],
+      ["pendingProps", node.pendingProps],
+      ["memoizedProps", node.memoizedProps],
+      ["memoizedState", node.memoizedState],
+      ["props", node.props],
+      ["children", node.children],
+      ["item", node.item],
+      ["items", node.items],
+      ["itemList", node.itemList],
+      ["list", node.list],
+      ["data", node.data],
+      ["edges", node.edges],
+    ];
+
+    for (const [key, nextNode] of traversalTargets) {
+      if (Array.isArray(nextNode)) {
+        const rankedChildren = rankChildren(nextNode);
+        for (let i = rankedChildren.length - 1; i >= 0; i--) {
+          const child = rankedChildren[i]?.node;
+          pushFiberTraversalNode(
+            stack,
+            child,
+            `${path}.${key}[${rankedChildren[i]?.idx ?? i}]`,
+            depth + 1,
+            maxDepth,
+          );
+        }
+        continue;
+      }
+
+      pushFiberTraversalNode(
+        stack,
+        nextNode,
+        `${path}.${key}`,
+        depth + 1,
+        maxDepth,
+      );
+    }
+  }
+
+  return Array.from(foundItems.values());
+}
+
+if (typeof window !== "undefined") {
+  window.ettpd__findFiberItemsInContainer = findFiberItemsInContainer;
+}
+
 // Extract a TikTok video id from many common DOM shapes
 function extractIdFromEl(el) {
   if (!el) return null;
@@ -3853,7 +4566,7 @@ function getNearById(article, maxSiblingRadius = 4, maxVisits = 50) {
     (() => {
       // Quick scan for any hint inside the article
       const hits = article.querySelectorAll?.(
-        '[id^="xgwrapper-"], a[href*="/video/"], [data-e2e*="video"], [data-video-id]'
+        '[id^="xgwrapper-"], a[href*="/video/"], [data-e2e*="video"], [data-video-id]',
       );
       for (const h of hits) {
         const id = tryEl(h);
@@ -3919,7 +4632,7 @@ function getNearById(article, maxSiblingRadius = 4, maxVisits = 50) {
     const r = el.getBoundingClientRect?.();
     if (!r || !artRect) continue;
     const dist = Math.abs(
-      (r.top + r.bottom) / 2 - (artRect.top + artRect.bottom) / 2
+      (r.top + r.bottom) / 2 - (artRect.top + artRect.bottom) / 2,
     );
     if (dist < closestDist) {
       closestDist = dist;
@@ -4148,7 +4861,7 @@ function getShareTargets({ url, title, text, mediaUrl }, platforms) {
       key: "whatsapp",
       label: "Share on WhatsApp",
       href: `https://api.whatsapp.com/send?text=${e(
-        msg ? msg + " " + url : url
+        msg ? msg + " " + url : url,
       )}`,
     },
     facebook: {
@@ -4160,14 +4873,14 @@ function getShareTargets({ url, title, text, mediaUrl }, platforms) {
       key: "x",
       label: "Share on X",
       href: `https://twitter.com/intent/tweet?url=${e(url)}&text=${e(
-        msg || title
+        msg || title,
       )}`,
     },
     messenger: {
       key: "messenger",
       label: "Share on Messenger",
       href: `https://www.facebook.com/dialog/send?link=${e(
-        url
+        url,
       )}&redirect_uri=${e(url)}`,
     },
   };
