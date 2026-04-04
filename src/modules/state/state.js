@@ -113,7 +113,10 @@ function getBooleanOrNull(key, fallback = null) {
     if (value === "false") return false;
     return fallback; // invalid value, return fallback
   } catch (e) {
-    console.warn(`Failed to read boolean/null from localStorage for key ${key}:`, e);
+    console.warn(
+      `Failed to read boolean/null from localStorage for key ${key}:`,
+      e,
+    );
     return fallback;
   }
 }
@@ -138,21 +141,21 @@ const AppState = {
   sessionHasConfirmedDownloads: false,
   currentTierProgress: safeParseJSON(
     localStorage.getItem(STORAGE_KEYS.CURRENT_TIER_PROGRESS),
-    { downloads: 0, recommendations: 0 }
+    { downloads: 0, recommendations: 0 },
   ),
   leaderboard: {
     newlyConfirmedMedia: [],
     currentlyUpdating: false,
     lastUpdateHash: "",
     allTimeDownloadsCount: Number(
-      getStringOrNull(STORAGE_KEYS.DOWNLOADS_ALL_TIME_COUNT) || 0
+      getStringOrNull(STORAGE_KEYS.DOWNLOADS_ALL_TIME_COUNT) || 0,
     ),
     weekDownloadsData: safeParseJSON(
       localStorage.getItem(STORAGE_KEYS.DOWNLOADS_WEEKLY_DATA),
       {
         count: 0,
         weekId: "missing",
-      }
+      },
     ),
   },
   recommendationsLeaderboard: {
@@ -160,12 +163,21 @@ const AppState = {
     currentlyUpdating: false,
     lastUpdateHash: "",
     allTimeRecommendationsCount: Number(
-      localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_ALL_TIME_COUNT) || 0
+      localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_ALL_TIME_COUNT) || 0,
     ),
     weekRecommendationsData: safeParseJSON(
       localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_WEEKLY_DATA),
-      { count: 0, weekId: "missing" }
+      { count: 0, weekId: "missing" },
     ),
+  },
+  playlist: {
+    currentId: null,
+    currentName: "",
+    requestUrl: "",
+    itemIds: [],
+    lastHydratedAt: 0,
+    lastRequestSeenAt: 0,
+    isHydrating: false,
   },
   likedVideos: {},
   downloading: {
@@ -180,20 +192,20 @@ const AppState = {
         ? "custom"
         : "bottom-right",
     live_ETTPD_CUSTOM_POS: getStringOrNull(
-      STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION
+      STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION,
     ),
     isPreferenceBoxOpen: false,
     isScrapperBoxOpen: false,
     isDownloaderClosed: getBooleanFromStorage(
-      STORAGE_KEYS.IS_DOWNLOADER_CLOSED
+      STORAGE_KEYS.IS_DOWNLOADER_CLOSED,
     ),
     isRatePopupOpen: false,
     isDragging: false,
     hasSeenShowButtonHint: getBooleanFromStorage(
-      STORAGE_KEYS.SHOW_BUTTON_HINT_SEEN
+      STORAGE_KEYS.SHOW_BUTTON_HINT_SEEN,
     ),
     hasSeenFilePathHint: getBooleanFromStorage(
-      STORAGE_KEYS.FILE_PATH_HINT_SEEN
+      STORAGE_KEYS.FILE_PATH_HINT_SEEN,
     ),
     themeMode: getStringOrNull(STORAGE_KEYS.THEME_MODE) || "system",
     autoSwipeConfigurations: {
@@ -210,11 +222,11 @@ const AppState = {
     includeCSV: false,
     fullPathTemplate: safeParseJSON(
       localStorage.getItem(STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE),
-      FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault)
+      FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault),
     ),
     showFolderPicker: getBooleanFromStorage(STORAGE_KEYS.SHOW_FOLDER_PICKER),
     disableConfetti: getBooleanFromStorage(
-      STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI
+      STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI,
     ),
     useNativeDownload: getBooleanOrNull(STORAGE_KEYS.USE_NATIVE_DOWNLOAD, null),
     // null = auto (use native for Brave), true = always native, false = always chrome.downloads
@@ -226,7 +238,7 @@ const AppState = {
       lastRatedAt: null,
       lastShownAt: null,
       shownCount: 0,
-    }
+    },
   ),
   scrapperDetails: safeParseScrapperDetails(
     localStorage.getItem(STORAGE_KEYS.SCRAPPER_DETAILS),
@@ -243,7 +255,7 @@ const AppState = {
       currentBatch: 0,
       isAutoBatchDownloading: false,
       skipDownloaded: false,
-    }
+    },
   ),
 };
 
@@ -313,8 +325,8 @@ export function resetAppStateToDefaults() {
   localStorage.setItem(
     STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE,
     JSON.stringify(
-      FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault)
-    )
+      FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault),
+    ),
   );
   // Default template
   AppState.downloadPreferences.fullPathTemplate =

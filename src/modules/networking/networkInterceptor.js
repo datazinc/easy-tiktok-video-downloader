@@ -1,5 +1,10 @@
 // networkInterceptor.js
 import { handleFoundItems } from "../downloader/handlers.js";
+import {
+  getPlaylistIdFromRequestUrl,
+  rememberCurrentPlaylistItems,
+  rememberPlaylistRequestUrl,
+} from "../utils/utils.js";
 
 export class NetworkInterceptor {
   constructor() {
@@ -21,14 +26,24 @@ export class NetworkInterceptor {
     this._overrideFetch();
   }
 
-  handleResponse(data) {
+  handleResponse(data, sourceUrl = "") {
     try {
+      const rememberedRequestUrl = rememberPlaylistRequestUrl(sourceUrl) || "";
+      const playlistId = getPlaylistIdFromRequestUrl(
+        rememberedRequestUrl || sourceUrl,
+      );
+
       if (Array.isArray(data.itemList)) {
+        rememberCurrentPlaylistItems(
+          data.itemList,
+          playlistId,
+          rememberedRequestUrl || sourceUrl,
+        );
         handleFoundItems(data.itemList.filter((item) => item.id));
       }
       if (Array.isArray(data.data)) {
         handleFoundItems(
-          data.data.map((ent) => ent?.item).filter((item) => item?.id)
+          data.data.map((ent) => ent?.item).filter((item) => item?.id),
         );
       }
 
@@ -56,7 +71,7 @@ export class NetworkInterceptor {
           "NetworkInterceptor ● XHR done",
           this._ni_method,
           this._ni_url,
-          this.status
+          this.status,
         );
         let data;
         // inside your loadend listener…
@@ -74,7 +89,7 @@ export class NetworkInterceptor {
           }
           if (data !== undefined) {
             console.log("NetworkInterceptor ● XHR JSON", this._ni_url, data);
-            self.handleResponse(data);
+            self.handleResponse(data, this._ni_url);
           }
         } catch (err) {
           console.warn("NetworkInterceptor ● XHR parse error", err);
@@ -98,7 +113,7 @@ export class NetworkInterceptor {
         console.log(
           "NetworkInterceptor ● fetch response",
           response.status,
-          response.url
+          response.url,
         );
 
         // fire-and-forget JSON parsing
@@ -107,7 +122,7 @@ export class NetworkInterceptor {
           .json()
           .then((data) => {
             console.log("NetworkInterceptor ● fetch JSON", response.url, data);
-            self.handleResponse(data);
+            self.handleResponse(data, response.url || url);
           })
           .catch(() => {
             console.warn("NetworkInterceptor ● fetch non-JSON", response.url);

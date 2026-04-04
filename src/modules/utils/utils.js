@@ -47,9 +47,202 @@ export function getCurrentPageUsername() {
   return username;
 }
 
+function decodeNamedEntitySlug(rawSlug, fallbackName = "") {
+  const fallback = fallbackName || "";
+  if (!rawSlug) {
+    return { name: fallback, id: "" };
+  }
+
+  let decoded = rawSlug;
+  try {
+    decoded = decodeURIComponent(rawSlug);
+  } catch (error) {
+    console.warn("Failed to decode TikTok slug:", rawSlug, error);
+  }
+
+  const normalized = decoded.trim();
+  const match = normalized.match(/^(.*?)-([0-9]{10,})$/);
+  if (!match) {
+    return {
+      name: normalized || fallback,
+      id: "",
+    };
+  }
+
+  return {
+    name: match[1].trim() || fallback,
+    id: match[2],
+  };
+}
+
+function resetPlaylistRuntimeState() {
+  AppState.playlist.currentId = null;
+  AppState.playlist.currentName = "";
+  AppState.playlist.requestUrl = "";
+  AppState.playlist.itemIds = [];
+  AppState.playlist.lastHydratedAt = 0;
+  AppState.playlist.lastRequestSeenAt = 0;
+  AppState.playlist.isHydrating = false;
+}
+
+export function syncPlaylistStateWithLocation() {
+  const pageInfo = isOnProfileOrCollectionPage();
+
+  if (!pageInfo.isPlaylist || !pageInfo.playlistId) {
+    if (
+      AppState.playlist.currentId ||
+      AppState.playlist.itemIds.length ||
+      AppState.playlist.requestUrl
+    ) {
+      resetPlaylistRuntimeState();
+    }
+    return pageInfo;
+  }
+
+  if (AppState.playlist.currentId !== pageInfo.playlistId) {
+    resetPlaylistRuntimeState();
+    AppState.playlist.currentId = pageInfo.playlistId;
+  }
+
+  AppState.playlist.currentName = pageInfo.playlistName || "Playlist";
+  return pageInfo;
+}
+
+export function getPlaylistIdFromRequestUrl(rawUrl) {
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) return "";
+
+  try {
+    const parsed = new URL(rawUrl, window.location.origin);
+    if (!parsed.pathname.includes("/api/mix/item_list/")) return "";
+    return parsed.searchParams.get("mixId") || "";
+  } catch (error) {
+    console.warn("Failed to parse playlist request URL:", rawUrl, error);
+    return "";
+  }
+}
+
+export function rememberPlaylistRequestUrl(rawUrl) {
+  const pageInfo = syncPlaylistStateWithLocation();
+  if (!pageInfo.isPlaylist || !pageInfo.playlistId) return null;
+
+  try {
+    const parsed = new URL(rawUrl, window.location.origin);
+    if (!parsed.pathname.includes("/api/mix/item_list/")) return null;
+
+    const mixId = parsed.searchParams.get("mixId") || "";
+    if (!mixId || mixId !== pageInfo.playlistId) return null;
+
+    const normalizedUrl = parsed.toString();
+    AppState.playlist.requestUrl = normalizedUrl;
+    AppState.playlist.lastRequestSeenAt = Date.now();
+    return normalizedUrl;
+  } catch (error) {
+    console.warn("Failed to remember playlist request URL:", rawUrl, error);
+    return null;
+  }
+}
+
+export function rememberCurrentPlaylistItems(
+  items,
+  playlistId = null,
+  requestUrl = "",
+) {
+  const pageInfo = syncPlaylistStateWithLocation();
+  if (!pageInfo.isPlaylist || !pageInfo.playlistId || !Array.isArray(items)) {
+    return false;
+  }
+
+  const activePlaylistId = playlistId || pageInfo.playlistId;
+  if (!activePlaylistId || activePlaylistId !== pageInfo.playlistId) {
+    return false;
+  }
+
+  const mergedIds = new Set(AppState.playlist.itemIds.map(String));
+  let changed = false;
+
+  items.forEach((item) => {
+    const id = item?.id ?? item?.videoId;
+    const normalizedId = id == null ? "" : String(id).trim();
+    if (!normalizedId) return;
+    if (!mergedIds.has(normalizedId)) {
+      mergedIds.add(normalizedId);
+      changed = true;
+    }
+  });
+
+  if (!mergedIds.size) return false;
+
+  AppState.playlist.currentId = activePlaylistId;
+  AppState.playlist.currentName = pageInfo.playlistName || "Playlist";
+  AppState.playlist.itemIds = Array.from(mergedIds);
+  if (requestUrl) {
+    AppState.playlist.requestUrl = requestUrl;
+    AppState.playlist.lastRequestSeenAt = Date.now();
+  }
+
+  return changed;
+}
+
+export function findRecentPlaylistRequestUrl(playlistId = null) {
+  const pageInfo = syncPlaylistStateWithLocation();
+  const targetPlaylistId = playlistId || pageInfo.playlistId || "";
+
+  if (!targetPlaylistId) {
+    return null;
+  }
+
+  let latestUrl = null;
+  let latestStartTime = -Infinity;
+
+  try {
+    const entries = performance.getEntriesByType?.("resource") || [];
+    entries.forEach((entry) => {
+      if (!entry?.name || !String(entry.name).includes("/api/mix/item_list/")) {
+        return;
+      }
+
+      if (getPlaylistIdFromRequestUrl(entry.name) !== targetPlaylistId) {
+        return;
+      }
+
+      const startTime = Number(entry.startTime) || 0;
+      if (startTime >= latestStartTime) {
+        latestStartTime = startTime;
+        latestUrl = entry.name;
+      }
+    });
+  } catch (error) {
+    console.warn("Failed to inspect resource timing entries:", error);
+  }
+
+  if (latestUrl) {
+    return rememberPlaylistRequestUrl(latestUrl) || latestUrl;
+  }
+
+  return AppState.playlist.requestUrl || null;
+}
+
+function getRenderableItemsForCurrentPage(pageInfo) {
+  const items = Object.values(AppState.allItemsEverSeen).flat();
+  if (!pageInfo?.isPlaylist) {
+    return items;
+  }
+
+  const playlistIds = new Set(AppState.playlist.itemIds.map(String));
+  if (!playlistIds.size) {
+    return [];
+  }
+
+  return items.filter((item) => {
+    const id = item?.id ?? item?.videoId;
+    const normalizedId = id == null ? "" : String(id).trim();
+    return normalizedId ? playlistIds.has(normalizedId) : false;
+  });
+}
+
 /**
  * Checks if we're currently on a profile or collection page
- * @returns {Object} { isProfile: boolean, isCollection: boolean, collectionName: string }
+ * @returns {Object} { isProfile: boolean, isCollection: boolean, collectionName: string, isPlaylist: boolean, playlistName: string, playlistId: string }
  */
 export function isOnProfileOrCollectionPage() {
   const path = window.location.pathname;
@@ -61,13 +254,18 @@ export function isOnProfileOrCollectionPage() {
   const subPath = profileMatch?.[2] || "";
   // Valid profile sub-paths are: none, /, or /collection/...
   // Invalid: /video/..., /live/..., /photo/..., etc.
-  const invalidSubPaths = /^\/(video|live|photo|playlist)\//;
+  const invalidSubPaths = /^\/(video|live|photo)\//;
   const isProfile = !!profileMatch && !invalidSubPaths.test(subPath);
 
   // Check if it's a collection page: /@username/collection/collection-name
-  const collectionMatch = path.match(/\/@[^/]+\/collection\/([^/]+)/);
+  const collectionMatch = path.match(/\/@[^/]+\/collection\/([^/?#]+)/);
   const isCollection = !!collectionMatch;
   let collectionName = "";
+
+  const playlistMatch = path.match(/^\/@[^/]+\/playlist\/([^/?#]+)/);
+  const isPlaylist = !!playlistMatch;
+  let playlistName = "";
+  let playlistId = "";
 
   if (isCollection && collectionMatch) {
     try {
@@ -78,10 +276,19 @@ export function isOnProfileOrCollectionPage() {
     }
   }
 
+  if (isPlaylist && playlistMatch) {
+    const parsed = decodeNamedEntitySlug(playlistMatch[1], "Playlist");
+    playlistName = parsed.name;
+    playlistId = parsed.id;
+  }
+
   return {
-    isProfile: isProfile || isCollection, // Collection pages are also profile pages
+    isProfile: isProfile || isCollection || isPlaylist,
     isCollection,
     collectionName,
+    isPlaylist,
+    playlistName,
+    playlistId,
   };
 }
 
@@ -90,16 +297,16 @@ export function isOnProfileOrCollectionPage() {
  * @returns {string} Tab name (videos, reposts, liked, favorites, or collection name)
  */
 export function detectCurrentTabName() {
+  const pageInfo = isOnProfileOrCollectionPage();
+
   // First check if scrapper has selected tab
   if (AppState.scrapperDetails.selectedTab) {
     // If it's a collection tab, use the actual collection name
     if (AppState.scrapperDetails.selectedTab === "collection") {
       const collectionName =
         AppState.scrapperDetails.selectedCollectionName ||
-        (() => {
-          const pageInfo = isOnProfileOrCollectionPage();
-          return pageInfo.collectionName;
-        })();
+        pageInfo.collectionName ||
+        pageInfo.playlistName;
       if (collectionName) {
         console.log("[Tab Detection] Using collection name:", collectionName);
         return collectionName;
@@ -113,13 +320,17 @@ export function detectCurrentTabName() {
   }
 
   // Check for collection page
-  const pageInfo = isOnProfileOrCollectionPage();
   if (pageInfo.isCollection && pageInfo.collectionName) {
     console.log(
       "[Tab Detection] Using collection name:",
       pageInfo.collectionName,
     );
     return pageInfo.collectionName;
+  }
+
+  if (pageInfo.isPlaylist && pageInfo.playlistName) {
+    console.log("[Tab Detection] Using playlist name:", pageInfo.playlistName);
+    return pageInfo.playlistName;
   }
 
   // Try to detect from URL or active tab
@@ -2346,6 +2557,8 @@ export function displayFoundUrls({ forced } = {}) {
       console.log("ettvdebugger: displayFoundUrls called", { forced });
     }
 
+    const pageInfo = syncPlaylistStateWithLocation();
+
     // Anti flickering
     if (
       !forced &&
@@ -2383,7 +2596,7 @@ export function displayFoundUrls({ forced } = {}) {
       return;
     }
 
-    const items = Object.values(AppState.allItemsEverSeen).flat();
+    const items = getRenderableItemsForCurrentPage(pageInfo);
     const hashToDisplay = getDisplayedItemsHash(items);
     const path = window.location.pathname;
     if (
@@ -2428,6 +2641,8 @@ export function displayFoundUrls({ forced } = {}) {
     }
 
     if (document.body instanceof Node) {
+      AppState.allDirectLinks = [];
+
       if (items.length === 0) {
         const emptyListEl =
           updateDownloaderList([], hashToDisplay) || createDownloaderWrapper();
@@ -2444,7 +2659,6 @@ export function displayFoundUrls({ forced } = {}) {
         return;
       }
 
-      AppState.allDirectLinks = [];
       const metas = items
         .filter((it) => !(AppState.downloadPreferences.skipAds && it.isAd))
         .map((media, idx) => {
@@ -3526,6 +3740,18 @@ function shouldShowRateDonatePopup() {
 export async function getTabSpans(timeoutMs = 5000, intervalMs = 100) {
   const start = Date.now();
   const path = window.location.pathname;
+
+  const playlistMatch = path.match(/^\/@[^/]+\/playlist\/([^/?#]+)/);
+  if (playlistMatch) {
+    const parsed = decodeNamedEntitySlug(playlistMatch[1], "Playlist");
+    return {
+      videos: null,
+      reposts: null,
+      liked: null,
+      favorites: null,
+      collection: parsed.name,
+    };
+  }
 
   const isProfile = /^\/@[^/]+\/?$/.test(path);
 

@@ -36,7 +36,10 @@ import {
   downloadBatch,
   sleep,
   saveCSVFile,
+  findRecentPlaylistRequestUrl,
+  rememberCurrentPlaylistItems,
   isOnProfileOrCollectionPage,
+  syncPlaylistStateWithLocation,
 } from "../utils/utils.js";
 import { DOM_IDS, STORAGE_KEYS } from "../state/constants.js";
 import { isExtensionEnabledSync } from "../utils/extensionState.js";
@@ -169,6 +172,12 @@ const uiTasks = [
   createTask("scan-and-inject", scanAndInject, 1500),
   createTask("auto-next-listener", autoNextOnVideoEnded, 2500),
   createTask("initial-data", pollInitialData, 4000),
+  createTask(
+    "playlist-data",
+    pollPlaylistData,
+    3500,
+    () => isOnProfileOrCollectionPage().isPlaylist,
+  ),
 ];
 
 let uiFrameHandle = null;
@@ -276,6 +285,61 @@ export function pollInitialData() {
     }
   } catch (err) {
     console.error(err);
+  }
+}
+
+async function pollPlaylistData() {
+  const pageInfo = syncPlaylistStateWithLocation();
+  if (!pageInfo.isPlaylist || !pageInfo.playlistId) {
+    return;
+  }
+
+  if (AppState.playlist.isHydrating) {
+    return;
+  }
+
+  const requestUrl = findRecentPlaylistRequestUrl(pageInfo.playlistId);
+  if (!requestUrl) {
+    return;
+  }
+
+  const shouldHydrate =
+    !AppState.playlist.itemIds.length ||
+    Date.now() - (AppState.playlist.lastHydratedAt || 0) > 15000;
+
+  if (!shouldHydrate) {
+    return;
+  }
+
+  AppState.playlist.isHydrating = true;
+
+  try {
+    const response = await fetch(requestUrl, {
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      throw new Error(`Playlist request failed with HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!Array.isArray(data?.itemList) || data.itemList.length === 0) {
+      return;
+    }
+
+    rememberCurrentPlaylistItems(
+      data.itemList,
+      pageInfo.playlistId,
+      requestUrl,
+    );
+    AppState.playlist.lastHydratedAt = Date.now();
+    handleFoundItems(data.itemList.filter((item) => item?.id));
+  } catch (error) {
+    if (AppState.debug.active) {
+      console.warn("Failed to hydrate playlist items:", error);
+    }
+  } finally {
+    AppState.playlist.isHydrating = false;
   }
 }
 

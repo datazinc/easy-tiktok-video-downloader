@@ -2794,6 +2794,42 @@ label[for="ettpd-current-profile"] {
   box-shadow: 0 14px 32px var(--ettpd-shadow);
 }
 
+.ettpd-playlist-header-btn {
+  appearance: none;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: linear-gradient(135deg, #fe2c55, #ff7a45);
+  color: #ffffff;
+  min-height: 36px;
+  padding: 0 14px;
+  margin-left: 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 12px 24px rgba(254, 44, 85, 0.2);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    opacity 0.2s ease;
+  white-space: nowrap;
+}
+
+.ettpd-playlist-header-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px rgba(254, 44, 85, 0.28);
+}
+
+.ettpd-playlist-header-btn:disabled {
+  cursor: wait;
+  opacity: 0.72;
+  box-shadow: none;
+}
+
 .ettpd-action-btn.secondary {
   background: var(--ettpd-bg-tertiary);
   color: var(--ettpd-text-primary);

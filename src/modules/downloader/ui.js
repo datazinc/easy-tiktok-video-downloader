@@ -46,6 +46,7 @@ import {
   stopActiveBatchDownload,
   findFiberItemById,
   findFiberItemsInContainer,
+  syncPlaylistStateWithLocation,
 } from "../utils/utils.js";
 import {
   startAutoSwipeLoop,
@@ -3034,6 +3035,10 @@ function showAbandonScrappingModal() {
 function updateDownloadAllButtonState(btn, items = []) {
   if (!btn) return;
 
+  const syncPlaylistButton = () => {
+    syncPlaylistHeaderActionButton();
+  };
+
   const scrapperBoxOpen = AppState.ui.isScrapperBoxOpen;
   const scrappingStage = AppState.scrapperDetails.scrappingStage;
   const selectedTab = AppState.scrapperDetails.selectedTab;
@@ -3072,7 +3077,10 @@ function updateDownloadAllButtonState(btn, items = []) {
     ? container.querySelector("#" + DOM_IDS.DOWNLOAD_ALL_BUTTON + "-stop")
     : null;
 
-  if (!actualBtn) return;
+  if (!actualBtn) {
+    syncPlaylistButton();
+    return;
+  }
 
   // Show container
   if (container) container.style.display = "block";
@@ -3092,6 +3100,7 @@ function updateDownloadAllButtonState(btn, items = []) {
         message.style.display = "block";
         populateScrapperTabPicker(message);
       }
+      syncPlaylistButton();
       return;
     }
     if (scrapperSelectedNotStarted) {
@@ -3103,6 +3112,7 @@ function updateDownloadAllButtonState(btn, items = []) {
         message.style.display = "block";
         populateScrapperTabPicker(message);
       }
+      syncPlaylistButton();
       return;
     }
     // If scrapper box is open but scrapping is not active and no tab selected,
@@ -3125,6 +3135,7 @@ function updateDownloadAllButtonState(btn, items = []) {
       message.style.display = "block";
       populateScrapperTabPicker(message);
     }
+    syncPlaylistButton();
     return;
   }
 
@@ -3151,6 +3162,7 @@ function updateDownloadAllButtonState(btn, items = []) {
       stopBtn.style.display = "none";
       stopBtn.disabled = true;
     }
+    syncPlaylistButton();
     return;
   }
 
@@ -3191,6 +3203,7 @@ function updateDownloadAllButtonState(btn, items = []) {
       stopBtn.style.display = "inline-flex";
       stopBtn.disabled = false;
     }
+    syncPlaylistButton();
     return;
   }
 
@@ -3210,6 +3223,7 @@ function updateDownloadAllButtonState(btn, items = []) {
     stopBtn.style.display = "none";
     stopBtn.disabled = true;
   }
+  syncPlaylistButton();
 }
 
 export function updateDownloadButtonLabel(btnElement, text) {
@@ -3225,7 +3239,10 @@ export function updateDownloadButtonLabel(btnElement, text) {
 
 export function updateDownloadButtonLabelSimple() {
   const downloadAllBtn = document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
-  if (!downloadAllBtn) return;
+  if (!downloadAllBtn) {
+    syncPlaylistHeaderActionButton();
+    return;
+  }
 
   const scrappingStage = AppState.scrapperDetails.scrappingStage;
   const scrapperBoxOpen = AppState.ui.isScrapperBoxOpen;
@@ -3265,6 +3282,7 @@ export function updateDownloadButtonLabelSimple() {
       if (pauseBtn) pauseBtn.style.display = "none";
       if (stopBtn) stopBtn.style.display = "none";
       if (message) message.style.display = "block";
+      syncPlaylistHeaderActionButton();
       return;
     }
   }
@@ -3299,6 +3317,7 @@ export function updateDownloadButtonLabelSimple() {
       stopBtn.style.display = "none";
       stopBtn.disabled = true;
     }
+    syncPlaylistHeaderActionButton();
     return;
   }
 
@@ -3378,6 +3397,158 @@ export function updateDownloadButtonLabelSimple() {
       stopBtn.disabled = true;
     }
   }
+
+  syncPlaylistHeaderActionButton();
+}
+
+const PLAYLIST_HEADER_BUTTON_ID = "ettpd-playlist-download-header-btn";
+
+function getCurrentPlaylistDirectLinks() {
+  const playlistIds = new Set(AppState.playlist.itemIds.map(String));
+  if (!playlistIds.size) {
+    return [];
+  }
+
+  return (AppState.allDirectLinks || []).filter((item) => {
+    const id = item?.videoId ?? item?.id;
+    const normalizedId = id == null ? "" : String(id).trim();
+    return normalizedId ? playlistIds.has(normalizedId) : false;
+  });
+}
+
+function removePlaylistHeaderActionButton() {
+  document.getElementById(PLAYLIST_HEADER_BUTTON_ID)?.remove();
+}
+
+function findPlaylistShareActionElement() {
+  const isNativePageAction = (element) => {
+    if (!(element instanceof HTMLElement) || !element.offsetParent) {
+      return false;
+    }
+
+    return !element.closest("#" + DOM_IDS.DOWNLOADER_WRAPPER);
+  };
+
+  const selectorCandidates = [
+    'button[data-e2e*="share"]',
+    '[data-e2e*="share"] button',
+    'button[aria-label*="Share"]',
+    '[role="button"][aria-label*="Share"]',
+  ];
+
+  for (const selector of selectorCandidates) {
+    const element = Array.from(document.querySelectorAll(selector)).find(
+      isNativePageAction,
+    );
+    if (element instanceof HTMLElement) {
+      return element.closest('button, [role="button"], a') || element;
+    }
+  }
+
+  return (
+    Array.from(document.querySelectorAll('button, [role="button"], a')).find(
+      (element) => {
+        if (!isNativePageAction(element)) {
+          return false;
+        }
+
+        const label =
+          element.getAttribute("aria-label") ||
+          element.textContent ||
+          element.getAttribute("data-e2e") ||
+          "";
+
+        return /\bshare\b/i.test(label.trim());
+      },
+    ) || null
+  );
+}
+
+function getPlaylistHeaderButtonState() {
+  const playlistItems = getCurrentPlaylistDirectLinks();
+  const total = playlistItems.length;
+  const done = Math.min(AppState.downloadedURLs.length, total);
+
+  if (AppState.downloading.isDownloadingAll) {
+    if (!total) {
+      return {
+        label: "Downloading Playlist…",
+        icon: "hourglass",
+        disabled: true,
+      };
+    }
+
+    return {
+      label:
+        done < total ? `Downloading ${done}/${total}` : `Downloaded ${total}`,
+      icon: done < total ? "hourglass" : "check",
+      disabled: true,
+    };
+  }
+
+  if (!total) {
+    return {
+      label: "Loading Playlist…",
+      icon: "hourglass",
+      disabled: true,
+    };
+  }
+
+  return {
+    label: `Download Playlist (${total})`,
+    icon: "down",
+    disabled: false,
+  };
+}
+
+function syncPlaylistHeaderActionButton() {
+  const pageInfo = syncPlaylistStateWithLocation();
+  if (!pageInfo.isPlaylist) {
+    removePlaylistHeaderActionButton();
+    return;
+  }
+
+  const shareAction = findPlaylistShareActionElement();
+  if (!(shareAction instanceof HTMLElement) || !shareAction.parentElement) {
+    return;
+  }
+
+  let button = document.getElementById(PLAYLIST_HEADER_BUTTON_ID);
+  if (!button) {
+    button = document.createElement("button");
+    button.id = PLAYLIST_HEADER_BUTTON_ID;
+    button.type = "button";
+    button.className = "ettpd-playlist-header-btn";
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (AppState.downloading.isDownloadingAll) {
+        return;
+      }
+
+      if (!getCurrentPlaylistDirectLinks().length) {
+        showToast(
+          "Playlist still loading",
+          "Wait a moment for the playlist posts to load, then try again.",
+        );
+        return;
+      }
+
+      await downloadAllLinks(button);
+      syncPlaylistHeaderActionButton();
+    });
+  }
+
+  if (button.parentElement !== shareAction.parentElement) {
+    button.remove();
+    shareAction.parentElement.insertBefore(button, shareAction.nextSibling);
+  }
+
+  const state = getPlaylistHeaderButtonState();
+  setButtonWithIcon(button, state.label, state.icon);
+  button.disabled = state.disabled;
+  button.dataset.playlistId = pageInfo.playlistId || "";
 }
 
 function createCurrentVideoButton() {
@@ -7824,6 +7995,7 @@ export function attachDownloadButtons() {
   injectYouMayLikeGridDownloadButtons();
   // injectImageFeedDownloadButtons(); // optional
   downloadBtnInjectorForMainVideoSideGrid();
+  syncPlaylistHeaderActionButton();
 }
 
 /**
