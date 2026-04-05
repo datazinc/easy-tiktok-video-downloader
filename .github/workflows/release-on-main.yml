@@ -57,15 +57,16 @@ jobs:
           rm -rf distchrome release-artifacts
           mkdir -p distchrome release-artifacts
 
-          cp dist/dist.zip "release-artifacts/easy-tiktok-video-downloader-v${VERSION}-chromium.zip"
-          cp distff/distff.zip "release-artifacts/easy-tiktok-video-downloader-v${VERSION}-firefox.zip"
+          cp dist.zip "release-artifacts/easy-tiktok-video-downloader-v${VERSION}-chromium.zip"
+          cp distff.zip "release-artifacts/easy-tiktok-video-downloader-v${VERSION}-firefox.zip"
 
           cp -R dist/. distchrome/
           cp manifest.json.chrome distchrome/manifest.json
+          find distchrome -maxdepth 1 -type f -name '*.zip' -delete
 
           (
             cd distchrome
-            zip -r "../release-artifacts/easy-tiktok-video-downloader-v${VERSION}-chrome.zip" . -x '__MACOSX/*' -x '.*'
+            zip -r "../release-artifacts/easy-tiktok-video-downloader-v${VERSION}-chrome.zip" . -x '__MACOSX/*' -x '.*' -x '*.zip'
           )
 
       - name: Publish GitHub release
