@@ -36,7 +36,16 @@ function renderFooterMeta() {
 
   const year = new Date().getFullYear();
   const version = getExtensionVersion();
-  footerMeta.innerHTML = `v${version} © ${year} <a href="https://linktr.ee/aimuhire" target="_blank" rel="noopener noreferrer">linktr.ee/aimuhire</a>`;
+
+  footerMeta.replaceChildren();
+  footerMeta.append(`v${version} © ${year} `);
+
+  const link = document.createElement("a");
+  link.href = "https://linktr.ee/aimuhire";
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = "linktr.ee/aimuhire";
+  footerMeta.appendChild(link);
 }
 
 renderFooterMeta();
@@ -668,8 +677,13 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
 
   async function renderPastDownloads() {
     try {
-      pastDownloadsContent.innerHTML =
-        '<p style="text-align: center; color: #666; padding: 20px;">Loading...</p>';
+      pastDownloadsContent.replaceChildren();
+      const loading = document.createElement("p");
+      loading.style.textAlign = "center";
+      loading.style.color = "#666";
+      loading.style.padding = "20px";
+      loading.textContent = "Loading...";
+      pastDownloadsContent.appendChild(loading);
 
       console.log("[Past Downloads] Loading progress from storage...");
       const progress = await progressStorage.getAllProgress();
@@ -681,282 +695,332 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
       console.log("[Past Downloads] Usernames found:", usernames);
 
       if (usernames.length === 0) {
-        pastDownloadsContent.innerHTML = `
-          <div style="text-align: center; padding: 40px 20px; color: #666;">
-            <p style="font-size: 16px; margin-bottom: 10px;">No downloads yet</p>
-            <p style="font-size: 13px;">Start downloading videos to see them here!</p>
-          </div>
-        `;
+        pastDownloadsContent.replaceChildren();
+
+        const emptyState = document.createElement("div");
+        emptyState.style.textAlign = "center";
+        emptyState.style.padding = "40px 20px";
+        emptyState.style.color = "#666";
+
+        const title = document.createElement("p");
+        title.style.fontSize = "16px";
+        title.style.marginBottom = "10px";
+        title.textContent = "No downloads yet";
+
+        const subtitle = document.createElement("p");
+        subtitle.style.fontSize = "13px";
+        subtitle.textContent = "Start downloading videos to see them here!";
+
+        emptyState.append(title, subtitle);
+        pastDownloadsContent.appendChild(emptyState);
         return;
       }
 
-      let html = '<div class="past-downloads-scroll">';
+      const scrollContainer = document.createElement("div");
+      scrollContainer.className = "past-downloads-scroll";
 
       usernames.forEach((username) => {
         const userData = progress[username];
-        // Filter out _metadata key - it's not a tab
         const tabs = Object.keys(userData)
           .filter((key) => key !== "_metadata")
           .sort();
 
-        html += `
-          <div class="past-downloads-user">
-            <div class="past-downloads-user-head">
-              <div class="past-downloads-username">@${username}</div>
-              <button class="clear-user-btn ghost" data-username="${username}">
-                🗑️ Clear All
-              </button>
-            </div>
-            <div class="past-downloads-tabs">
-        `;
+        const userSection = document.createElement("div");
+        userSection.className = "past-downloads-user";
+
+        const userHead = document.createElement("div");
+        userHead.className = "past-downloads-user-head";
+
+        const usernameLabel = document.createElement("div");
+        usernameLabel.className = "past-downloads-username";
+        usernameLabel.textContent = `@${username}`;
+
+        const clearUserBtn = document.createElement("button");
+        clearUserBtn.className = "clear-user-btn ghost";
+        clearUserBtn.dataset.username = username;
+        clearUserBtn.textContent = "🗑️ Clear All";
+
+        userHead.append(usernameLabel, clearUserBtn);
+
+        const tabsContainer = document.createElement("div");
+        tabsContainer.className = "past-downloads-tabs";
 
         tabs.forEach((tabName) => {
           const videoIds = userData[tabName] || [];
           const count = Array.isArray(videoIds) ? videoIds.length : 0;
 
-          html += `
-            <div class="past-downloads-tab">
-              <div class="past-downloads-tab-meta">
-                <span class="past-downloads-tab-label">${formatTabName(
-                  tabName,
-                )}</span>
-                <span class="past-downloads-tab-count">${count} items</span>
-              </div>
-              <div class="past-downloads-tab-actions">
-                <button class="download-csv-btn ghost" data-username="${username}" data-tab="${tabName}" title="Download CSV">
-                  📥 CSV
-                </button>
-                <button class="resume-download-btn ghost" data-username="${username}" data-tab="${tabName}" title="Resume Download">
-                  ▶️ Resume
-                </button>
-                <button class="clear-tab-btn ghost" data-username="${username}" data-tab="${tabName}">
-                  Clear
-                </button>
-              </div>
-            </div>
-          `;
+          const tabSection = document.createElement("div");
+          tabSection.className = "past-downloads-tab";
+
+          const tabMeta = document.createElement("div");
+          tabMeta.className = "past-downloads-tab-meta";
+
+          const tabLabel = document.createElement("span");
+          tabLabel.className = "past-downloads-tab-label";
+          tabLabel.textContent = formatTabName(tabName);
+
+          const tabCount = document.createElement("span");
+          tabCount.className = "past-downloads-tab-count";
+          tabCount.textContent = `${count} items`;
+
+          tabMeta.append(tabLabel, tabCount);
+
+          const actions = document.createElement("div");
+          actions.className = "past-downloads-tab-actions";
+
+          const downloadCsvBtn = document.createElement("button");
+          downloadCsvBtn.className = "download-csv-btn ghost";
+          downloadCsvBtn.dataset.username = username;
+          downloadCsvBtn.dataset.tab = tabName;
+          downloadCsvBtn.title = "Download CSV";
+          downloadCsvBtn.textContent = "📥 CSV";
+
+          const resumeDownloadBtn = document.createElement("button");
+          resumeDownloadBtn.className = "resume-download-btn ghost";
+          resumeDownloadBtn.dataset.username = username;
+          resumeDownloadBtn.dataset.tab = tabName;
+          resumeDownloadBtn.title = "Resume Download";
+          resumeDownloadBtn.textContent = "▶️ Resume";
+
+          const clearTabBtn = document.createElement("button");
+          clearTabBtn.className = "clear-tab-btn ghost";
+          clearTabBtn.dataset.username = username;
+          clearTabBtn.dataset.tab = tabName;
+          clearTabBtn.textContent = "Clear";
+
+          actions.append(downloadCsvBtn, resumeDownloadBtn, clearTabBtn);
+          tabSection.append(tabMeta, actions);
+          tabsContainer.appendChild(tabSection);
         });
 
-        html += `
-            </div>
-          </div>
-        `;
+        userSection.append(userHead, tabsContainer);
+        scrollContainer.appendChild(userSection);
       });
 
-      html += "</div>";
+      const footer = document.createElement("div");
+      footer.className = "past-downloads-footer";
 
-      html += `
-        <div class="past-downloads-footer">
-          <button id="clearAllBtn" class="btn danger">
-            🗑️ Clear All Downloads
-          </button>
-        </div>
-      `;
+      const clearAllBtn = document.createElement("button");
+      clearAllBtn.id = "clearAllBtn";
+      clearAllBtn.className = "btn danger";
+      clearAllBtn.textContent = "🗑️ Clear All Downloads";
+      footer.appendChild(clearAllBtn);
 
-      pastDownloadsContent.innerHTML = html;
+      pastDownloadsContent.replaceChildren(scrollContainer, footer);
 
       // Attach event listeners
-      document.querySelectorAll(".clear-user-btn").forEach((btn) => {
-        btn.addEventListener("click", async (e) => {
-          const username = e.target.dataset.username;
-          if (confirm(`Clear all downloads for @${username}?`)) {
-            await progressStorage.clearUser(username);
-            renderPastDownloads();
-          }
+      pastDownloadsContent
+        .querySelectorAll(".clear-user-btn")
+        .forEach((btn) => {
+          btn.addEventListener("click", async (e) => {
+            const username = e.target.dataset.username;
+            if (confirm(`Clear all downloads for @${username}?`)) {
+              await progressStorage.clearUser(username);
+              renderPastDownloads();
+            }
+          });
         });
-      });
 
       // CSV Download buttons
-      document.querySelectorAll(".download-csv-btn").forEach((btn) => {
-        btn.addEventListener("click", async (e) => {
-          const username = e.target.dataset.username;
-          const tabName = e.target.dataset.tab;
-          try {
-            const videoIds = await progressStorage.getProgress(
-              username,
-              tabName,
-            );
-
-            if (!videoIds || videoIds.length === 0) {
-              alert("No items to export");
-              return;
-            }
-
-            // Create CSV content
-            const headers = [
-              "index",
-              "videoId",
-              "imageIndex",
-              "username",
-              "tab",
-            ];
-            const rows = videoIds.map((videoId, index) => {
-              // Handle image posts with sequence numbers (videoId:sequence)
-              let baseVideoId = videoId;
-              let imageIndex = "";
-              if (videoId.includes(":")) {
-                const parts = videoId.split(":");
-                baseVideoId = parts[0];
-                imageIndex = parts[1] || "";
-              }
-
-              const row = [
-                index + 1,
-                baseVideoId,
-                imageIndex,
+      pastDownloadsContent
+        .querySelectorAll(".download-csv-btn")
+        .forEach((btn) => {
+          btn.addEventListener("click", async (e) => {
+            const username = e.target.dataset.username;
+            const tabName = e.target.dataset.tab;
+            try {
+              const videoIds = await progressStorage.getProgress(
                 username,
                 tabName,
+              );
+
+              if (!videoIds || videoIds.length === 0) {
+                alert("No items to export");
+                return;
+              }
+
+              // Create CSV content
+              const headers = [
+                "index",
+                "videoId",
+                "imageIndex",
+                "username",
+                "tab",
               ];
-              return row
-                .map((val) => `"${String(val).replace(/"/g, '""')}"`)
-                .join(",");
-            });
+              const rows = videoIds.map((videoId, index) => {
+                // Handle image posts with sequence numbers (videoId:sequence)
+                let baseVideoId = videoId;
+                let imageIndex = "";
+                if (videoId.includes(":")) {
+                  const parts = videoId.split(":");
+                  baseVideoId = parts[0];
+                  imageIndex = parts[1] || "";
+                }
 
-            const csvContent = [headers.join(","), ...rows].join("\n");
-            const blob = new Blob([csvContent], {
-              type: "text/csv;charset=utf-8;",
-            });
-            const url = URL.createObjectURL(blob);
-            const sanitizedUsername = username.replace(/[^a-zA-Z0-9_]/g, "_");
-            const sanitizedTab = tabName.replace(/[^a-zA-Z0-9_]/g, "_");
-            const filename = `downloads_${sanitizedUsername}_${sanitizedTab}_${new Date().toISOString().split("T")[0]}.csv`;
+                const row = [
+                  index + 1,
+                  baseVideoId,
+                  imageIndex,
+                  username,
+                  tabName,
+                ];
+                return row
+                  .map((val) => `"${String(val).replace(/"/g, '""')}"`)
+                  .join(",");
+              });
 
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = filename;
-            a.click();
-            URL.revokeObjectURL(url);
+              const csvContent = [headers.join(","), ...rows].join("\n");
+              const blob = new Blob([csvContent], {
+                type: "text/csv;charset=utf-8;",
+              });
+              const url = URL.createObjectURL(blob);
+              const sanitizedUsername = username.replace(/[^a-zA-Z0-9_]/g, "_");
+              const sanitizedTab = tabName.replace(/[^a-zA-Z0-9_]/g, "_");
+              const filename = `downloads_${sanitizedUsername}_${sanitizedTab}_${new Date().toISOString().split("T")[0]}.csv`;
 
-            // Close popup after successful CSV download
-            setTimeout(() => {
-              window.close();
-            }, 100);
-          } catch (err) {
-            console.error("Failed to export CSV:", err);
-            alert("Failed to export CSV: " + (err.message || "Unknown error"));
-          }
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = filename;
+              a.click();
+              URL.revokeObjectURL(url);
+
+              // Close popup after successful CSV download
+              setTimeout(() => {
+                window.close();
+              }, 100);
+            } catch (err) {
+              console.error("Failed to export CSV:", err);
+              alert(
+                "Failed to export CSV: " + (err.message || "Unknown error"),
+              );
+            }
+          });
         });
-      });
 
       // Resume Download buttons
-      document.querySelectorAll(".resume-download-btn").forEach((btn) => {
-        btn.addEventListener("click", async (e) => {
-          const username = e.target.dataset.username;
-          const tabName = e.target.dataset.tab;
+      pastDownloadsContent
+        .querySelectorAll(".resume-download-btn")
+        .forEach((btn) => {
+          btn.addEventListener("click", async (e) => {
+            const username = e.target.dataset.username;
+            const tabName = e.target.dataset.tab;
 
-          try {
-            // Get the active tab
-            const tabs = await chrome.tabs.query({
-              active: true,
-              currentWindow: true,
-            });
-            if (!tabs[0]) {
-              alert("Please open a TikTok page first");
-              return;
-            }
+            try {
+              // Get the active tab
+              const tabs = await chrome.tabs.query({
+                active: true,
+                currentWindow: true,
+              });
+              if (!tabs[0]) {
+                alert("Please open a TikTok page first");
+                return;
+              }
 
-            const currentUrl = tabs[0].url;
-            const isCollection =
-              tabName !== "videos" &&
-              tabName !== "liked" &&
-              tabName !== "favorites" &&
-              tabName !== "reposts";
+              const currentUrl = tabs[0].url;
+              const isCollection =
+                tabName !== "videos" &&
+                tabName !== "liked" &&
+                tabName !== "favorites" &&
+                tabName !== "reposts";
 
-            // Get collection URL if this is a collection
-            let collectionUrl = null;
-            if (isCollection) {
-              try {
-                // Request collection URL from background script
-                const response = await new Promise((resolve) => {
-                  chrome.runtime.sendMessage(
-                    { action: "getCollectionUrl", username, tabName },
-                    (resp) => {
-                      if (chrome.runtime.lastError) {
-                        console.warn(
-                          "Failed to get collection URL:",
-                          chrome.runtime.lastError,
-                        );
-                        resolve(null);
-                      } else {
-                        resolve(resp?.collectionUrl || null);
-                      }
-                    },
+              // Get collection URL if this is a collection
+              let collectionUrl = null;
+              if (isCollection) {
+                try {
+                  // Request collection URL from background script
+                  const response = await new Promise((resolve) => {
+                    chrome.runtime.sendMessage(
+                      { action: "getCollectionUrl", username, tabName },
+                      (resp) => {
+                        if (chrome.runtime.lastError) {
+                          console.warn(
+                            "Failed to get collection URL:",
+                            chrome.runtime.lastError,
+                          );
+                          resolve(null);
+                        } else {
+                          resolve(resp?.collectionUrl || null);
+                        }
+                      },
+                    );
+                  });
+                  collectionUrl = response;
+                } catch (err) {
+                  console.warn("Failed to retrieve collection URL:", err);
+                }
+              }
+
+              // Determine target URL
+              let targetUrl;
+              if (isCollection && collectionUrl) {
+                // Use the stored collection URL
+                targetUrl = `https://www.tiktok.com${collectionUrl}`;
+              } else {
+                // Fall back to profile URL
+                targetUrl = `https://www.tiktok.com/@${username}`;
+              }
+
+              const resumePayload = {
+                username,
+                tabName,
+                isCollection,
+                collectionUrl,
+              };
+
+              // Navigate to the target URL if not already there
+              if (
+                !currentUrl.includes(
+                  targetUrl.replace("https://www.tiktok.com", ""),
+                )
+              ) {
+                await chrome.tabs.update(tabs[0].id, { url: targetUrl });
+                const pageReady = await waitForTabComplete(
+                  tabs[0].id,
+                  targetUrl,
+                );
+                if (!pageReady) {
+                  alert(
+                    "The TikTok page took too long to load. Please try again once it finishes loading.",
                   );
-                });
-                collectionUrl = response;
-              } catch (err) {
-                console.warn("Failed to retrieve collection URL:", err);
-              }
-            }
+                  return;
+                }
 
-            // Determine target URL
-            let targetUrl;
-            if (isCollection && collectionUrl) {
-              // Use the stored collection URL
-              targetUrl = `https://www.tiktok.com${collectionUrl}`;
-            } else {
-              // Fall back to profile URL
-              targetUrl = `https://www.tiktok.com/@${username}`;
-            }
-
-            const resumePayload = {
-              username,
-              tabName,
-              isCollection,
-              collectionUrl,
-            };
-
-            // Navigate to the target URL if not already there
-            if (
-              !currentUrl.includes(
-                targetUrl.replace("https://www.tiktok.com", ""),
-              )
-            ) {
-              await chrome.tabs.update(tabs[0].id, { url: targetUrl });
-              const pageReady = await waitForTabComplete(tabs[0].id, targetUrl);
-              if (!pageReady) {
-                alert(
-                  "The TikTok page took too long to load. Please try again once it finishes loading.",
+                const sent = await sendResumeMessageWithRetry(
+                  tabs[0].id,
+                  resumePayload,
                 );
-                return;
-              }
 
-              const sent = await sendResumeMessageWithRetry(
-                tabs[0].id,
-                resumePayload,
-              );
+                if (!sent) {
+                  alert(
+                    "Failed to trigger resume after navigation. Please refresh the page and try again.",
+                  );
+                  return;
+                }
 
-              if (!sent) {
-                alert(
-                  "Failed to trigger resume after navigation. Please refresh the page and try again.",
+                window.close();
+              } else {
+                const sent = await sendResumeMessageWithRetry(
+                  tabs[0].id,
+                  resumePayload,
                 );
-                return;
+
+                if (!sent) {
+                  alert(
+                    "Failed to trigger download. Please refresh the page and try again.",
+                  );
+                  return;
+                }
+
+                window.close();
               }
-
-              window.close();
-            } else {
-              const sent = await sendResumeMessageWithRetry(
-                tabs[0].id,
-                resumePayload,
-              );
-
-              if (!sent) {
-                alert(
-                  "Failed to trigger download. Please refresh the page and try again.",
-                );
-                return;
-              }
-
-              window.close();
+            } catch (err) {
+              console.error("Failed to resume download:", err);
+              alert("Failed to resume download. Please try again.");
             }
-          } catch (err) {
-            console.error("Failed to resume download:", err);
-            alert("Failed to resume download. Please try again.");
-          }
+          });
         });
-      });
 
-      document.querySelectorAll(".clear-tab-btn").forEach((btn) => {
+      pastDownloadsContent.querySelectorAll(".clear-tab-btn").forEach((btn) => {
         btn.addEventListener("click", async (e) => {
           const username = e.target.dataset.username;
           const tabName = e.target.dataset.tab;
@@ -971,7 +1035,6 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
         });
       });
 
-      const clearAllBtn = document.getElementById("clearAllBtn");
       if (clearAllBtn) {
         clearAllBtn.addEventListener("click", async () => {
           if (confirm("Clear ALL downloads history? This cannot be undone.")) {
@@ -982,11 +1045,18 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
       }
     } catch (err) {
       console.error("Failed to render past downloads:", err);
-      pastDownloadsContent.innerHTML = `
-        <div style="text-align: center; padding: 20px; color: #ff3b30;">
-          <p>Error loading downloads history</p>
-        </div>
-      `;
+      pastDownloadsContent.replaceChildren();
+
+      const errorState = document.createElement("div");
+      errorState.style.textAlign = "center";
+      errorState.style.padding = "20px";
+      errorState.style.color = "#ff3b30";
+
+      const errorText = document.createElement("p");
+      errorText.textContent = "Error loading downloads history";
+      errorState.appendChild(errorText);
+
+      pastDownloadsContent.appendChild(errorState);
     }
   }
 })();

@@ -84,6 +84,10 @@ function detectBrowser() {
   return detectBrowserFromRuntime() || detectBrowserUA();
 }
 
+function supportsUninstallTelemetry() {
+  return detectBrowser() !== "firefox";
+}
+
 function isArrayBuffer(value) {
   return (
     value instanceof ArrayBuffer ||
@@ -787,10 +791,18 @@ function buildFormURL(params) {
 
 // ——— lifecycle ———
 chrome.runtime.onInstalled.addListener(async () => {
+  if (!supportsUninstallTelemetry()) {
+    return;
+  }
+
   await ensureInstallMeta();
 });
 
 async function refreshUninstallURL() {
+  if (!supportsUninstallTelemetry()) {
+    return;
+  }
+
   const { installedAt, anonId } = await ensureInstallMeta();
 
   const version = chrome.runtime.getManifest().version;

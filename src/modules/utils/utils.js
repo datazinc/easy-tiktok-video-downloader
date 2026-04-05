@@ -1,5 +1,6 @@
 // Utils.js
 import AppState from "../state/state.js";
+import { createHtmlFragment, replaceElementHtml } from "./html.js";
 import {
   STORAGE_KEYS,
   DOWNLOAD_FOLDER_DEFAULT,
@@ -3862,9 +3863,7 @@ export function makeOverlay(message) {
   if (!message) return null;
   const overlay = document.createElement("div");
   overlay.className = "ettpd-celebration-overlay";
-  // If you don't need HTML, prefer textContent to avoid accidental markup:
-  // overlay.textContent = message;
-  overlay.innerHTML = message;
+  overlay.textContent = message;
   document.body.appendChild(overlay);
   return overlay;
 }
@@ -4429,8 +4428,8 @@ export function showAlertModal(message, actionText = "OK", onAction = null) {
   return new Promise((resolve, _) => {
     const alertDiv = Object.assign(document.createElement("div"), {
       className: "alert",
-      innerHTML: message,
     });
+    replaceElementHtml(alertDiv, message);
 
     const actionBtn = Object.assign(document.createElement("button"), {
       className: "ettpd-action-btn",
@@ -4474,12 +4473,14 @@ function showDownloadFailureModal({ filename, url }) {
   return new Promise((resolve) => {
     const content = document.createElement("div");
     content.className = "alert";
-    content.innerHTML =
+    replaceElementHtml(
+      content,
       `⚠️ <b>Download failed.</b><br><br>` +
-      `We couldn't save <b>${fileLabel}</b> automatically.<br><br>` +
-      `This often happens with <b>private</b> or <b>Only Me</b> posts, or when TikTok makes breaking changes.<br><br>` +
-      `Try a refresh first. If that does not fix it, report the issue on Discord using the button below.<br><br>` +
-      `Choose what to do next:`;
+        `We couldn't save <b>${fileLabel}</b> automatically.<br><br>` +
+        `This often happens with <b>private</b> or <b>Only Me</b> posts, or when TikTok makes breaking changes.<br><br>` +
+        `Try a refresh first. If that does not fix it, report the issue on Discord using the button below.<br><br>` +
+        `Choose what to do next:`,
+    );
 
     const actionsContainer = document.createElement("div");
     actionsContainer.className = "ettpd-modal-button-group";
@@ -4638,7 +4639,7 @@ export function showBrowserCompatibilityAlert() {
 
   // Message
   const messageEl = document.createElement("div");
-  messageEl.innerHTML = message;
+  replaceElementHtml(messageEl, message);
   contentDiv.appendChild(messageEl);
 
   // Checkbox container

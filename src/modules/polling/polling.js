@@ -766,8 +766,14 @@ function showScrapperCompletionModal() {
 
   const tip = document.createElement("div");
   tip.className = "ettpd-completion-tip";
-  tip.innerHTML =
-    "<strong>Pro tip:</strong> Scroll a bit manually to nudge TikTok to load extra items, then hit continue to sweep them up.";
+  const tipLead = document.createElement("strong");
+  tipLead.textContent = "Pro tip:";
+  tip.appendChild(tipLead);
+  tip.appendChild(
+    document.createTextNode(
+      " Scroll a bit manually to nudge TikTok to load extra items, then hit continue to sweep them up.",
+    ),
+  );
 
   const actions = document.createElement("div");
   actions.className = "ettpd-modal-actions";

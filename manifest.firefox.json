@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Easy TikTok Video Downloader (No Watermark)",
-  "version": "5.2.0",
+  "version": "5.2.1",
   "description": "Save TikToks in bulk — your videos, likes, reposts, favorites, collections & feeds — no watermark.",
   "host_permissions": [
     "*://*.tiktok.com/*"
@@ -52,7 +52,12 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "easy-tiktok-video-downloader@aimuhire.com"
+      "id": "easy-tiktok-video-downloader@aimuhire.com",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
     }
   }
 }
