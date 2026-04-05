@@ -1,0 +1,80 @@
+name: Release Extension Builds
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify version sync
+        run: npm run verify:versions
+
+      - name: Compute release metadata
+        id: metadata
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          SHORT_SHA=$(git rev-parse --short "$GITHUB_SHA")
+          RELEASE_TAG="main-v${VERSION}-${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+          RELEASE_NAME="Main build v${VERSION} (${SHORT_SHA})"
+
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Chromium package
+        run: npm run build:prod
+
+      - name: Build Firefox package
+        run: npm run buildff:prod
+
+      - name: Assemble release assets
+        run: |
+          rm -rf distchrome release-artifacts
+          mkdir -p distchrome release-artifacts
+
+          cp dist/dist.zip "release-artifacts/easy-tiktok-video-downloader-v${VERSION}-chromium.zip"
+          cp distff/distff.zip "release-artifacts/easy-tiktok-video-downloader-v${VERSION}-firefox.zip"
+
+          cp -R dist/. distchrome/
+          cp manifest.json.chrome distchrome/manifest.json
+
+          (
+            cd distchrome
+            zip -r "../release-artifacts/easy-tiktok-video-downloader-v${VERSION}-chrome.zip" . -x '__MACOSX/*' -x '.*'
+          )
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.metadata.outputs.release_tag }}
+          name: ${{ steps.metadata.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-artifacts/*.zip

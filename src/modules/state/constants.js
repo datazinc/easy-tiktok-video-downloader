@@ -11,9 +11,17 @@ export const STORAGE_KEYS = {
   RATE_DONATE_DATA: "tik.tok::rateDonateData",
   DOWNLOADER_CUSTOM_POSITION: "tik.tok::customDownloaderPosition",
   DOWNLOADER_POSITION_TYPE: "tik.tok::downloaderPositionType",
+  THEME_MODE: "tik.tok::themeMode",
+  SHOW_BUTTON_POSITION: "tik.tok::showButtonPosition",
+  SHOW_BUTTON_HINT_SEEN: "tik.tok::showButtonHintSeen",
+  EXTENSION_ENABLED: "tik.tok::extensionEnabled",
+  BROWSER_COMPAT_ALERT_DISMISSED: "tik.tok::browserCompatAlertDismissed",
+  USE_NATIVE_DOWNLOAD: "tik.tok::useNativeDownload",
+  FILE_PATH_HINT_SEEN: "tik.tok::filePathHintSeen",
 
   // Scrapper
   SCRAPPER_DETAILS: "tik.tok::scrapperDetails",
+  PENDING_RESUME_DOWNLOAD: "tik.tok::pendingResumeDownload",
 
   // === ⬇️ Downloads Stats
   DOWNLOADS_ALL_TIME_COUNT: "tik.tok::downloads::allTimeCount", // number
@@ -57,10 +65,10 @@ export const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS = [
   {
     label: "🟢 Recommended (@folder, all core info)",
     template:
-      "@/@{authorUsername|:profile:}/{tabName}/{ad}-{authorUsername|no-author}-{createTime|-}-{sequenceNumber}-{desc:50|-}-{videoId|no-id}.mp4",
+      "@/@{authorUsername|:profile:}/{tabName}/{ad}-{authorUsername|no-author}-{createTime|-}-{sequenceNumber}-{desc:100|-}-{videoId:-4|no-id}.mp4",
     example:
       DOWNLOAD_FOLDER_DEFAULT +
-      "/@coolguy/Liked/@coolguy-2025-08-14_0110-1-BEST-BELIEVE-me-this-dude-cooked-739462775.mp4",
+      "/@coolguy/Liked/@coolguy-2025-08-14_0110-1-BEST-BELIEVE-me-this-dude-cooked-6775.mp4",
     isRecommended: true,
   },
   {
@@ -83,7 +91,7 @@ export const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS = [
   {
     label: "📢 Hashtags Folder (Weird ahh)",
     template: "hashtags/{hashtags|no-tags}/{videoId|no-id}.mp4",
-    example: "hashtags/fun-relax/739462775.mp4",
+    example: "hashtags/#fun#relax/739462775.mp4",
   },
   {
     label: "🎶 Music by Artist",

@@ -48,7 +48,11 @@ function safeParseScrapperDetails(jsonValue, fallback = {}) {
         ? "completed"
         : parsed.scrappingStage,
 
-    paused: false,
+    paused: typeof parsed.paused === "boolean" ? parsed.paused : false,
+    skipDownloaded:
+      typeof parsed.skipDownloaded === "boolean"
+        ? parsed.skipDownloaded
+        : false,
     startedAt: fixDate(parsed.startedAt),
     lastSuccessfullScrollAt: fixDate(parsed.lastSuccessfullScrollAt),
     selectedTab:
@@ -57,10 +61,28 @@ function safeParseScrapperDetails(jsonValue, fallback = {}) {
       parsed.scrappingStage == "initiated"
         ? parsed.selectedCollectionName
         : null,
+    // Track original path/username to detect navigation away
+    originalPath:
+      parsed.scrappingStage == "initiated" ? parsed.originalPath : null,
+    originalUsername:
+      parsed.scrappingStage == "initiated" ? parsed.originalUsername : null,
+    originalCollectionName:
+      parsed.scrappingStage == "initiated"
+        ? parsed.originalCollectionName
+        : null,
     scrappedPostsCount:
       typeof parsed.scrappedPostsCount === "number"
         ? parsed.scrappedPostsCount
         : 0,
+    // Batch download tracking
+    downloadedInBatches:
+      typeof parsed.downloadedInBatches === "number"
+        ? parsed.downloadedInBatches
+        : 0,
+    currentBatch:
+      typeof parsed.currentBatch === "number" ? parsed.currentBatch : 0,
+    // Reset isAutoBatchDownloading on page reload - it should start fresh
+    isAutoBatchDownloading: false,
   };
 }
 
@@ -83,6 +105,22 @@ function getStringOrNull(key) {
   }
 }
 
+function getBooleanOrNull(key, fallback = null) {
+  try {
+    const value = localStorage.getItem(key);
+    if (value === null) return fallback;
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return fallback; // invalid value, return fallback
+  } catch (e) {
+    console.warn(
+      `Failed to read boolean/null from localStorage for key ${key}:`,
+      e,
+    );
+    return fallback;
+  }
+}
+
 const AppState = {
   debug: {
     active: true,
@@ -95,7 +133,6 @@ const AppState = {
     path: "",
   },
   filters: {
-    currentProfile: false,
     likedVideos: false,
     favoriteVideos: false,
     state: "INIT",
@@ -104,21 +141,21 @@ const AppState = {
   sessionHasConfirmedDownloads: false,
   currentTierProgress: safeParseJSON(
     localStorage.getItem(STORAGE_KEYS.CURRENT_TIER_PROGRESS),
-    { downloads: 0, recommendations: 0 }
+    { downloads: 0, recommendations: 0 },
   ),
   leaderboard: {
     newlyConfirmedMedia: [],
     currentlyUpdating: false,
     lastUpdateHash: "",
     allTimeDownloadsCount: Number(
-      getStringOrNull(STORAGE_KEYS.DOWNLOADS_ALL_TIME_COUNT) || 0
+      getStringOrNull(STORAGE_KEYS.DOWNLOADS_ALL_TIME_COUNT) || 0,
     ),
     weekDownloadsData: safeParseJSON(
       localStorage.getItem(STORAGE_KEYS.DOWNLOADS_WEEKLY_DATA),
       {
         count: 0,
         weekId: "missing",
-      }
+      },
     ),
   },
   recommendationsLeaderboard: {
@@ -126,17 +163,30 @@ const AppState = {
     currentlyUpdating: false,
     lastUpdateHash: "",
     allTimeRecommendationsCount: Number(
-      localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_ALL_TIME_COUNT) || 0
+      localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_ALL_TIME_COUNT) || 0,
     ),
     weekRecommendationsData: safeParseJSON(
       localStorage.getItem(STORAGE_KEYS.RECOMMENDATIONS_WEEKLY_DATA),
-      { count: 0, weekId: "missing" }
+      { count: 0, weekId: "missing" },
     ),
+  },
+  playlist: {
+    currentId: null,
+    currentName: "",
+    requestUrl: "",
+    itemIds: [],
+    lastHydratedAt: 0,
+    lastPrimedAt: 0,
+    lastRequestSeenAt: 0,
+    isHydrating: false,
   },
   likedVideos: {},
   downloading: {
     isActive: false,
     isDownloadingAll: false,
+    pausedAll: false,
+    batchType: null,
+    activeBatchUrls: [],
   },
   ui: {
     downloaderPositionType:
@@ -145,15 +195,22 @@ const AppState = {
         ? "custom"
         : "bottom-right",
     live_ETTPD_CUSTOM_POS: getStringOrNull(
-      STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION
+      STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION,
     ),
     isPreferenceBoxOpen: false,
     isScrapperBoxOpen: false,
     isDownloaderClosed: getBooleanFromStorage(
-      STORAGE_KEYS.IS_DOWNLOADER_CLOSED
+      STORAGE_KEYS.IS_DOWNLOADER_CLOSED,
     ),
     isRatePopupOpen: false,
     isDragging: false,
+    hasSeenShowButtonHint: getBooleanFromStorage(
+      STORAGE_KEYS.SHOW_BUTTON_HINT_SEEN,
+    ),
+    hasSeenFilePathHint: getBooleanFromStorage(
+      STORAGE_KEYS.FILE_PATH_HINT_SEEN,
+    ),
+    themeMode: getStringOrNull(STORAGE_KEYS.THEME_MODE) || "system",
     autoSwipeConfigurations: {
       nextClickTimeout: null,
       countdownInterval: null,
@@ -168,10 +225,14 @@ const AppState = {
     includeCSV: false,
     fullPathTemplate: safeParseJSON(
       localStorage.getItem(STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE),
-      FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault)
+      FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault),
     ),
     showFolderPicker: getBooleanFromStorage(STORAGE_KEYS.SHOW_FOLDER_PICKER),
-    disableConfetti: getBooleanFromStorage(STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI),
+    disableConfetti: getBooleanFromStorage(
+      STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI,
+    ),
+    useNativeDownload: getBooleanOrNull(STORAGE_KEYS.USE_NATIVE_DOWNLOAD, null),
+    // null = auto (use native for Brave), true = always native, false = always chrome.downloads
   },
   rateDonate: safeParseRateDonateDates(
     localStorage.getItem(STORAGE_KEYS.RATE_DONATE_DATA),
@@ -180,7 +241,7 @@ const AppState = {
       lastRatedAt: null,
       lastShownAt: null,
       shownCount: 0,
-    }
+    },
   ),
   scrapperDetails: safeParseScrapperDetails(
     localStorage.getItem(STORAGE_KEYS.SCRAPPER_DETAILS),
@@ -193,7 +254,11 @@ const AppState = {
       selectedCollectionName: null,
       scrappingStage: null,
       scrappedPostsCount: null,
-    }
+      downloadedInBatches: 0,
+      currentBatch: 0,
+      isAutoBatchDownloading: false,
+      skipDownloaded: false,
+    },
   ),
 };
 
@@ -210,6 +275,8 @@ export function resetAppStateToDefaults() {
   localStorage.removeItem(STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE);
   localStorage.removeItem(STORAGE_KEYS.FULL_PATH_TEMPLATES);
   localStorage.removeItem(STORAGE_KEYS.SHOW_FOLDER_PICKER);
+  localStorage.removeItem(STORAGE_KEYS.THEME_MODE);
+  localStorage.removeItem(STORAGE_KEYS.FILE_PATH_HINT_SEEN);
 
   // Reset AppState
   AppState.debug.active = false;
@@ -221,7 +288,6 @@ export function resetAppStateToDefaults() {
     path: "",
   };
   AppState.filters = {
-    currentProfile: false,
     likedVideos: false,
     favoriteVideos: false,
     state: "INIT",
@@ -232,6 +298,19 @@ export function resetAppStateToDefaults() {
   AppState.downloading = {
     isActive: false,
     isDownloadingAll: false,
+    pausedAll: false,
+    batchType: null,
+    activeBatchUrls: [],
+  };
+  AppState.playlist = {
+    currentId: null,
+    currentName: "",
+    requestUrl: "",
+    itemIds: [],
+    lastHydratedAt: 0,
+    lastPrimedAt: 0,
+    lastRequestSeenAt: 0,
+    isHydrating: false,
   };
   AppState.ui = {
     downloaderPositionType: null,
@@ -240,6 +319,9 @@ export function resetAppStateToDefaults() {
     isDownloaderClosed: false,
     isRatePopupOpen: false,
     isDragging: false,
+    hasSeenShowButtonHint: false,
+    hasSeenFilePathHint: false,
+    themeMode: "dark",
     autoSwipeConfigurations: {
       nextClickTimeout: null,
       countdownInterval: null,
@@ -258,8 +340,8 @@ export function resetAppStateToDefaults() {
   localStorage.setItem(
     STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE,
     JSON.stringify(
-      FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault)
-    )
+      FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find((it) => it.isDefault),
+    ),
   );
   // Default template
   AppState.downloadPreferences.fullPathTemplate =

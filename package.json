@@ -1,6 +1,6 @@
 {
   "name": "easy-tiktok-video-downloader",
-  "version": "4.0.4",
+  "version": "5.2.0",
   "description": "Download liked videos or any TikTok videos easily without watermark. Download search results, likes, all user videos, and more.",
   "manifest_version": 3,
   "author": "Arsene I. Muhire",
@@ -13,7 +13,9 @@
     "buildff:prod": "rm -rf distff && webpack --mode production --config webpack.firefox.config.js && du -sh distff && (cd distff && zip -r ../distff.zip . -x '__MACOSX/*' -x '.*') && mv distff.zip distff/",
     "analyze": "webpack --config webpack.config.js --env analyze",
     "clean": "rm -rf dist",
-    "cc": "webpack --mode production"
+    "cc": "webpack --mode production",
+    "verify:versions": "node scripts/verify-version-sync.js",
+    "setup:hooks": "git config core.hooksPath .githooks"
   },
   "sideEffects": false,
   "browserslist": {

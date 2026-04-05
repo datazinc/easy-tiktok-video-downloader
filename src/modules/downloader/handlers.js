@@ -1,6 +1,10 @@
 // handlers.js
 import AppState from "../state/state.js";
-import { displayFoundUrls } from "../utils/utils.js";
+import {
+  displayFoundUrls,
+  getCurrentPageUsername,
+  isOnProfileOrCollectionPage,
+} from "../utils/utils.js";
 
 // ———————————————————————————————————————
 // Helpers
@@ -86,3 +90,58 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 window.ettpd__handleFoundItems = handleFoundItems;
+
+// ———————————————————————————————————————
+// Resume Download Handler
+// ———————————————————————————————————————
+/**
+ * Handle resume download request from popup
+ * @param {string} username - The username
+ * @param {string} tabName - The tab name
+ * @param {boolean} isCollection - Whether this is a collection tab
+ * @returns {Object} Result with success status and any error message
+ */
+export function handleResumeDownload(username, tabName, isCollection) {
+  try {
+    // Get current page info
+    const pageInfo = isOnProfileOrCollectionPage();
+    const currentUsername = getCurrentPageUsername();
+
+    // Verify we're on the correct profile
+    if (currentUsername !== username && currentUsername !== "😃") {
+      return {
+        success: false,
+        error: `Wrong profile page. Current: ${currentUsername}, Expected: ${username}`,
+        needsNavigation: true,
+      };
+    }
+
+    // Determine the tab key
+    let tabKey = tabName;
+    let collectionName = null;
+    if (isCollection) {
+      tabKey = "collection";
+      // Try to find the collection name from the page
+      if (pageInfo.isCollection && pageInfo.collectionName) {
+        collectionName = pageInfo.collectionName;
+        AppState.scrapperDetails.selectedCollectionName = collectionName;
+      } else {
+        // Use the tabName as collection name if we can't detect it
+        collectionName = tabName;
+        AppState.scrapperDetails.selectedCollectionName = tabName;
+      }
+    }
+
+    return {
+      success: true,
+      tabKey,
+      pageInfo,
+      collectionName,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err?.message || "Unknown error",
+    };
+  }
+}

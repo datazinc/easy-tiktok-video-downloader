@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+
+set -eu
+
+echo "Running version sync check..."
+npm run verify:versions

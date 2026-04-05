@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Easy TikTok Video Downloader (No Watermark)",
-  "version": "4.0.4",
+  "version": "5.2.0",
   "description": "Save TikToks in bulk — your videos, likes, reposts, favorites, collections & feeds — no watermark.",
   "host_permissions": [
     "*://*.tiktok.com/*"

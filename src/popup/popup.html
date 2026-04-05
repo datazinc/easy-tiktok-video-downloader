@@ -2,81 +2,118 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="./popup.css">
-    <title>Easy TikTok Downloader</title>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="./popup.css" />
+  <title>Easy TikTok Downloader</title>
 </head>
 
 <body>
-    <div class="container">
-        <h1>Easy TikTok Video Downloader</h1>
-        <p class="subtitle">Navigate to any TikTok account and start downloading videos in one click.</p>
+  <div class="popup-shell">
+    <header class="popup-hero">
+      <div class="badge">Easy TikTok Video Downloader</div>
+      <h1>Grab videos faster</h1>
+      <p class="subtitle">
+        Jump to a TikTok profile, scroll a little, and download everything you
+        see — watermark-free when possible.
+      </p>
+    </header>
 
+    <!-- Disabled State UI (initially hidden) -->
+    <section id="disabled-state" class="card state-card" style="display: none">
+      <div class="state-icon">⏸</div>
+      <div>
+        <h2>Extension disabled</h2>
+        <p class="subtitle">Click turn on to get back to downloading.</p>
+      </div>
+      <div class="state-actions">
+        <button id="turnOnBtn" class="btn primary">⚡ Turn On</button>
+        <button id="turnOffInfo" class="btn secondary" disabled>
+          Disabled
+        </button>
+      </div>
+      <p class="footnote">
+        After turning on, refresh any open TikTok tabs for changes to take
+        effect.
+      </p>
+    </section>
+
+    <!-- Normal State UI -->
+    <section id="normal-state" class="card state-card" style="display: block">
+      <div class="cta-row">
         <form id="start-wrapper">
-            <input placeholder="Enter TikTok username or Link" type="text" id="username">
-            <button type="submit" id="startBtn">Go!</button>
+          <input placeholder="Enter TikTok @username or link" type="text" id="username" />
+          <button type="submit" id="startBtn" class="btn primary">Go</button>
         </form>
+        <div class="pill">Pro tip: open a profile first</div>
+        <button id="pastDownloadsBtn" class="btn secondary" style="width: 100%">
+          📥 Past Downloads
+        </button>
+      </div>
 
-        <div class="info">
-
-
-
-            <h2>Frequently Asked Questions</h2>
-            <strong>How do I use the extension?</strong>
-            <p class="answer">
-                It's simple — go to tiktok.com & just click the <strong>Download</strong> button on any video you want
-                to save. On pages
-                with lots of
-                content (like user profiles or feeds), TikTok may require some scrolling to fully load all videos. If
-                available,
-                enable <strong>Auto-Scroll</strong> to let the extension do this for you. Otherwise, manually scroll
-                through the
-                page — new videos will automatically be added to your download list. You can then click <strong>Download
-                    All</strong> to grab them in bulk. For more customizations, check the <strong>Settings</strong> and
-                enjoy!
-            </p>
-
-
-            <strong>Can I download videos without watermarks?</strong>
-            <p class="answer">
-                Yes — we prioritize providing videos without watermarks whenever possible. However, this depends on the
-                data
-                TikTok makes available to your browser, which may vary.
-            </p>
-
-            <div class="alert">
-                <strong>⚠️ Disclaimer:</strong> Due to recent changes in the TikTok API, link copying for downloaders is
-                no longer
-                available. (Cause it would fail!)
-                <br /><br />
-                This extension may stop working at <em>any</em> time — seriously, <strong>any time</strong>.
-                <br /><br />
-                If it breaks and you're feeling generous, <a href="https://linktr.ee/aimuhire" target="_blank"
-                    rel="noopener noreferrer">buy me a coffee</a> ☕️ —
-                or, if you're feeling <em>really</em> desperate, call my mom and tell her what a terrible developer and
-                utter
-                disappointment I am. That might finally guilt-trip me into pushing a fix. 🙃
-            </div>
+      <div class="grid two-col">
+        <div class="tile">
+          <div class="tile-title">How to use</div>
+          <ul class="mini-list">
+            <li>Open tiktok.com and pick a profile.</li>
+            <li>
+              Scroll a bit so videos load. Hit <strong>Download</strong> or
+              <strong>Download All</strong>.
+            </li>
+            <li>
+              Use <strong>Auto-Scroll</strong> to auto-load and batch
+              download.
+            </li>
+          </ul>
         </div>
-
-        <div class="links">
-            <a target="_blank" href="https://forms.gle/Up1JaQJjxSBNYsZw5">Report a Bug</a>
-            <a target="_blank" href="https://forms.gle/Up1JaQJjxSBNYsZw5">Request a Feature</a>
+        <div class="tile">
+          <div class="tile-title">Watermarks</div>
+          <p class="body">
+            We prefer no-watermark links when TikTok makes them available.
+            When not possible, you may see the original watermark.
+          </p>
         </div>
+      </div>
 
-        <footer>
-            <p>&copy; Vibe-coded with ❤️, imposter syndrome, and a series of bad life choices —
-                <a target="_blank" href="https://linktr.ee/aimuhire">don't buy me coffee</a>, I clearly thrive on
-                anxiety
-                and unpaid
-                labor. Anyway, if this breaks… pretend you didn't see it.
-            </p>
-        </footer>
+      <div class="alert">
+        <strong>Heads up:</strong> TikTok changes can break downloaders at any
+        time. If you want to nudge a fix (or fuel it), drop a note or
+        <a href="https://linktr.ee/aimuhire" target="_blank" rel="noopener noreferrer">say thanks</a>.
+      </div>
+
+      <div class="links">
+        <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/KpT7xdUUbM">Report a Bug on Discord</a>
+        <a target="_blank" rel="noopener noreferrer" href="https://discord.gg/KpT7xdUUbM">Request a Feature on
+          Discord</a>
+      </div>
+
+      <footer>
+        <p>
+          Built with ❤️ (and caffeine). If it breaks, give it a gentle nudge —
+          we're listening.
+        </p>
+        <p class="footer-meta" id="footerMeta"></p>
+      </footer>
+    </section>
+  </div>
+
+  <!-- Past Downloads Modal -->
+  <div id="pastDownloadsModal" class="past-downloads-modal" style="display: none">
+    <div class="past-downloads-content">
+      <div class="past-downloads-header">
+        <h2>📥 Past Downloads</h2>
+        <button id="closePastDownloadsBtn" class="close-btn">×</button>
+      </div>
+      <div id="pastDownloadsContent" class="past-downloads-body">
+        <p style="text-align: center; color: #666; padding: 20px">
+          Loading downloads history...
+        </p>
+      </div>
     </div>
+  </div>
 
-    <script src="./popup.bundle.js"></script>
+  <script src="./popup.bundle.js"></script>
 </body>
 
 </html>
