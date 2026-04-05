@@ -48,6 +48,7 @@ import {
   stopActiveBatchDownload,
   findFiberItemById,
   findFiberItemsInContainer,
+  detectBrowserType,
   syncPlaylistStateWithLocation,
 } from "../utils/utils.js";
 import {
@@ -67,6 +68,25 @@ import { handleFoundItems, handleResumeDownload } from "./handlers.js";
 
 // Track current username to detect profile changes for resume downloads
 let lastTrackedUsername = null;
+
+const CHROME_EXTENSION_REVIEW_URL =
+  "https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg";
+const FIREFOX_EXTENSION_REVIEW_URL =
+  "https://addons.mozilla.org/en-US/firefox/addon/tiktok-downloader-bulk/reviews/";
+
+function getExtensionReviewTarget() {
+  if (detectBrowserType() === "firefox") {
+    return {
+      storeLabel: "Firefox Add-ons",
+      url: FIREFOX_EXTENSION_REVIEW_URL,
+    };
+  }
+
+  return {
+    storeLabel: "Chrome Web Store",
+    url: CHROME_EXTENSION_REVIEW_URL,
+  };
+}
 
 /**
  * Show a toast notification that auto-dismisses after a few seconds
@@ -5639,6 +5659,7 @@ export function hideDownloader() {
 
 export function showRateUsPopUpLegacy() {
   if (!shouldShowRatePopupLegacy()) return;
+  const reviewTarget = getExtensionReviewTarget();
   AppState.ui.isRatePopupOpen = true;
   hideDownloader();
   const overlay = document.createElement("div");
@@ -5682,11 +5703,12 @@ export function showRateUsPopUpLegacy() {
     <h2 style="margin-bottom: 15px; font-size: 1.5em; color: #1da1f2;">Download Complete! 🎉</h2>
     <p style="margin-bottom: 20px; font-size: 1em; line-height: 1.5; color: #555555;">
       Your video has been successfully downloaded! 🎥<br>
-      We'd love your support—rate us 5 ⭐ on the Chrome Web Store to help us grow! 🥰
+      We'd love your support—rate us 5 ⭐ on ${reviewTarget.storeLabel} to help us grow! 🥰
     </p>
     <a
-      href="https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg"
+      href="${reviewTarget.url}"
       target="_blank"
+      rel="noopener noreferrer"
       style="
         display: inline-block;
         background-color: #1da1f2;
@@ -5865,10 +5887,11 @@ export function showStatsPopUp() {
   const actionBtnContainer = document.createElement("div");
   actionBtnContainer.className = "ettpd-modal-buttons-container";
 
+  const reviewTarget = getExtensionReviewTarget();
   const rateBtn = document.createElement("a");
-  rateBtn.href =
-    "https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg";
+  rateBtn.href = reviewTarget.url;
   rateBtn.target = "_blank";
+  rateBtn.rel = "noopener noreferrer";
   rateBtn.className = "ettpd-modal-button";
   setButtonWithIcon(rateBtn, "Rate Us", "star");
 
@@ -5994,6 +6017,7 @@ export function createModal({ children = [], onClose = null }) {
 }
 
 export function showMorpheusRateUsPage() {
+  const reviewTarget = getExtensionReviewTarget();
   AppState.ui.isRatePopupOpen = true;
   hideDownloader();
   showCelebration("mindblown");
@@ -6019,10 +6043,7 @@ export function showMorpheusRateUsPage() {
       },
       bluePillClick: (e, overlay) => {
         console.log("✅ User took the blue pill — rated us.");
-        window.open(
-          "https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg",
-          "_blank",
-        );
+        window.open(reviewTarget.url, "_blank");
         AppState.rateDonate.lastShownAt = Date.now();
         AppState.rateDonate.lastRatedAt = Date.now();
         localStorage.setItem(
