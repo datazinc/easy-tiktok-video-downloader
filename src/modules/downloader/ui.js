@@ -1,5 +1,6 @@
 // ui.js
 import AppState, { resetAppStateToDefaults } from "../state/state.js";
+import { createHtmlFragment, replaceElementHtml } from "../utils/html.js";
 import {
   STORAGE_KEYS,
   DOM_IDS,
@@ -73,6 +74,25 @@ const CHROME_EXTENSION_REVIEW_URL =
   "https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg";
 const FIREFOX_EXTENSION_REVIEW_URL =
   "https://addons.mozilla.org/en-US/firefox/addon/tiktok-downloader-bulk/reviews/";
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return char;
+    }
+  });
+}
 
 function getExtensionReviewTarget() {
   if (detectBrowserType() === "firefox") {
@@ -211,12 +231,7 @@ export function showToast(title, message, duration = 4500) {
 
   const messageEl = document.createElement("div");
   messageEl.className = "ettpd-toast-message";
-  // Support HTML in message if it contains HTML tags
-  if (message && /<[a-z][\s\S]*>/i.test(message)) {
-    messageEl.innerHTML = message;
-  } else {
-    messageEl.textContent = message;
-  }
+  messageEl.textContent = message;
 
   contentEl.appendChild(titleEl);
   contentEl.appendChild(messageEl);
@@ -324,7 +339,7 @@ export function createIcon(iconName, size = 16) {
     svg.removeAttribute("stroke-width");
   }
 
-  svg.innerHTML = iconPath;
+  replaceElementHtml(svg, iconPath);
   return svg;
 }
 
@@ -400,14 +415,17 @@ function createHeaderPowerButton() {
   button.title = "Turn extension off";
   button.setAttribute("aria-label", "Turn extension off");
 
-  button.innerHTML = `
+  replaceElementHtml(
+    button,
+    `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
         <line x1="12" y1="4" x2="12" y2="11" />
         <path d="M8.5 6.5A7 7 0 1 0 15.5 6.5" />
       </g>
     </svg>
-  `;
+  `,
+  );
 
   const applyState = (enabled) => {
     button.classList.toggle("ettpd-power-btn-on", enabled);
@@ -435,10 +453,12 @@ function createHeaderPowerButton() {
       return new Promise((resolve) => {
         const message = document.createElement("div");
         message.className = "alert";
-        message.innerHTML =
+        replaceElementHtml(
+          message,
           "⚠️ <b>Disable Extension?</b><br><br>" +
-          "The extension will be completely disabled. No scripts will run, no polling will occur, and no downloads will be processed.<br><br>" +
-          "To re-enable, click the extension icon and select 'Turn On'.";
+            "The extension will be completely disabled. No scripts will run, no polling will occur, and no downloads will be processed.<br><br>" +
+            "To re-enable, click the extension icon and select 'Turn On'.",
+        );
 
         const actionsContainer = document.createElement("div");
         actionsContainer.style.cssText = `
@@ -518,7 +538,9 @@ export function createDownloaderWrapper() {
   const dragHandle = document.createElement("div");
   dragHandle.className = "ettpd-drag-handle";
   dragHandle.title = "Press & hold, then drag to move";
-  dragHandle.innerHTML = `<svg class="ettpd-drag-handle-icon" style="display:flex;align-items:center;justify-content:center;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  replaceElementHtml(
+    dragHandle,
+    `<svg class="ettpd-drag-handle-icon" style="display:flex;align-items:center;justify-content:center;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
     <g fill="currentColor">
       <circle cx="9" cy="8" r="1.1" />
       <circle cx="9" cy="12" r="1.1" />
@@ -527,7 +549,8 @@ export function createDownloaderWrapper() {
       <circle cx="15" cy="12" r="1.1" />
       <circle cx="15" cy="16" r="1.1" />
     </g>
-  </svg>`;
+  </svg>`,
+  );
   dragHandle.style.marginRight = "0px";
 
   // Create custom corner selector dropdown (no native <select> — SVG in options
@@ -656,13 +679,16 @@ export function createDownloaderWrapper() {
   leaderboardBtn.className = "ettpd-icon-btn ettpd-leaderboard-btn";
   leaderboardBtn.title = "View Leaderboard";
   leaderboardBtn.setAttribute("aria-label", "View leaderboard");
-  leaderboardBtn.innerHTML = `
+  replaceElementHtml(
+    leaderboardBtn,
+    `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <rect x="4" y="11" width="3" height="7" rx="1.5" fill="currentColor" />
       <rect x="10.5" y="7" width="3" height="11" rx="1.5" fill="currentColor" />
       <rect x="17" y="9" width="3" height="9" rx="1.5" fill="currentColor" />
     </svg>
-  `;
+  `,
+  );
   leaderboardBtn.onclick = showStatsPopUp;
 
   const shareBtn = document.createElement("button");
@@ -670,7 +696,9 @@ export function createDownloaderWrapper() {
   shareBtn.className = "ettpd-icon-btn ettpd-share-btn";
   shareBtn.title = "Share Extension!";
   shareBtn.setAttribute("aria-label", "Share extension");
-  shareBtn.innerHTML = `
+  replaceElementHtml(
+    shareBtn,
+    `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="17" cy="5" r="2.3" />
@@ -679,7 +707,8 @@ export function createDownloaderWrapper() {
         <path d="M9.3 11l5.4-3.2M9.3 13l5.4 3.2" />
       </g>
     </svg>
-  `;
+  `,
+  );
   shareBtn.onclick = showShareOptions;
 
   // Append all UI elements
@@ -1549,7 +1578,9 @@ function showFilePathHintModal() {
     } catch {}
 
     const content = document.createElement("div");
-    content.innerHTML = `
+    replaceElementHtml(
+      content,
+      `
       <div style="text-align:center;margin-bottom:10px;">
         <span style="font-size:28px;">📂</span>
       </div>
@@ -1562,7 +1593,8 @@ function showFilePathHintModal() {
         You can organise downloads into <b>folders by username, tab, date</b> and more using file path templates.<br><br>
         <span style="font-size:11px;color:var(--ettpd-text-secondary,#888);">You can always change this later in Settings → File Path Templates.</span>
       </div>
-    `;
+    `,
+    );
 
     const actionsContainer = document.createElement("div");
     actionsContainer.style.cssText = `
@@ -1707,8 +1739,10 @@ async function createStepperView(pageInfo, tabOptions, spans) {
       color: #856404;
       line-height: 1.5;
     `;
-    warningText.innerHTML =
-      "<strong>⚠️ Heads up:</strong> Please navigate to a profile or collection page first. If you download from other pages, you may end up downloading random posts. Reload the page if you don't see any tabs.";
+    replaceElementHtml(
+      warningText,
+      "<strong>⚠️ Heads up:</strong> Please navigate to a profile or collection page first. If you download from other pages, you may end up downloading random posts. Reload the page if you don't see any tabs.",
+    );
     warningContainer.appendChild(warningText);
     stepperContainer.appendChild(warningContainer);
     return stepperContainer;
@@ -1742,7 +1776,9 @@ async function createStepperView(pageInfo, tabOptions, spans) {
   }
 
   // Update indicator
-  indicator.innerHTML = `
+  replaceElementHtml(
+    indicator,
+    `
     <div class="ettpd-stepper-dots">
       ${Array.from(
         { length: totalSteps },
@@ -1756,7 +1792,8 @@ async function createStepperView(pageInfo, tabOptions, spans) {
           }"></span>`,
       ).join("")}
     </div>
-  `;
+  `,
+  );
   stepperContainer.appendChild(indicator);
 
   // Step 1: Resume Downloads (only show if no tab selected yet)
@@ -1846,14 +1883,17 @@ async function createStepperView(pageInfo, tabOptions, spans) {
         btn.className = `ettpd-tab-btn ettpd-tab-btn-${key}`;
         btn.dataset.tabKey = key;
         const iconEl = icon ? createIcon(icon, 16).outerHTML : "";
-        btn.innerHTML = `
+        replaceElementHtml(
+          btn,
+          `
           <span class="ettpd-tab-check" aria-hidden="true">✓</span>
           <span class="ettpd-tab-label">${
             iconEl
               ? `<span style="display:inline-block;margin-right:4px;vertical-align:middle;">${iconEl}</span>`
               : ""
-          }${label}</span>
-        `;
+          }${escapeHtml(label)}</span>
+        `,
+        );
         btn.setAttribute("aria-pressed", "false");
 
         btn.addEventListener("click", () => {
@@ -2119,14 +2159,17 @@ async function createStepperView(pageInfo, tabOptions, spans) {
       btn.className = `ettpd-tab-btn ettpd-tab-btn-${key}`;
       btn.dataset.tabKey = key;
       const iconEl = icon ? createIcon(icon, 16).outerHTML : "";
-      btn.innerHTML = `
+      replaceElementHtml(
+        btn,
+        `
         <span class="ettpd-tab-check" aria-hidden="true">✓</span>
         <span class="ettpd-tab-label">${
           iconEl
             ? `<span style="display:inline-block;margin-right:4px;vertical-align:middle;">${iconEl}</span>`
             : ""
-        }${label}</span>
-      `;
+        }${escapeHtml(label)}</span>
+      `,
+      );
       btn.setAttribute("aria-pressed", "false");
 
       btn.addEventListener("click", () => {
@@ -2416,8 +2459,10 @@ export async function showScrapperControls() {
 
     if (!pageInfo.isProfile) {
       if (subtitle) {
-        subtitle.innerHTML =
-          "<strong>Heads up:</strong> Please navigate to a profile or collection page first. If you download from other pages, you may end up downloading random posts. Reload the page if you don't see any tabs.";
+        replaceElementHtml(
+          subtitle,
+          "<strong>Heads up:</strong> Please navigate to a profile or collection page first. If you download from other pages, you may end up downloading random posts. Reload the page if you don't see any tabs.",
+        );
       }
       // Also refresh controls to show warning in stepper view
       showScrapperControls();
@@ -2453,13 +2498,15 @@ async function showDownloadConfirmationModal(username, tabName, count) {
   }
 
   return new Promise((resolve) => {
+    const safeUsername = escapeHtml(username);
+    const safeTabName = escapeHtml(toTitleCase(tabName));
     const contentDiv = document.createElement("div");
     contentDiv.style.cssText = "padding: 20px; text-align: center;";
-    contentDiv.innerHTML = `
+    replaceElementHtml(
+      contentDiv,
+      `
       <p style="margin-bottom: 15px; font-size: 14px;">
-        You've previously scraped <strong>@${username}</strong>'s <strong>${toTitleCase(
-          tabName,
-        )}</strong>.
+        You've previously scraped <strong>@${safeUsername}</strong>'s <strong>${safeTabName}</strong>.
       </p>
       <p style="margin-bottom: 20px; font-size: 14px;">
         Found <strong>${count}</strong> previously downloaded items.
@@ -2467,7 +2514,8 @@ async function showDownloadConfirmationModal(username, tabName, count) {
       <p style="margin-bottom: 20px; font-size: 13px; color: #666;">
         What would you like to do?
       </p>
-    `;
+    `,
+    );
 
     const buttonContainer = document.createElement("div");
     buttonContainer.style.cssText =
@@ -2509,9 +2557,13 @@ async function showDownloadConfirmationModal(username, tabName, count) {
 }
 
 function explainerModal(tab) {
+  const safeUsername = escapeHtml(getCurrentPageUsername());
+  const safeTab = escapeHtml(tab);
   const description = document.createElement("div");
   description.className = "ettpd-scrapper-info";
-  description.innerHTML = `
+  replaceElementHtml(
+    description,
+    `
     <div class="alert">
       <div class="ettpd-scrapper-message-title">
         💡 Let the Scrapper handle it
@@ -2524,7 +2576,7 @@ function explainerModal(tab) {
         <div class="ettpd-scrapper-message-body">
           <span class="ettpd-scrapper-message-step">2.</span>
           <span>Click <strong>Start</strong> to reload the page and auto-scroll every post under
-          <strong>@${getCurrentPageUsername()} <em>${tab}</em></strong>.</span>
+          <strong>@${safeUsername} <em>${safeTab}</em></strong>.</span>
         </div>
         <div class="ettpd-scrapper-message-body">
           <span class="ettpd-scrapper-message-step">3.</span>
@@ -2540,7 +2592,8 @@ function explainerModal(tab) {
       Want full control? Customize where your downloads go under
       <strong>Settings → File Paths</strong> with your own <strong>File Path Templates</strong>. 🛠️
     </p>
-  `;
+  `,
+  );
 
   // Recommended template card with quick apply
   const recommendedCard = document.createElement("div");
@@ -2917,7 +2970,7 @@ async function populateScrapperTabPicker(messageEl) {
   if (messageEl._tabPickerPopulated) return;
   messageEl._tabPickerPopulated = true;
 
-  messageEl.innerHTML = "";
+  messageEl.replaceChildren();
 
   const pageInfo = isOnProfileOrCollectionPage();
 
@@ -3082,10 +3135,12 @@ function showAbandonScrappingModal() {
   return new Promise((resolve) => {
     const content = document.createElement("div");
     content.className = "alert";
-    content.innerHTML =
+    replaceElementHtml(
+      content,
       "⚠️ <b>Abandon Current Scrapping?</b><br><br>" +
-      "A scrapping session is already in progress. Starting a new one will <b>abandon</b> the current session.<br><br>" +
-      "Any unsaved progress from the current session may be lost.";
+        "A scrapping session is already in progress. Starting a new one will <b>abandon</b> the current session.<br><br>" +
+        "Any unsaved progress from the current session may be lost.",
+    );
 
     const actionsContainer = document.createElement("div");
     actionsContainer.style.cssText = `
@@ -4394,7 +4449,7 @@ export function showStatsSpan() {
 
   let existing = wrapper.querySelector(".ettpd-stats");
 
-  if (existing && existing.innerHTML.trim() === newHTML.trim()) {
+  if (existing && existing.dataset.renderedHtml === newHTML.trim()) {
     return; // No need to update
   }
 
@@ -4402,7 +4457,8 @@ export function showStatsSpan() {
 
   const span = document.createElement("span");
   span.className = "ettpd-span ettpd-stats";
-  span.innerHTML = newHTML;
+  replaceElementHtml(span, newHTML);
+  span.dataset.renderedHtml = newHTML.trim();
   span.onclick = showStatsPopUp;
 
   const link = span.querySelector("a");
@@ -5684,7 +5740,9 @@ export function showRateUsPopUpLegacy() {
   box.style.height = "100%";
   box.style.zIndex = "999";
   box.style.backgroundColor = "rgba(31, 26, 26, 0.5)";
-  box.innerHTML = `
+  replaceElementHtml(
+    box,
+    `
   <div style="
     position: absolute;
     top: 50%;
@@ -5703,10 +5761,10 @@ export function showRateUsPopUpLegacy() {
     <h2 style="margin-bottom: 15px; font-size: 1.5em; color: #1da1f2;">Download Complete! 🎉</h2>
     <p style="margin-bottom: 20px; font-size: 1em; line-height: 1.5; color: #555555;">
       Your video has been successfully downloaded! 🎥<br>
-      We'd love your support—rate us 5 ⭐ on ${reviewTarget.storeLabel} to help us grow! 🥰
+      We'd love your support—rate us 5 ⭐ on ${escapeHtml(reviewTarget.storeLabel)} to help us grow! 🥰
     </p>
     <a
-      href="${reviewTarget.url}"
+      href="${escapeHtml(reviewTarget.url)}"
       target="_blank"
       rel="noopener noreferrer"
       style="
@@ -5727,7 +5785,8 @@ export function showRateUsPopUpLegacy() {
       Rate Now
     </a>
   </div>
-`;
+`,
+  );
   overlay.appendChild(box);
 
   overlay.onclick = () => {
@@ -5814,12 +5873,13 @@ export function showStatsPopUp() {
         ? list
             .map((item, i) => {
               const username = item.username || "tiktok";
+              const safeUsername = escapeHtml(username);
               return `
             <li class="ettpd-leaderboard-item">
               <div class="ettpd-leaderboard-rank">${i + 1}</div>
               <div class="ettpd-leaderboard-meta">
-                <a class="ettpd-leaderboard-name" href="https://tiktok.com/@${username}" target="_blank" rel="noopener noreferrer">@${username}</a>
-                <span class="ettpd-leaderboard-handle">tiktok.com/@${username}</span>
+                <a class="ettpd-leaderboard-name" href="https://tiktok.com/@${safeUsername}" target="_blank" rel="noopener noreferrer">@${safeUsername}</a>
+                <span class="ettpd-leaderboard-handle">tiktok.com/@${safeUsername}</span>
               </div>
               <div class="ettpd-leaderboard-count" title="${item.count.toLocaleString()}">
                 ${formatCompactNumberWithTooltip(item.count)}
@@ -5854,7 +5914,9 @@ export function showStatsPopUp() {
       ? `<div class="ettpd-stats-banner">You peaked this week 😮‍💨</div>`
       : "";
 
-    content.innerHTML = `
+    replaceElementHtml(
+      content,
+      `
     <div class="ettpd-summary-line black-text">
       You've ${
         tabKey === "downloads" ? "downloaded" : "been recommended"
@@ -5870,7 +5932,8 @@ export function showStatsPopUp() {
           section("🏆 All Time", allTimeList, allTimeCount)
     }
     <p class="alert ettpd-disclaimer">📌 Stats are local to your browser. You're in control. 🤝</p>
-  `;
+  `,
+    );
   };
 
   tabButtons.forEach((btn) => {
@@ -5995,7 +6058,7 @@ export function createModal({ children = [], onClose = null }) {
 
   children.forEach((child) => {
     if (typeof child === "string") {
-      modal.insertAdjacentHTML("beforeend", child);
+      modal.appendChild(createHtmlFragment(child));
     } else if (child instanceof HTMLElement) {
       modal.appendChild(child);
     }
@@ -6098,9 +6161,12 @@ export function createModalMorpheus({
   // 📜 Message in the center
   const msg = document.createElement("div");
   msg.className = "ettpd-morpheus-message";
-  msg.innerHTML =
-    message ||
-    `You take the blue pill… You wake up in your bed and believe whatever you want to believe.`;
+  if (message) {
+    replaceElementHtml(msg, message);
+  } else {
+    msg.textContent =
+      "You take the blue pill… You wake up in your bed and believe whatever you want to believe.";
+  }
 
   // 🔵 Blue pill button (right hand)
   const bluePill = document.createElement("button");
@@ -6157,7 +6223,9 @@ export function createFilenameTemplateModal() {
 
   const locationNote = document.createElement("div");
   locationNote.className = "ettpd-template-location";
-  locationNote.innerHTML = `
+  replaceElementHtml(
+    locationNote,
+    `
     <strong>Where files go</strong>
     <span>${
       AppState.downloadPreferences.showFolderPicker
@@ -6165,8 +6233,9 @@ export function createFilenameTemplateModal() {
         : "Files are saved inside your browser's default Downloads folder. This template controls the folders and filename inside that location."
     }</span>
     <span><strong>Name cleanup</strong>: if a folder or file segment would start with <code>.</code>, the downloader rewrites it so it stays visible and browser-safe. Example: <code>@.dernful</code> becomes <code>@_dernful</code>.</span>
-    <code>Downloads/${DOWNLOAD_FOLDER_DEFAULT}/...</code>
-  `;
+    <code>Downloads/${escapeHtml(DOWNLOAD_FOLDER_DEFAULT)}/...</code>
+  `,
+  );
 
   const knownFields = [
     "videoId",
@@ -6259,7 +6328,7 @@ export function createFilenameTemplateModal() {
       btn.classList.toggle("active", btn.dataset.key === key),
     );
     const section = tabConfig.find((tab) => tab.key === key);
-    tabContent.innerHTML = section?.body || "";
+    replaceElementHtml(tabContent, section?.body || "");
   };
 
   instructions.append(tabNav, tabContent);
@@ -6528,11 +6597,14 @@ export function createFilenameTemplateModal() {
   feedbackContainer.style.textAlign = "center";
 
   function showFeedback(text) {
-    feedbackContainer.innerHTML = `<span>Applying...</span>`;
+    replaceElementHtml(feedbackContainer, "<span>Applying...</span>");
     layout.appendChild(feedbackContainer);
     return new Promise((resolve) => {
       setTimeout(() => {
-        feedbackContainer.innerHTML = `<span>${text}</span>`;
+        replaceElementHtml(
+          feedbackContainer,
+          `<span>${escapeHtml(text)}</span>`,
+        );
         setTimeout(() => {
           feedbackContainer.remove();
           displayFoundUrls({ forced: true });
@@ -6951,10 +7023,12 @@ export function createPreferencesBox() {
         return new Promise((resolve) => {
           const message = document.createElement("div");
           message.className = "alert";
-          message.innerHTML =
+          replaceElementHtml(
+            message,
             "⚠️ <b>Disable Extension?</b><br><br>" +
-            "The extension will be completely disabled. No scripts will run, no polling will occur, and no downloads will be processed.<br><br>" +
-            "To re-enable, click the extension icon and select 'Turn On'.";
+              "The extension will be completely disabled. No scripts will run, no polling will occur, and no downloads will be processed.<br><br>" +
+              "To re-enable, click the extension icon and select 'Turn On'.",
+          );
 
           const actionsContainer = document.createElement("div");
           actionsContainer.style.cssText = `
@@ -7031,12 +7105,15 @@ export function createPreferencesBox() {
   feedbackContainer.className = "ettpd-reset-feedback";
   // Utility function to show feedback
   function showFeedback(text) {
-    feedbackContainer.innerHTML = `<span>Applying...</span>`;
+    replaceElementHtml(feedbackContainer, "<span>Applying...</span>");
     preferencesBox.appendChild(feedbackContainer);
     // Then show the actual message after displayFoundUrls finishes
     return new Promise((resolve, reject) => {
       setTimeout(() => {
-        feedbackContainer.innerHTML = `<span>${text}</span>`;
+        replaceElementHtml(
+          feedbackContainer,
+          `<span>${escapeHtml(text)}</span>`,
+        );
         // Then remove the message after a short delay
         setTimeout(() => {
           feedbackContainer.remove();
@@ -7355,7 +7432,7 @@ function createDownloadButton({
   btn.setAttribute("aria-label", `Download ${mediaTypeLabel}`);
   const resetButtonToDefault = () => {
     btn.disabled = false;
-    btn.innerHTML = buildDefaultMarkup();
+    replaceElementHtml(btn, buildDefaultMarkup());
   };
   resetButtonToDefault();
 
