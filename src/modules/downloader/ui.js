@@ -41,7 +41,9 @@ import {
   buildVideoLinkMeta,
   cleanupPath,
   applyTemplate,
+  findRecentPlaylistRequestUrl,
   isOnProfileOrCollectionPage,
+  rememberCurrentPlaylistItems,
   saveCSVFile,
   stopActiveBatchDownload,
   findFiberItemById,
@@ -61,7 +63,7 @@ import {
   getAllProgress,
   saveProgress,
 } from "../storage/progress.js";
-import { handleResumeDownload } from "./handlers.js";
+import { handleFoundItems, handleResumeDownload } from "./handlers.js";
 
 // Track current username to detect profile changes for resume downloads
 let lastTrackedUsername = null;
@@ -2813,6 +2815,75 @@ function createDownloadAllButton() {
   return container;
 }
 
+function getDownloadItemUrls(items = []) {
+  if (!Array.isArray(items) || !items.length) {
+    return [];
+  }
+
+  return items
+    .map((item) => (typeof item?.url === "string" ? item.url.trim() : ""))
+    .filter(Boolean);
+}
+
+function getActiveDownloadBatchType() {
+  if (!AppState.downloading.isDownloadingAll) {
+    return null;
+  }
+
+  return AppState.downloading.batchType === "playlist" ? "playlist" : "all";
+}
+
+function getActiveDownloadBatchUrls() {
+  const urls = AppState.downloading.activeBatchUrls;
+  if (!Array.isArray(urls) || !urls.length) {
+    return [];
+  }
+
+  return urls
+    .map((url) => (typeof url === "string" ? url.trim() : ""))
+    .filter(Boolean);
+}
+
+function getDownloadedCountForUrls(urls = []) {
+  if (!Array.isArray(urls) || !urls.length) {
+    return 0;
+  }
+
+  const uniqueUrls = new Set(
+    urls
+      .map((url) => (typeof url === "string" ? url.trim() : ""))
+      .filter(Boolean),
+  );
+  if (!uniqueUrls.size) {
+    return 0;
+  }
+
+  const downloadedUrlSet = new Set(AppState.downloadedURLs);
+  let done = 0;
+  uniqueUrls.forEach((url) => {
+    if (downloadedUrlSet.has(url)) {
+      done += 1;
+    }
+  });
+  return done;
+}
+
+function getActiveBatchProgressSnapshot(fallbackItems = []) {
+  const activeBatchUrls = getActiveDownloadBatchUrls();
+  if (activeBatchUrls.length) {
+    return {
+      total: activeBatchUrls.length,
+      done: getDownloadedCountForUrls(activeBatchUrls),
+    };
+  }
+
+  const fallbackUrls = getDownloadItemUrls(fallbackItems);
+  return {
+    total: fallbackUrls.length,
+    done: getDownloadedCountForUrls(fallbackUrls),
+  };
+}
+
 /**
  * Populate the scrapper message area with tab-picker buttons.
  * Each button lets the user start scrapping that tab directly.
@@ -3036,7 +3107,7 @@ function updateDownloadAllButtonState(btn, items = []) {
   if (!btn) return;
 
   const syncPlaylistButton = () => {
-    syncPlaylistHeaderActionButton();
+    schedulePlaylistHeaderSync();
   };
 
   const scrapperBoxOpen = AppState.ui.isScrapperBoxOpen;
@@ -3146,8 +3217,18 @@ function updateDownloadAllButtonState(btn, items = []) {
     message._tabPickerPopulated = false; // Reset so tabs refresh on next show
   }
 
-  const total = items.length || AppState.allDirectLinks.length;
-  const done = AppState.downloadedURLs.length;
+  const activeBatchType = getActiveDownloadBatchType();
+  const activeBatchProgress = AppState.downloading.isDownloadingAll
+    ? getActiveBatchProgressSnapshot(
+        items.length ? items : AppState.allDirectLinks,
+      )
+    : null;
+  const total = AppState.downloading.isDownloadingAll
+    ? activeBatchProgress.total
+    : items.length || AppState.allDirectLinks.length;
+  const done = AppState.downloading.isDownloadingAll
+    ? activeBatchProgress.done
+    : AppState.downloadedURLs.length;
   const isDownloading = AppState.downloading.isDownloadingAll;
   const isPausedAll = AppState.downloading.pausedAll;
 
@@ -3167,7 +3248,19 @@ function updateDownloadAllButtonState(btn, items = []) {
   }
 
   if (isDownloading) {
-    if (done < total) {
+    if (activeBatchType === "playlist") {
+      actualBtn.textContent = "";
+      const activeIcon = createIcon(done < total ? "hourglass" : "check", 16);
+      activeIcon.style.marginRight = "4px";
+      actualBtn.appendChild(activeIcon);
+      actualBtn.appendChild(
+        document.createTextNode(
+          done < total
+            ? `Downloading playlist ${done} of ${total} posts…`
+            : `Playlist download complete (${total})`,
+        ),
+      );
+    } else if (done < total) {
       actualBtn.textContent = "";
       const hourglassIcon = createIcon("hourglass", 16);
       hourglassIcon.style.marginRight = "4px";
@@ -3240,7 +3333,7 @@ export function updateDownloadButtonLabel(btnElement, text) {
 export function updateDownloadButtonLabelSimple() {
   const downloadAllBtn = document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
   if (!downloadAllBtn) {
-    syncPlaylistHeaderActionButton();
+    schedulePlaylistHeaderSync();
     return;
   }
 
@@ -3282,7 +3375,7 @@ export function updateDownloadButtonLabelSimple() {
       if (pauseBtn) pauseBtn.style.display = "none";
       if (stopBtn) stopBtn.style.display = "none";
       if (message) message.style.display = "block";
-      syncPlaylistHeaderActionButton();
+      schedulePlaylistHeaderSync();
       return;
     }
   }
@@ -3291,8 +3384,16 @@ export function updateDownloadButtonLabelSimple() {
   downloadAllBtn.style.display = "block";
   if (message) message.style.display = "none";
 
-  const total = AppState.allDirectLinks.length;
-  const done = AppState.downloadedURLs.length;
+  const activeBatchType = getActiveDownloadBatchType();
+  const activeBatchProgress = AppState.downloading.isDownloadingAll
+    ? getActiveBatchProgressSnapshot(AppState.allDirectLinks)
+    : null;
+  const total = AppState.downloading.isDownloadingAll
+    ? activeBatchProgress.total
+    : AppState.allDirectLinks.length;
+  const done = AppState.downloading.isDownloadingAll
+    ? activeBatchProgress.done
+    : AppState.downloadedURLs.length;
   const isDownloading = AppState.downloading.isDownloadingAll;
 
   // If scrapper is in batch downloading mode, show batch status
@@ -3317,7 +3418,7 @@ export function updateDownloadButtonLabelSimple() {
       stopBtn.style.display = "none";
       stopBtn.disabled = true;
     }
-    syncPlaylistHeaderActionButton();
+    schedulePlaylistHeaderSync();
     return;
   }
 
@@ -3333,7 +3434,36 @@ export function updateDownloadButtonLabelSimple() {
       stopBtn.disabled = true;
     }
   } else if (isDownloading) {
-    if (done < total) {
+    if (activeBatchType === "playlist") {
+      downloadAllBtn.textContent = "";
+      const playlistIcon = createIcon(done < total ? "hourglass" : "check", 16);
+      playlistIcon.style.marginRight = "4px";
+      downloadAllBtn.appendChild(playlistIcon);
+      downloadAllBtn.appendChild(
+        document.createTextNode(
+          done < total
+            ? `Downloading playlist ${done} of ${total} posts…`
+            : `Playlist download complete (${total})`,
+        ),
+      );
+      downloadAllBtn.disabled = true;
+      if (pauseBtn) {
+        pauseBtn.style.display = "inline-flex";
+        pauseBtn.disabled = false;
+        setButtonWithIcon(
+          pauseBtn,
+          AppState.downloading.pausedAll ? "Resume" : "Pause",
+          AppState.downloading.pausedAll ? "play" : "pause",
+        );
+        pauseBtn.title = AppState.downloading.pausedAll
+          ? "Resume downloading"
+          : "Pause downloading";
+      }
+      if (stopBtn) {
+        stopBtn.style.display = "inline-flex";
+        stopBtn.disabled = false;
+      }
+    } else if (done < total) {
       downloadAllBtn.textContent = "";
       const hourglassIcon2 = createIcon("hourglass", 16);
       hourglassIcon2.style.marginRight = "4px";
@@ -3398,26 +3528,350 @@ export function updateDownloadButtonLabelSimple() {
     }
   }
 
-  syncPlaylistHeaderActionButton();
+  schedulePlaylistHeaderSync();
 }
 
 const PLAYLIST_HEADER_BUTTON_ID = "ettpd-playlist-download-header-btn";
 
-function getCurrentPlaylistDirectLinks() {
-  const playlistIds = new Set(AppState.playlist.itemIds.map(String));
-  if (!playlistIds.size) {
+// ── Playlist sync throttle ──────────────────────────────────────────
+// syncPlaylistHeaderActionButton is called from many code-paths on every
+// polling tick.  Coalesce into at most one execution per animation frame
+// and guard against microtask-driven re-entrance to avoid freezing the
+// tab.
+let _playlistSyncPending = false;
+let _playlistSyncActive = false;
+const HYDRATION_RETRY_COOLDOWN_MS = 3000;
+let _lastHydrationAttemptAt = 0;
+
+function schedulePlaylistHeaderSync() {
+  if (_playlistSyncPending) return;
+  _playlistSyncPending = true;
+  requestAnimationFrame(() => {
+    _playlistSyncPending = false;
+    syncPlaylistHeaderActionButton();
+  });
+}
+
+function getNormalizedPlaylistIds() {
+  return AppState.playlist.itemIds
+    .map((id) => (id == null ? "" : String(id).trim()))
+    .filter(Boolean);
+}
+
+function filterPlaylistDirectLinks(
+  items,
+  playlistIds = getNormalizedPlaylistIds(),
+) {
+  if (!Array.isArray(items) || !items.length) {
     return [];
   }
 
-  return (AppState.allDirectLinks || []).filter((item) => {
+  const normalizedPlaylistIds = playlistIds
+    .map((id) => (id == null ? "" : String(id).trim()))
+    .filter(Boolean);
+  if (!normalizedPlaylistIds.length) {
+    return [];
+  }
+
+  const playlistIdSet = new Set(normalizedPlaylistIds);
+  const seenIds = new Set();
+
+  return items.filter((item) => {
     const id = item?.videoId ?? item?.id;
     const normalizedId = id == null ? "" : String(id).trim();
-    return normalizedId ? playlistIds.has(normalizedId) : false;
+    if (!normalizedId || seenIds.has(normalizedId)) {
+      return false;
+    }
+
+    if (playlistIdSet.size && !playlistIdSet.has(normalizedId)) {
+      return false;
+    }
+
+    seenIds.add(normalizedId);
+    return true;
   });
+}
+
+function buildPlaylistDirectLinksFromItems(
+  items,
+  playlistIds = getNormalizedPlaylistIds(),
+) {
+  if (!Array.isArray(items) || !items.length) {
+    return [];
+  }
+
+  return filterPlaylistDirectLinks(
+    items
+      .map((item, index) => buildVideoLinkMeta(item, index))
+      .filter((item) => item?.videoId || item?.id),
+    playlistIds,
+  );
+}
+
+function getKnownPlaylistItems(playlistIds = getNormalizedPlaylistIds()) {
+  if (!playlistIds.length) {
+    return [];
+  }
+
+  const itemsById = AppState.allItemsEverSeen || {};
+  const orderedItems = playlistIds.map((id) => itemsById[id]).filter(Boolean);
+
+  if (orderedItems.length) {
+    return orderedItems;
+  }
+
+  const playlistIdSet = new Set(playlistIds);
+  return Object.values(itemsById).filter((item) => {
+    const id = item?.id ?? item?.videoId;
+    const normalizedId = id == null ? "" : String(id).trim();
+    return normalizedId ? playlistIdSet.has(normalizedId) : false;
+  });
+}
+
+function getRuntimePlaylistModalDirectLinks(pageInfo) {
+  if (pageInfo?.playlistSource !== "runtime") {
+    return [];
+  }
+
+  // The playlist modal already triggers signed mix-item requests that are captured by
+  // the network interceptor. Crawling the modal's React fiber tree on every sync tick
+  // is expensive enough to destabilize the tab, so modal hydration stays request-driven.
+  return [];
+}
+
+function getCurrentPlaylistDirectLinks(
+  pageInfo = syncPlaylistStateWithLocation(),
+) {
+  const playlistIds = getNormalizedPlaylistIds();
+
+  if (pageInfo?.playlistSource === "runtime" && !playlistIds.length) {
+    return [];
+  }
+
+  const cachedDirectLinks = filterPlaylistDirectLinks(
+    AppState.allDirectLinks || [],
+    playlistIds,
+  );
+  if (cachedDirectLinks.length) {
+    return cachedDirectLinks;
+  }
+
+  const knownItems = getKnownPlaylistItems(playlistIds);
+  const derivedKnownLinks = buildPlaylistDirectLinksFromItems(
+    knownItems,
+    playlistIds,
+  );
+  if (derivedKnownLinks.length) {
+    return derivedKnownLinks;
+  }
+
+  return [];
+}
+
+async function ensurePlaylistLinksHydrated(pageInfo) {
+  if (
+    !pageInfo?.isPlaylist ||
+    !pageInfo.playlistId ||
+    AppState.playlist.isHydrating
+  ) {
+    return false;
+  }
+
+  // Cooldown: avoid rapid-fire retries when no request URL exists yet.
+  const now = Date.now();
+  if (now - _lastHydrationAttemptAt < HYDRATION_RETRY_COOLDOWN_MS) {
+    return false;
+  }
+  _lastHydrationAttemptAt = now;
+
+  if (getCurrentPlaylistDirectLinks(pageInfo).length) {
+    return true;
+  }
+
+  const requestUrl = findRecentPlaylistRequestUrl(pageInfo.playlistId);
+  if (!requestUrl) {
+    // TikTok's playlist modal often loads items from its React store rather than
+    // firing a fresh /api/mix/item_list/ request.  When no intercepted URL exists
+    // we construct one ourself by borrowing auth params from any recent TikTok API
+    // call on this page.
+    const builtUrl = buildMixItemListUrl(pageInfo.playlistId);
+    if (!builtUrl) {
+      return false;
+    }
+    return hydratePlaylistFromUrl(builtUrl, pageInfo);
+  }
+
+  return hydratePlaylistFromUrl(requestUrl, pageInfo);
+}
+
+function buildMixItemListUrl(playlistId) {
+  if (!playlistId) return null;
+
+  // Find any recent TikTok API request to borrow auth/session parameters from.
+  try {
+    const entries = performance.getEntriesByType?.("resource") || [];
+    let donorUrl = null;
+    let donorStart = -Infinity;
+
+    for (const entry of entries) {
+      if (
+        !entry.name ||
+        !entry.name.includes("/api/") ||
+        !entry.name.includes("tiktok.com")
+      )
+        continue;
+      // Prefer user/playlist or post/item_list as donors since they share the
+      // same parameter shape.
+      const isGoodDonor =
+        entry.name.includes("/api/user/playlist") ||
+        entry.name.includes("/api/post/item_list");
+      const startTime = Number(entry.startTime) || 0;
+      if (isGoodDonor && startTime >= donorStart) {
+        donorStart = startTime;
+        donorUrl = entry.name;
+      }
+    }
+
+    if (!donorUrl) {
+      // Fall back to any tiktok API call
+      for (const entry of entries) {
+        if (entry.name?.includes("tiktok.com/api/")) {
+          donorUrl = entry.name;
+          break;
+        }
+      }
+    }
+
+    if (!donorUrl) return null;
+
+    const parsed = new URL(donorUrl);
+    // Rewrite endpoint to mix/item_list
+    parsed.pathname = "/api/mix/item_list/";
+    // Set the playlist-specific params
+    parsed.searchParams.set("mixId", playlistId);
+    parsed.searchParams.set("count", "30");
+    parsed.searchParams.set("cursor", "0");
+    // Remove donor-specific params that don't apply
+    parsed.searchParams.delete("secUid");
+    // Remove bogus/gnarly since they're request-specific signatures
+    parsed.searchParams.delete("X-Bogus");
+    parsed.searchParams.delete("X-Gnarly");
+
+    return parsed.toString();
+  } catch (error) {
+    console.warn("[Playlist:Hydrate] buildMixItemListUrl error:", error);
+    return null;
+  }
+}
+
+async function hydratePlaylistFromUrl(requestUrl, pageInfo) {
+  AppState.playlist.isHydrating = true;
+
+  try {
+    const response = await fetch(requestUrl, {
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      throw new Error(`Playlist request failed with HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!Array.isArray(data?.itemList) || data.itemList.length === 0) {
+      return false;
+    }
+
+    rememberCurrentPlaylistItems(
+      data.itemList,
+      pageInfo.playlistId,
+      requestUrl,
+      { touchLastSeen: false },
+    );
+    handleFoundItems(data.itemList.filter((item) => item?.id));
+    return true;
+  } catch (error) {
+    if (AppState.debug.active) {
+      console.warn("Failed to lazily hydrate playlist links:", error);
+    }
+    return false;
+  } finally {
+    AppState.playlist.isHydrating = false;
+  }
 }
 
 function removePlaylistHeaderActionButton() {
   document.getElementById(PLAYLIST_HEADER_BUTTON_ID)?.remove();
+}
+
+function getPlaylistActionContextContainer(element) {
+  if (!(element instanceof HTMLElement)) {
+    return null;
+  }
+
+  const selector =
+    '#login-modal, [role="dialog"], [aria-modal="true"], [data-e2e*="modal"], [data-e2e*="video-detail"], [data-e2e*="player"]';
+
+  return (
+    element.parentElement?.closest(selector) ||
+    element.closest(selector) ||
+    null
+  );
+}
+
+function hasPlaylistShareSemantics(element) {
+  if (!(element instanceof HTMLElement)) {
+    return false;
+  }
+
+  const dataE2E = element.getAttribute("data-e2e") || "";
+  const label =
+    element.getAttribute("aria-label") || element.textContent || dataE2E || "";
+
+  return /\bshare\b/i.test(label.trim()) || /share-btn/i.test(dataE2E);
+}
+
+function isPlaylistModalContext(element) {
+  const container = getPlaylistActionContextContainer(element);
+  if (!(container instanceof HTMLElement)) {
+    return false;
+  }
+
+  return Boolean(
+    container.querySelector('[data-e2e="modal-close-inner-button"]') &&
+    container.querySelector('[data-e2e="browse-video-desc"]'),
+  );
+}
+
+function getPlaylistShareActionScore(element) {
+  if (!(element instanceof HTMLElement) || !element.offsetParent) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  if (!hasPlaylistShareSemantics(element)) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const dataE2E = element.getAttribute("data-e2e") || "";
+  let score = /share-btn/i.test(dataE2E) ? 100 : 20;
+
+  if (getPlaylistActionContextContainer(element)) {
+    score += 60;
+  }
+
+  if (element.closest('[data-e2e="browse-video-desc"]')) {
+    score -= 200;
+  }
+
+  if (element.closest("header")) {
+    score -= 30;
+  }
+
+  const rect = element.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) {
+    score += 5;
+  }
+
+  return score;
 }
 
 function findPlaylistShareActionElement() {
@@ -3430,46 +3884,211 @@ function findPlaylistShareActionElement() {
   };
 
   const selectorCandidates = [
+    '[data-e2e="share-btn"]',
+    '[role="button"][data-e2e*="share"]',
     'button[data-e2e*="share"]',
     '[data-e2e*="share"] button',
     'button[aria-label*="Share"]',
     '[role="button"][aria-label*="Share"]',
   ];
 
+  const candidates = new Set();
+
   for (const selector of selectorCandidates) {
-    const element = Array.from(document.querySelectorAll(selector)).find(
-      isNativePageAction,
-    );
-    if (element instanceof HTMLElement) {
-      return element.closest('button, [role="button"], a') || element;
-    }
+    Array.from(document.querySelectorAll(selector)).forEach((element) => {
+      const candidate =
+        element instanceof HTMLElement
+          ? element.closest('button, [role="button"], a') || element
+          : null;
+
+      if (
+        candidate instanceof HTMLElement &&
+        isNativePageAction(candidate) &&
+        hasPlaylistShareSemantics(candidate)
+      ) {
+        candidates.add(candidate);
+      }
+    });
   }
 
+  Array.from(document.querySelectorAll('button, [role="button"], a')).forEach(
+    (element) => {
+      if (!isNativePageAction(element)) {
+        return;
+      }
+
+      if (getPlaylistShareActionScore(element) > 0) {
+        candidates.add(element);
+      }
+    },
+  );
+
   return (
-    Array.from(document.querySelectorAll('button, [role="button"], a')).find(
-      (element) => {
-        if (!isNativePageAction(element)) {
-          return false;
-        }
+    Array.from(candidates).sort(
+      (left, right) =>
+        getPlaylistShareActionScore(right) - getPlaylistShareActionScore(left),
+    )[0] || null
+  );
+}
 
-        const label =
-          element.getAttribute("aria-label") ||
-          element.textContent ||
-          element.getAttribute("data-e2e") ||
-          "";
-
-        return /\bshare\b/i.test(label.trim());
-      },
+function findPlaylistModalCloseElement() {
+  return (
+    Array.from(
+      document.querySelectorAll('[data-e2e="modal-close-inner-button"]'),
+    ).find(
+      (element) =>
+        element instanceof HTMLElement &&
+        element.offsetParent &&
+        !element.closest("#" + DOM_IDS.DOWNLOADER_WRAPPER) &&
+        isPlaylistModalContext(element),
     ) || null
   );
 }
 
-function getPlaylistHeaderButtonState() {
-  const playlistItems = getCurrentPlaylistDirectLinks();
-  const total = playlistItems.length;
-  const done = Math.min(AppState.downloadedURLs.length, total);
+function getPlaylistButtonContext() {
+  const pageInfo = syncPlaylistStateWithLocation();
+  if (pageInfo.isPlaylist) {
+    return pageInfo;
+  }
+
+  const modalCloseButton = findPlaylistModalCloseElement();
+  if (!(modalCloseButton instanceof HTMLElement)) {
+    return pageInfo;
+  }
+
+  let playlistId = String(AppState.playlist.currentId || "").trim();
+
+  // If the modal is open but pointerdown priming didn't fire (e.g. programmatic
+  // click or fast navigation), try to extract the playlist ID from a visible
+  // playlist link inside the modal's parent container.
+  if (!playlistId) {
+    const container = getPlaylistActionContextContainer(modalCloseButton);
+    if (container instanceof HTMLElement) {
+      const playlistLink = container.querySelector('a[href*="/playlist/"]');
+      if (playlistLink instanceof HTMLAnchorElement) {
+        const href = playlistLink.getAttribute("href") || playlistLink.href;
+        const match = href.match(/-([0-9]{10,})(?:[?#]|$)/);
+        if (match) {
+          playlistId = match[1];
+          AppState.playlist.currentId = playlistId;
+          AppState.playlist.currentName =
+            playlistLink.textContent?.trim() || "Playlist";
+          AppState.playlist.lastPrimedAt = Date.now();
+        }
+      }
+    }
+  }
+
+  return {
+    ...pageInfo,
+    isProfile: true,
+    isPlaylist: true,
+    playlistId,
+    playlistName: AppState.playlist.currentName || "Playlist",
+    playlistSource: "runtime",
+    isTransientPlaylist: true,
+  };
+}
+
+function findPlaylistModalTitleElement() {
+  const closeBtn = findPlaylistModalCloseElement();
+  if (!(closeBtn instanceof HTMLElement)) return null;
+
+  const modalContainer = closeBtn.parentElement;
+  if (!(modalContainer instanceof HTMLElement)) return null;
+
+  // The modal title is the first visible child element of the modal container
+  // that isn't the content area, close button, or our own button.
+  // It's always the first child div in TikTok's DivModalContainer.
+  const firstChild = modalContainer.firstElementChild;
+  if (
+    firstChild instanceof HTMLElement &&
+    firstChild.id !== PLAYLIST_HEADER_BUTTON_ID &&
+    !firstChild.querySelector('[data-e2e="browse-video-desc"]') &&
+    firstChild.getAttribute("data-e2e") !== "modal-close-inner-button"
+  ) {
+    return firstChild;
+  }
+  return null;
+}
+
+function getPlaylistHeaderMountTarget(pageInfo) {
+  if (pageInfo.playlistSource === "runtime") {
+    const modalCloseButton = findPlaylistModalCloseElement();
+    if (
+      modalCloseButton instanceof HTMLElement &&
+      modalCloseButton.parentElement instanceof HTMLElement
+    ) {
+      const modalContainer = modalCloseButton.parentElement;
+      // Find the content container (has browse-video-desc inside) and insert before it.
+      // This places the button between the title and the video list.
+      const contentContainer = Array.from(modalContainer.children).find(
+        (child) =>
+          child instanceof HTMLElement &&
+          child.querySelector('[data-e2e="browse-video-desc"]'),
+      );
+      if (contentContainer) {
+        return {
+          container: modalContainer,
+          reference: contentContainer,
+          variant: "modal",
+          insertPosition: "before",
+        };
+      }
+      // Fallback: insert as second child (after title, before everything else)
+      const secondChild = modalContainer.children[1];
+      if (secondChild) {
+        return {
+          container: modalContainer,
+          reference: secondChild,
+          variant: "modal",
+          insertPosition: "before",
+        };
+      }
+    }
+  }
+
+  const shareAction = findPlaylistShareActionElement();
+  if (!(shareAction instanceof HTMLElement) || !shareAction.parentElement) {
+    return null;
+  }
+
+  if (
+    pageInfo.playlistSource === "runtime" &&
+    !getPlaylistActionContextContainer(shareAction)
+  ) {
+    return null;
+  }
+
+  return {
+    container: shareAction.parentElement,
+    reference: shareAction,
+    variant: "inline",
+    insertPosition: "after",
+  };
+}
+
+function getPlaylistHeaderButtonState(
+  pageInfo = syncPlaylistStateWithLocation(),
+  playlistItems = getCurrentPlaylistDirectLinks(pageInfo),
+) {
+  const activeBatchType = getActiveDownloadBatchType();
+  const activePlaylistUrls =
+    activeBatchType === "playlist"
+      ? getActiveDownloadBatchUrls()
+      : getDownloadItemUrls(playlistItems);
+  const total = activePlaylistUrls.length || playlistItems.length;
+  const done = getDownloadedCountForUrls(activePlaylistUrls);
 
   if (AppState.downloading.isDownloadingAll) {
+    if (activeBatchType !== "playlist") {
+      return {
+        label: "Download in progress",
+        icon: "hourglass",
+        disabled: true,
+      };
+    }
+
     if (!total) {
       return {
         label: "Downloading Playlist…",
@@ -3502,15 +4121,46 @@ function getPlaylistHeaderButtonState() {
 }
 
 function syncPlaylistHeaderActionButton() {
-  const pageInfo = syncPlaylistStateWithLocation();
+  // Reentrancy guard — prevents recursive calls from microtasks or
+  // DOM-mutation callbacks from creating a runaway loop.
+  if (_playlistSyncActive) return;
+  _playlistSyncActive = true;
+
+  try {
+    _syncPlaylistHeaderActionButtonImpl();
+  } finally {
+    _playlistSyncActive = false;
+  }
+}
+
+function _syncPlaylistHeaderActionButtonImpl() {
+  const pageInfo = getPlaylistButtonContext();
   if (!pageInfo.isPlaylist) {
     removePlaylistHeaderActionButton();
     return;
   }
 
-  const shareAction = findPlaylistShareActionElement();
-  if (!(shareAction instanceof HTMLElement) || !shareAction.parentElement) {
+  const mountTarget = getPlaylistHeaderMountTarget(pageInfo);
+  if (!mountTarget) {
+    removePlaylistHeaderActionButton();
     return;
+  }
+
+  const playlistLinks = getCurrentPlaylistDirectLinks(pageInfo);
+
+  if (
+    pageInfo.playlistId &&
+    !playlistLinks.length &&
+    !AppState.playlist.isHydrating
+  ) {
+    // IMPORTANT: schedule on an animation frame, NOT a microtask.
+    // ensurePlaylistLinksHydrated is async and may resolve instantly
+    // (e.g. when no request URL exists yet). A .then() on a resolved
+    // promise fires as a microtask — calling sync directly from that
+    // creates an infinite microtask loop that freezes the tab.
+    void ensurePlaylistLinksHydrated(pageInfo).then(() => {
+      schedulePlaylistHeaderSync();
+    });
   }
 
   let button = document.getElementById(PLAYLIST_HEADER_BUTTON_ID);
@@ -3527,7 +4177,10 @@ function syncPlaylistHeaderActionButton() {
         return;
       }
 
-      if (!getCurrentPlaylistDirectLinks().length) {
+      const playlistLinks = getCurrentPlaylistDirectLinks(
+        getPlaylistButtonContext(),
+      );
+      if (!playlistLinks.length) {
         showToast(
           "Playlist still loading",
           "Wait a moment for the playlist posts to load, then try again.",
@@ -3535,17 +4188,39 @@ function syncPlaylistHeaderActionButton() {
         return;
       }
 
-      await downloadAllLinks(button);
-      syncPlaylistHeaderActionButton();
+      await downloadAllLinks(button, {
+        links: playlistLinks,
+        batchType: "playlist",
+      });
+      displayFoundUrls({ forced: true });
+      schedulePlaylistHeaderSync();
     });
   }
 
-  if (button.parentElement !== shareAction.parentElement) {
+  button.classList.toggle(
+    "ettpd-playlist-modal-btn",
+    mountTarget.variant === "modal",
+  );
+
+  const shouldMoveButton =
+    button.parentElement !== mountTarget.container ||
+    (mountTarget.insertPosition === "before"
+      ? button.nextElementSibling !== mountTarget.reference
+      : button.previousElementSibling !== mountTarget.reference);
+
+  if (shouldMoveButton) {
     button.remove();
-    shareAction.parentElement.insertBefore(button, shareAction.nextSibling);
+    if (mountTarget.insertPosition === "before") {
+      mountTarget.container.insertBefore(button, mountTarget.reference);
+    } else {
+      mountTarget.container.insertBefore(
+        button,
+        mountTarget.reference.nextSibling,
+      );
+    }
   }
 
-  const state = getPlaylistHeaderButtonState();
+  const state = getPlaylistHeaderButtonState(pageInfo, playlistLinks);
   setButtonWithIcon(button, state.label, state.icon);
   button.disabled = state.disabled;
   button.dataset.playlistId = pageInfo.playlistId || "";
@@ -7995,7 +8670,7 @@ export function attachDownloadButtons() {
   injectYouMayLikeGridDownloadButtons();
   // injectImageFeedDownloadButtons(); // optional
   downloadBtnInjectorForMainVideoSideGrid();
-  syncPlaylistHeaderActionButton();
+  schedulePlaylistHeaderSync();
 }
 
 /**

@@ -2830,6 +2830,18 @@ label[for="ettpd-current-profile"] {
   box-shadow: none;
 }
 
+.ettpd-playlist-modal-btn {
+  position: relative;
+  display: block;
+  margin: 8px auto 4px;
+  min-height: 32px;
+  padding: 0 16px;
+  font-size: 13px;
+  z-index: 3;
+  max-width: calc(100% - 32px);
+  width: fit-content;
+}
+
 .ettpd-action-btn.secondary {
   background: var(--ettpd-bg-tertiary);
   color: var(--ettpd-text-primary);

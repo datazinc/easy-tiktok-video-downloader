@@ -176,6 +176,7 @@ const AppState = {
     requestUrl: "",
     itemIds: [],
     lastHydratedAt: 0,
+    lastPrimedAt: 0,
     lastRequestSeenAt: 0,
     isHydrating: false,
   },
@@ -184,6 +185,8 @@ const AppState = {
     isActive: false,
     isDownloadingAll: false,
     pausedAll: false,
+    batchType: null,
+    activeBatchUrls: [],
   },
   ui: {
     downloaderPositionType:
@@ -296,6 +299,18 @@ export function resetAppStateToDefaults() {
     isActive: false,
     isDownloadingAll: false,
     pausedAll: false,
+    batchType: null,
+    activeBatchUrls: [],
+  };
+  AppState.playlist = {
+    currentId: null,
+    currentName: "",
+    requestUrl: "",
+    itemIds: [],
+    lastHydratedAt: 0,
+    lastPrimedAt: 0,
+    lastRequestSeenAt: 0,
+    isHydrating: false,
   };
   AppState.ui = {
     downloaderPositionType: null,

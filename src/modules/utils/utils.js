@@ -75,25 +75,268 @@ function decodeNamedEntitySlug(rawSlug, fallbackName = "") {
   };
 }
 
+const PLAYLIST_RUNTIME_CONTEXT_TTL_MS = 30000;
+const PLAYLIST_OVERLAY_SURFACE_SELECTORS = [
+  "#login-modal",
+  '[role="dialog"]',
+  '[aria-modal="true"]',
+  '[data-e2e*="modal"]',
+  '[data-e2e*="video-detail"]',
+];
+
+function getPlaylistSlugFromValue(rawValue) {
+  if (typeof rawValue !== "string" || !rawValue.trim()) {
+    return "";
+  }
+
+  const match = rawValue.match(/\/playlist\/([^/?#]+)/);
+  if (match) {
+    return match[1];
+  }
+
+  return rawValue
+    .replace(/^[#/]+/, "")
+    .split(/[?#]/)[0]
+    .trim();
+}
+
+function isUserScopedPath(pathname = window.location.pathname) {
+  return /^\/@[^/]+(?:\/.*)?$/.test(pathname || "");
+}
+
+function resolvePlaylistNameFromPage(playlistId, fallbackName = "") {
+  const fallback = fallbackName || "Playlist";
+  const normalizedPlaylistId = String(playlistId || "").trim();
+  if (!normalizedPlaylistId) {
+    return fallback;
+  }
+
+  try {
+    const matchingAnchor = Array.from(
+      document.querySelectorAll('a[href*="/playlist/"]'),
+    ).find((anchor) => {
+      if (!(anchor instanceof HTMLAnchorElement)) {
+        return false;
+      }
+
+      const parsed = decodeNamedEntitySlug(
+        getPlaylistSlugFromValue(anchor.getAttribute("href") || anchor.href),
+        fallback,
+      );
+
+      return parsed.id === normalizedPlaylistId;
+    });
+
+    if (matchingAnchor instanceof HTMLAnchorElement) {
+      const parsed = decodeNamedEntitySlug(
+        getPlaylistSlugFromValue(
+          matchingAnchor.getAttribute("href") || matchingAnchor.href,
+        ),
+        fallback,
+      );
+
+      if (parsed.name) {
+        return parsed.name;
+      }
+    }
+  } catch (error) {
+    console.warn("Failed to resolve playlist name from page:", error);
+  }
+
+  return fallback;
+}
+
+function hasVisiblePlaylistOverlaySurface() {
+  try {
+    return PLAYLIST_OVERLAY_SURFACE_SELECTORS.some((selector) =>
+      Array.from(document.querySelectorAll(selector)).some((element) => {
+        if (!(element instanceof HTMLElement) || !element.offsetParent) {
+          return false;
+        }
+
+        const hasPlaylistModalShape = Boolean(
+          element.querySelector('[data-e2e="modal-close-inner-button"]') &&
+          element.querySelector('[data-e2e="browse-video-desc"]'),
+        );
+
+        if (hasPlaylistModalShape) {
+          return true;
+        }
+
+        // Only use targeted querySelector — reading .textContent on a large
+        // dialog forces a full-subtree walk and can freeze the page.
+        return Boolean(
+          element.querySelector(
+            'button[data-e2e*="share"], [data-e2e*="share"] button, button[aria-label*="Share"], [role="button"][aria-label*="Share"], [data-e2e*="share"]',
+          ),
+        );
+      }),
+    );
+  } catch (error) {
+    console.warn("Failed to inspect playlist overlay surfaces:", error);
+    return false;
+  }
+}
+
+function getBaseProfileOrCollectionPageInfo() {
+  const path = window.location.pathname;
+
+  // Check if it's a profile page: /@username with optional trailing slash
+  // Only match the profile root, NOT sub-paths like /video/, /live/, /photo/, etc.
+  // Also allow known profile tab paths: /@username, /@username/, /@username/collection/...
+  const profileMatch = path.match(/^\/@([^/]+)(\/.*)?$/);
+  const subPath = profileMatch?.[2] || "";
+  // Valid profile sub-paths are: none, /, or /collection/...
+  // Invalid: /video/..., /live/..., /photo/..., etc.
+  const invalidSubPaths = /^\/(video|live|photo)\//;
+  const isProfile = !!profileMatch && !invalidSubPaths.test(subPath);
+
+  // Check if it's a collection page: /@username/collection/collection-name
+  const collectionMatch = path.match(/\/@[^/]+\/collection\/([^/?#]+)/);
+  const isCollection = !!collectionMatch;
+  let collectionName = "";
+
+  const playlistSlug = getPlaylistSlugFromValue(path);
+  const isPlaylist = /\/playlist\//.test(path) && !!playlistSlug;
+  let playlistName = "";
+  let playlistId = "";
+
+  if (isCollection && collectionMatch) {
+    try {
+      const raw = decodeURIComponent(collectionMatch[1]);
+      collectionName = raw.replace(/-\d+$/, "");
+    } catch (e) {
+      console.warn("Failed to decode collection name:", e);
+    }
+  }
+
+  if (isPlaylist && playlistSlug) {
+    const parsed = decodeNamedEntitySlug(playlistSlug, "Playlist");
+    playlistName = parsed.name;
+    playlistId = parsed.id;
+  }
+
+  return {
+    isProfile: isProfile || isCollection || isPlaylist,
+    isCollection,
+    collectionName,
+    isPlaylist,
+    playlistName,
+    playlistId,
+    playlistSource: isPlaylist ? "route" : null,
+    isTransientPlaylist: false,
+  };
+}
+
+function getRuntimePlaylistContext() {
+  // Shared page-state helpers stay route-driven. Treating the transient modal as a
+  // full playlist page breaks normal profile-page rendering.
+  return null;
+}
+
 function resetPlaylistRuntimeState() {
   AppState.playlist.currentId = null;
   AppState.playlist.currentName = "";
   AppState.playlist.requestUrl = "";
   AppState.playlist.itemIds = [];
   AppState.playlist.lastHydratedAt = 0;
+  AppState.playlist.lastPrimedAt = 0;
   AppState.playlist.lastRequestSeenAt = 0;
   AppState.playlist.isHydrating = false;
+}
+
+function primePlaylistRuntimeContext(rawValue, fallbackName = "") {
+  const slug = getPlaylistSlugFromValue(rawValue);
+  if (!slug) {
+    return null;
+  }
+
+  const parsed = decodeNamedEntitySlug(slug, fallbackName || "Playlist");
+  if (!parsed.id) {
+    return null;
+  }
+
+  if (
+    AppState.playlist.currentId &&
+    AppState.playlist.currentId !== parsed.id
+  ) {
+    resetPlaylistRuntimeState();
+  }
+
+  AppState.playlist.currentId = parsed.id;
+  AppState.playlist.currentName = parsed.name || fallbackName || "Playlist";
+  AppState.playlist.lastPrimedAt = Date.now();
+  return parsed;
+}
+
+function handlePlaylistAnchorPriming(eventTarget) {
+  if (!(eventTarget instanceof Element)) {
+    return false;
+  }
+
+  const playlistAnchor = eventTarget.closest('a[href*="/playlist/"]');
+  if (!(playlistAnchor instanceof HTMLAnchorElement)) {
+    return false;
+  }
+
+  if (playlistAnchor.closest("#" + DOM_IDS.DOWNLOADER_WRAPPER)) {
+    return false;
+  }
+
+  const fallbackName =
+    playlistAnchor.querySelector("span")?.textContent?.trim() ||
+    playlistAnchor.textContent?.trim() ||
+    "Playlist";
+
+  return Boolean(
+    primePlaylistRuntimeContext(
+      playlistAnchor.getAttribute("href") || playlistAnchor.href,
+      fallbackName,
+    ),
+  );
+}
+
+if (!window.ettpd__playlistContextPrimingBound) {
+  window.ettpd__playlistContextPrimingBound = true;
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      handlePlaylistAnchorPriming(event.target);
+    },
+    true,
+  );
 }
 
 export function syncPlaylistStateWithLocation() {
   const pageInfo = isOnProfileOrCollectionPage();
 
   if (!pageInfo.isPlaylist || !pageInfo.playlistId) {
-    if (
+    const hasTransientPlaylistState = Boolean(
       AppState.playlist.currentId ||
       AppState.playlist.itemIds.length ||
-      AppState.playlist.requestUrl
+      AppState.playlist.requestUrl,
+    );
+
+    const lastPrimedAt = Number(AppState.playlist.lastPrimedAt) || 0;
+    const lastRequestSeenAt = Number(AppState.playlist.lastRequestSeenAt) || 0;
+    const recentlyPrimed =
+      lastPrimedAt > 0 &&
+      Date.now() - lastPrimedAt < PLAYLIST_RUNTIME_CONTEXT_TTL_MS;
+    const recentlyObserved =
+      lastRequestSeenAt > 0 &&
+      Date.now() - lastRequestSeenAt < PLAYLIST_RUNTIME_CONTEXT_TTL_MS;
+
+    if (
+      hasTransientPlaylistState &&
+      (recentlyPrimed ||
+        recentlyObserved ||
+        hasVisiblePlaylistOverlaySurface() ||
+        AppState.downloading.isDownloadingAll)
     ) {
+      return pageInfo;
+    }
+
+    if (hasTransientPlaylistState) {
       resetPlaylistRuntimeState();
     }
     return pageInfo;
@@ -101,9 +344,9 @@ export function syncPlaylistStateWithLocation() {
 
   if (AppState.playlist.currentId !== pageInfo.playlistId) {
     resetPlaylistRuntimeState();
-    AppState.playlist.currentId = pageInfo.playlistId;
   }
 
+  AppState.playlist.currentId = pageInfo.playlistId;
   AppState.playlist.currentName = pageInfo.playlistName || "Playlist";
   return pageInfo;
 }
@@ -121,20 +364,41 @@ export function getPlaylistIdFromRequestUrl(rawUrl) {
   }
 }
 
-export function rememberPlaylistRequestUrl(rawUrl) {
-  const pageInfo = syncPlaylistStateWithLocation();
-  if (!pageInfo.isPlaylist || !pageInfo.playlistId) return null;
+export function rememberPlaylistRequestUrl(rawUrl, options = {}) {
+  const { touchLastSeen = true } = options;
 
   try {
     const parsed = new URL(rawUrl, window.location.origin);
     if (!parsed.pathname.includes("/api/mix/item_list/")) return null;
 
     const mixId = parsed.searchParams.get("mixId") || "";
-    if (!mixId || mixId !== pageInfo.playlistId) return null;
+    const basePageInfo = getBaseProfileOrCollectionPageInfo();
+    if (!mixId || (!basePageInfo.isProfile && !isUserScopedPath())) {
+      return null;
+    }
+
+    if (
+      basePageInfo.isPlaylist &&
+      basePageInfo.playlistId &&
+      mixId !== basePageInfo.playlistId
+    ) {
+      return null;
+    }
+
+    if (AppState.playlist.currentId && AppState.playlist.currentId !== mixId) {
+      resetPlaylistRuntimeState();
+    }
 
     const normalizedUrl = parsed.toString();
+    AppState.playlist.currentId = mixId;
+    AppState.playlist.currentName = resolvePlaylistNameFromPage(
+      mixId,
+      basePageInfo.playlistName || AppState.playlist.currentName || "Playlist",
+    );
     AppState.playlist.requestUrl = normalizedUrl;
-    AppState.playlist.lastRequestSeenAt = Date.now();
+    if (touchLastSeen) {
+      AppState.playlist.lastRequestSeenAt = Date.now();
+    }
     return normalizedUrl;
   } catch (error) {
     console.warn("Failed to remember playlist request URL:", rawUrl, error);
@@ -146,15 +410,39 @@ export function rememberCurrentPlaylistItems(
   items,
   playlistId = null,
   requestUrl = "",
+  options = {},
 ) {
-  const pageInfo = syncPlaylistStateWithLocation();
-  if (!pageInfo.isPlaylist || !pageInfo.playlistId || !Array.isArray(items)) {
+  const { touchLastSeen = Boolean(requestUrl) } = options;
+  if (!Array.isArray(items)) {
     return false;
   }
 
-  const activePlaylistId = playlistId || pageInfo.playlistId;
-  if (!activePlaylistId || activePlaylistId !== pageInfo.playlistId) {
+  const basePageInfo = getBaseProfileOrCollectionPageInfo();
+  const activePlaylistId = String(
+    playlistId ||
+      AppState.playlist.currentId ||
+      basePageInfo.playlistId ||
+      getPlaylistIdFromRequestUrl(requestUrl) ||
+      "",
+  ).trim();
+
+  if (!activePlaylistId) {
     return false;
+  }
+
+  if (
+    basePageInfo.isPlaylist &&
+    basePageInfo.playlistId &&
+    activePlaylistId !== basePageInfo.playlistId
+  ) {
+    return false;
+  }
+
+  if (
+    AppState.playlist.currentId &&
+    AppState.playlist.currentId !== activePlaylistId
+  ) {
+    resetPlaylistRuntimeState();
   }
 
   const mergedIds = new Set(AppState.playlist.itemIds.map(String));
@@ -173,19 +461,28 @@ export function rememberCurrentPlaylistItems(
   if (!mergedIds.size) return false;
 
   AppState.playlist.currentId = activePlaylistId;
-  AppState.playlist.currentName = pageInfo.playlistName || "Playlist";
+  AppState.playlist.currentName = resolvePlaylistNameFromPage(
+    activePlaylistId,
+    basePageInfo.playlistName || AppState.playlist.currentName || "Playlist",
+  );
   AppState.playlist.itemIds = Array.from(mergedIds);
+  if (!AppState.playlist.lastPrimedAt) {
+    AppState.playlist.lastPrimedAt = Date.now();
+  }
   if (requestUrl) {
     AppState.playlist.requestUrl = requestUrl;
-    AppState.playlist.lastRequestSeenAt = Date.now();
+    if (touchLastSeen) {
+      AppState.playlist.lastRequestSeenAt = Date.now();
+    }
   }
 
   return changed;
 }
 
 export function findRecentPlaylistRequestUrl(playlistId = null) {
-  const pageInfo = syncPlaylistStateWithLocation();
-  const targetPlaylistId = playlistId || pageInfo.playlistId || "";
+  const pageInfo = isOnProfileOrCollectionPage();
+  const targetPlaylistId =
+    playlistId || pageInfo.playlistId || AppState.playlist.currentId || "";
 
   if (!targetPlaylistId) {
     return null;
@@ -216,10 +513,21 @@ export function findRecentPlaylistRequestUrl(playlistId = null) {
   }
 
   if (latestUrl) {
-    return rememberPlaylistRequestUrl(latestUrl) || latestUrl;
+    return (
+      rememberPlaylistRequestUrl(latestUrl, { touchLastSeen: false }) ||
+      latestUrl
+    );
   }
 
-  return AppState.playlist.requestUrl || null;
+  if (
+    AppState.playlist.requestUrl &&
+    getPlaylistIdFromRequestUrl(AppState.playlist.requestUrl) ===
+      targetPlaylistId
+  ) {
+    return AppState.playlist.requestUrl;
+  }
+
+  return null;
 }
 
 function getRenderableItemsForCurrentPage(pageInfo) {
@@ -242,53 +550,27 @@ function getRenderableItemsForCurrentPage(pageInfo) {
 
 /**
  * Checks if we're currently on a profile or collection page
- * @returns {Object} { isProfile: boolean, isCollection: boolean, collectionName: string, isPlaylist: boolean, playlistName: string, playlistId: string }
+ * @returns {Object} { isProfile: boolean, isCollection: boolean, collectionName: string, isPlaylist: boolean, playlistName: string, playlistId: string, playlistSource: string | null, isTransientPlaylist: boolean }
  */
 export function isOnProfileOrCollectionPage() {
-  const path = window.location.pathname;
-
-  // Check if it's a profile page: /@username with optional trailing slash
-  // Only match the profile root, NOT sub-paths like /video/, /live/, /photo/, etc.
-  // Also allow known profile tab paths: /@username, /@username/, /@username/collection/...
-  const profileMatch = path.match(/^\/@([^/]+)(\/.*)?$/);
-  const subPath = profileMatch?.[2] || "";
-  // Valid profile sub-paths are: none, /, or /collection/...
-  // Invalid: /video/..., /live/..., /photo/..., etc.
-  const invalidSubPaths = /^\/(video|live|photo)\//;
-  const isProfile = !!profileMatch && !invalidSubPaths.test(subPath);
-
-  // Check if it's a collection page: /@username/collection/collection-name
-  const collectionMatch = path.match(/\/@[^/]+\/collection\/([^/?#]+)/);
-  const isCollection = !!collectionMatch;
-  let collectionName = "";
-
-  const playlistMatch = path.match(/^\/@[^/]+\/playlist\/([^/?#]+)/);
-  const isPlaylist = !!playlistMatch;
-  let playlistName = "";
-  let playlistId = "";
-
-  if (isCollection && collectionMatch) {
-    try {
-      const raw = decodeURIComponent(collectionMatch[1]);
-      collectionName = raw.replace(/-\d+$/, "");
-    } catch (e) {
-      console.warn("Failed to decode collection name:", e);
-    }
+  const basePageInfo = getBaseProfileOrCollectionPageInfo();
+  if (basePageInfo.isPlaylist) {
+    return basePageInfo;
   }
 
-  if (isPlaylist && playlistMatch) {
-    const parsed = decodeNamedEntitySlug(playlistMatch[1], "Playlist");
-    playlistName = parsed.name;
-    playlistId = parsed.id;
+  const runtimePlaylistContext = getRuntimePlaylistContext(basePageInfo);
+  if (!runtimePlaylistContext) {
+    return basePageInfo;
   }
 
   return {
-    isProfile: isProfile || isCollection || isPlaylist,
-    isCollection,
-    collectionName,
-    isPlaylist,
-    playlistName,
-    playlistId,
+    ...basePageInfo,
+    isProfile: true,
+    isPlaylist: true,
+    playlistName: runtimePlaylistContext.playlistName,
+    playlistId: runtimePlaylistContext.playlistId,
+    playlistSource: runtimePlaylistContext.playlistSource,
+    isTransientPlaylist: runtimePlaylistContext.isTransientPlaylist,
   };
 }
 
@@ -1627,6 +1909,8 @@ export function stopActiveBatchDownload() {
   AppState.downloading.isActive = false;
   AppState.downloading.isDownloadingAll = false;
   AppState.downloading.pausedAll = false;
+  AppState.downloading.batchType = null;
+  AppState.downloading.activeBatchUrls = [];
 
   if (
     AppState.scrapperDetails.isAutoBatchDownloading ||
@@ -2570,6 +2854,14 @@ export function displayFoundUrls({ forced } = {}) {
     ) {
       return;
     }
+
+    const items = getRenderableItemsForCurrentPage(pageInfo);
+    const metas = items
+      .filter((it) => !(AppState.downloadPreferences.skipAds && it.isAd))
+      .map((media, idx) => buildVideoLinkMeta(media, idx));
+
+    AppState.allDirectLinks = metas;
+
     if (forced)
       // Update the button regardless.
       // TODO: If this causes some bugs, remove it
@@ -2596,7 +2888,6 @@ export function displayFoundUrls({ forced } = {}) {
       return;
     }
 
-    const items = getRenderableItemsForCurrentPage(pageInfo);
     const hashToDisplay = getDisplayedItemsHash(items);
     const path = window.location.pathname;
     if (
@@ -2641,8 +2932,6 @@ export function displayFoundUrls({ forced } = {}) {
     }
 
     if (document.body instanceof Node) {
-      AppState.allDirectLinks = [];
-
       if (items.length === 0) {
         const emptyListEl =
           updateDownloaderList([], hashToDisplay) || createDownloaderWrapper();
@@ -2658,18 +2947,6 @@ export function displayFoundUrls({ forced } = {}) {
         }
         return;
       }
-
-      const metas = items
-        .filter((it) => !(AppState.downloadPreferences.skipAds && it.isAd))
-        .map((media, idx) => {
-          console.log("Build meta for ", media);
-          const meta = buildVideoLinkMeta(media, idx);
-          console.log("Build meta for result ", meta);
-
-          AppState.allDirectLinks.push(meta);
-
-          return meta;
-        });
 
       const listEl = updateDownloaderList(metas, hashToDisplay);
       console.warn("Returned list Element ", listEl);
@@ -2721,19 +2998,39 @@ export function sendBasicBlobDownloadRequest(payload) {
 }
 
 // Batch download
-export async function downloadAllLinks(mainBtn) {
+export async function downloadAllLinks(mainBtn, options = {}) {
   if (AppState.debug.active)
     console.log("ettvdebugger: Starting batch download");
 
   // Check if this is a user-triggered download (not from scrapper auto-batch)
   const isUserTriggered = !AppState.scrapperDetails.isAutoBatchDownloading;
+  const batchType = options.batchType === "playlist" ? "playlist" : "all";
+  const providedLinks = Array.isArray(options.links) ? options.links : [];
+  const links = providedLinks.length
+    ? providedLinks
+    : AppState.allDirectLinks || [];
+  const batchUrls = links
+    .map((media) => (typeof media?.url === "string" ? media.url.trim() : ""))
+    .filter(Boolean);
+  const getCompletedLinkCount = () => {
+    if (!batchUrls.length) {
+      return 0;
+    }
+
+    const downloadedUrlSet = new Set(AppState.downloadedURLs);
+    return batchUrls.reduce(
+      (count, url) => count + (downloadedUrlSet.has(url) ? 1 : 0),
+      0,
+    );
+  };
 
   AppState.downloading.isActive = true;
   AppState.downloading.isDownloadingAll = true;
   AppState.downloading.pausedAll = false;
+  AppState.downloading.batchType = batchType;
+  AppState.downloading.activeBatchUrls = batchUrls;
   AppState.downloadPreferences.autoScrollMode = "off"; // Turn off scroll for now.
 
-  const links = AppState.allDirectLinks || [];
   let newVideoDownloadedCount = 0;
   let hasImage = false;
   let stoppedByUser = false;
@@ -2834,29 +3131,41 @@ export async function downloadAllLinks(mainBtn) {
 
   console.log("DEBUG_DL_ALLA exited loop 2 ", links.length);
 
+  const completedLinkCount = getCompletedLinkCount();
+
   if (stoppedByUser) {
     updateDownloadButtonLabel(
       mainBtn,
-      newVideoDownloadedCount
-        ? `Stopped after ${newVideoDownloadedCount} Download${
-            newVideoDownloadedCount > 1 ? "s" : ""
-          }`
-        : "Batch stopped",
+      completedLinkCount
+        ? batchType === "playlist"
+          ? `Stopped playlist after ${completedLinkCount} download${
+              completedLinkCount > 1 ? "s" : ""
+            }`
+          : `Stopped after ${completedLinkCount} Download${
+              completedLinkCount > 1 ? "s" : ""
+            }`
+        : batchType === "playlist"
+          ? "Playlist download stopped"
+          : "Batch stopped",
     );
-  } else if (!newVideoDownloadedCount && AppState.downloadedURLs.length > 0) {
+  } else if (!newVideoDownloadedCount && completedLinkCount > 0) {
     updateDownloadButtonLabel(
       mainBtn,
-      `All ${AppState.downloadedURLs.length} Post${
-        AppState.downloadedURLs.length > 1 ? "s" : ""
-      } Already Downloaded!`,
+      batchType === "playlist"
+        ? `Playlist already downloaded (${completedLinkCount})`
+        : `All ${completedLinkCount} Post${
+            completedLinkCount > 1 ? "s" : ""
+          } Already Downloaded!`,
     );
   } else {
     updateDownloadButtonLabel(
       mainBtn,
-      `Downloaded ${AppState.downloadedURLs.length} Posts!`,
+      batchType === "playlist"
+        ? `Downloaded playlist (${completedLinkCount})`
+        : `Downloaded ${completedLinkCount} Posts!`,
     );
     if (AppState.downloadPreferences.includeCSV) {
-      saveCSVFile(AppState.allDirectLinks);
+      saveCSVFile(links);
     }
     updateAllTimeDownloadsAndLeaderBoard(AppState.displayedState.itemsHash);
     if (
@@ -2877,6 +3186,8 @@ export async function downloadAllLinks(mainBtn) {
   AppState.downloading.isDownloadingAll = false;
   AppState.downloading.isActive = false;
   AppState.downloading.pausedAll = false;
+  AppState.downloading.batchType = null;
+  AppState.downloading.activeBatchUrls = [];
   const showRateDonateOn = !stoppedByUser && shouldShowRateDonatePopup();
   if (showRateDonateOn) {
     setTimeout(() => {
@@ -3739,19 +4050,18 @@ function shouldShowRateDonatePopup() {
 
 export async function getTabSpans(timeoutMs = 5000, intervalMs = 100) {
   const start = Date.now();
-  const path = window.location.pathname;
-
-  const playlistMatch = path.match(/^\/@[^/]+\/playlist\/([^/?#]+)/);
-  if (playlistMatch) {
-    const parsed = decodeNamedEntitySlug(playlistMatch[1], "Playlist");
+  const pageInfo = isOnProfileOrCollectionPage();
+  if (pageInfo.isPlaylist && pageInfo.playlistName) {
     return {
       videos: null,
       reposts: null,
       liked: null,
       favorites: null,
-      collection: parsed.name,
+      collection: pageInfo.playlistName,
     };
   }
+
+  const path = window.location.pathname;
 
   const isProfile = /^\/@[^/]+\/?$/.test(path);
 

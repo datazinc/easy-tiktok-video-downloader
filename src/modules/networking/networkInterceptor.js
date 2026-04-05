@@ -61,18 +61,11 @@ export class NetworkInterceptor {
     XMLHttpRequest.prototype.open = function (method, url, ...rest) {
       this._ni_method = method;
       this._ni_url = url;
-      console.log("NetworkInterceptor ● XHR open", method, url);
       return self._origXHROpen.call(this, method, url, ...rest);
     };
 
     XMLHttpRequest.prototype.send = function (body) {
       this.addEventListener("loadend", () => {
-        console.log(
-          "NetworkInterceptor ● XHR done",
-          this._ni_method,
-          this._ni_url,
-          this.status,
-        );
         let data;
         // inside your loadend listener…
         try {
@@ -88,7 +81,6 @@ export class NetworkInterceptor {
             }
           }
           if (data !== undefined) {
-            console.log("NetworkInterceptor ● XHR JSON", this._ni_url, data);
             self.handleResponse(data, this._ni_url);
           }
         } catch (err) {
@@ -106,33 +98,23 @@ export class NetworkInterceptor {
       const isReq = input instanceof self._OrigRequest;
       const url = isReq ? input.url : input;
       const method = (init && init.method) || (isReq && input.method) || "GET";
-      console.log("NetworkInterceptor ● fetch", method, url);
 
       try {
         const response = await self._origFetch(input, init);
-        console.log(
-          "NetworkInterceptor ● fetch response",
-          response.status,
-          response.url,
-        );
 
         // fire-and-forget JSON parsing
         response
           .clone()
           .json()
           .then((data) => {
-            console.log("NetworkInterceptor ● fetch JSON", response.url, data);
             self.handleResponse(data, response.url || url);
           })
-          .catch(() => {
-            console.warn("NetworkInterceptor ● fetch non-JSON", response.url);
-          });
+          .catch(() => {});
 
         return response;
       } catch (err) {
         if (err.name === "AbortError") {
           // this is usually a deliberate cancel; log at debug/info level
-          console.info("NetworkInterceptor ● fetch aborted", method, url);
         } else {
           console.warn("NetworkInterceptor ● fetch failed", err);
         }
@@ -143,7 +125,6 @@ export class NetworkInterceptor {
     // also patch Request ctor so future new Request() usages get logged
     window.Request = function (input, init) {
       const req = new self._OrigRequest(input, init);
-      console.log("NetworkInterceptor ● Request ctor", req.method, req.url);
       return req;
     };
     window.Request.prototype = this._OrigRequest.prototype;

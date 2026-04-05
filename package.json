@@ -13,7 +13,9 @@
     "buildff:prod": "rm -rf distff && webpack --mode production --config webpack.firefox.config.js && du -sh distff && (cd distff && zip -r ../distff.zip . -x '__MACOSX/*' -x '.*') && mv distff.zip distff/",
     "analyze": "webpack --config webpack.config.js --env analyze",
     "clean": "rm -rf dist",
-    "cc": "webpack --mode production"
+    "cc": "webpack --mode production",
+    "verify:versions": "node scripts/verify-version-sync.js",
+    "setup:hooks": "git config core.hooksPath .githooks"
   },
   "sideEffects": false,
   "browserslist": {

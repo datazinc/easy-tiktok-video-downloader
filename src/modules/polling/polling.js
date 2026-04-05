@@ -176,7 +176,7 @@ const uiTasks = [
     "playlist-data",
     pollPlaylistData,
     3500,
-    () => isOnProfileOrCollectionPage().isPlaylist,
+    () => syncPlaylistStateWithLocation().isPlaylist,
   ),
 ];
 
@@ -331,6 +331,7 @@ async function pollPlaylistData() {
       data.itemList,
       pageInfo.playlistId,
       requestUrl,
+      { touchLastSeen: false },
     );
     AppState.playlist.lastHydratedAt = Date.now();
     handleFoundItems(data.itemList.filter((item) => item?.id));
