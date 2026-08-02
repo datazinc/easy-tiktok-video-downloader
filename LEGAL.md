@@ -16,14 +16,17 @@ This repository and its release artifacts are provided as open source software f
 
 ## No Affiliation
 
-- This project is an independent open source effort.
-- It is not affiliated with, endorsed by, sponsored by, or approved by TikTok, ByteDance, or any related company.
+- This project is an independent, unofficial open source effort maintained by its contributors.
+- It is not affiliated with, endorsed by, sponsored by, authorized by, or approved by TikTok, ByteDance, their affiliates, or any related company.
+- No contributor, release artifact, website, repository, or project support channel should be understood as acting on behalf of TikTok or ByteDance.
+- TikTok and ByteDance do not provide support, warranties, or representations for this extension. Support requests should be directed only to this project's own channels.
 
 ## Trademark Notice
 
 - TikTok and related names, logos, and brand features are the property of their respective owners.
-- References to TikTok in this repository are used only to identify compatibility and describe the software's intended interoperability.
+- References to TikTok in this repository, extension name, manifests, user interface, and documentation are nominative and used only to identify compatibility and describe the software's intended interoperability.
 - No claim of ownership over third-party trademarks is made.
+- Do not use TikTok or ByteDance logos, trade dress, or wording that could make a fork, release, listing, or promotional material appear official.
 
 ## Open Source License
 
@@ -34,7 +37,7 @@ This repository and its release artifacts are provided as open source software f
 ## Release Artifacts
 
 - Official release builds are distributed through the GitHub Releases page for this repository.
-- If you redistribute modified builds or forks, do not imply endorsement by the original maintainer, TikTok, or ByteDance.
+- If you redistribute modified builds or forks, retain a prominent independent/unofficial notice and do not imply endorsement by the original maintainer, TikTok, or ByteDance.
 
 ## No Legal Advice
 

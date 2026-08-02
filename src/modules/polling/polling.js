@@ -218,8 +218,9 @@ export function pollInitialData() {
     return;
   }
 
-  // if (AppState.debug.active)
-  console.log("POLLINIT ettvdebugger: Polling initial data…");
+  if (AppState.debug.active) {
+    console.log("POLLINIT ettvdebugger: Polling initial data…");
+  }
   try {
     // logged-in preloadList
     try {

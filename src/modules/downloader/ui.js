@@ -12,6 +12,7 @@ import {
   getPostInfoFrom,
   getUsernameFromPlayingArticle,
   getCurrentPageUsername,
+  getCurrentPlayingArticle,
   expectSmallViewer,
   getVideoUsernameFromAllDirectLinks,
   canClickNextButton,
@@ -4314,6 +4315,52 @@ function createCurrentVideoButton() {
   return btn;
 }
 
+function getMediaQualityLabel(media) {
+  if (media?.isImage) return null;
+  if (media?.qualityTier === "hd") return "HD";
+  if (media?.qualityTier === "sd") return "SD";
+  return "?";
+}
+
+function getMediaQualityTitle(media) {
+  if (!["hd", "sd"].includes(media?.qualityTier)) {
+    return "Quality not available yet";
+  }
+
+  if (media?.qualityTier !== "hd") {
+    return media?.resolutionLabel
+      ? `SD source selected (${media.resolutionLabel})`
+      : "SD source selected";
+  }
+
+  return media?.resolutionLabel
+    ? `HD source selected (${media.resolutionLabel})`
+    : "HD source selected";
+}
+
+function createQualityBadge(media) {
+  const qualityLabel = getMediaQualityLabel(media);
+  if (!qualityLabel) return null;
+
+  const badge = document.createElement("span");
+  badge.className = `ettpd-quality-badge ettpd-quality-${
+    media?.qualityTier === "hd"
+      ? "hd"
+      : media?.qualityTier === "sd"
+        ? "sd"
+        : "unknown"
+  }`;
+  badge.textContent = qualityLabel;
+  badge.title = getMediaQualityTitle(media);
+  return badge;
+}
+
+function setButtonLabelWithQuality(button, label, media) {
+  button.replaceChildren(document.createTextNode(label));
+  const badge = createQualityBadge(media);
+  if (badge) button.appendChild(badge);
+}
+
 function updateCurrentVideoButton(btn, items = []) {
   if (!btn) return;
   const currentVideoId = document.location.pathname.split("/")[3];
@@ -4334,9 +4381,10 @@ function updateCurrentVideoButton(btn, items = []) {
   btn.style.display = "block";
 
   btn.disabled = false;
-  btn.textContent = currentMedia.isImage
+  const defaultLabel = currentMedia.isImage
     ? "Download Current Images"
     : "Download Current";
+  setButtonLabelWithQuality(btn, defaultLabel, currentMedia);
 
   if (currentMedia.isImage) {
     btn.onclick = (e) => downloadAllPostImagesHandler(e, currentMedia);
@@ -4344,7 +4392,6 @@ function updateCurrentVideoButton(btn, items = []) {
     btn.onclick = async (e) => {
       e?.stopPropagation?.();
       btn.disabled = true;
-      const originalContent = btn.cloneNode(true);
       btn.textContent = "";
       const downloadingIcon = createIcon("hourglass", 16);
       downloadingIcon.style.marginRight = "4px";
@@ -4367,7 +4414,7 @@ function updateCurrentVideoButton(btn, items = []) {
       } finally {
         setTimeout(() => {
           btn.disabled = false;
-          btn.textContent = originalText;
+          setButtonLabelWithQuality(btn, defaultLabel, currentMedia);
         }, 1500);
       }
     };
@@ -4841,6 +4888,7 @@ function getMediaEntryHash(media) {
     media.desc || "",
     media.downloaderHasLowConfidence ? "1" : "0",
     media.isAd ? "1" : "0",
+    media.qualityLabel || "?",
     media.isImage
       ? `img:${(media.imagePostImages || []).join("|")}`
       : `vid:${media.url || ""}`,
@@ -5060,8 +5108,8 @@ function buildMediaListItem(media, options = {}) {
     viewBtnContainer.appendChild(viewBtn);
 
     const downloadBtn = document.createElement("button");
-    downloadBtn.textContent = "Download";
     downloadBtn.className = "ettpd-download-btn";
+    setButtonLabelWithQuality(downloadBtn, "Download", media);
 
     downloadBtn.onclick = async (e) => {
       e.stopPropagation();
@@ -7351,11 +7399,9 @@ export function clearDownloadBtnContainers() {
     const isInsideActiveHoverSelection = isInsideActiveHoverSelectionRoot(el);
 
     if (hasActiveButton || isInsideActiveHoverSelection) {
-      console.log("✅ Skipping active download-btn-container", el);
       return;
     }
 
-    console.log("🧹 Removing download-btn-container", el);
     el.remove();
   });
 }
@@ -7410,8 +7456,26 @@ function createDownloadButton({
   const mediaTypeLabel = isImage ? "Image" : "Video";
   // const defaultBtnLabel = isSmallView ? "Save" : `Save ${mediaTypeLabel}`;
   const defaultBtnLabel = "Save";
-  const buildDefaultMarkup = () =>
-    `<span class="download-btn-icon" aria-hidden="true"></span><span class="download-btn-label">${defaultBtnLabel}</span>`;
+  const getOverlayMedia = () =>
+    AppState.allDirectLinks?.find(
+      (media) => String(media?.videoId) === String(videoId),
+    ) || { isImage, qualityLabel: "?", qualityTier: "unknown" };
+  const buildDefaultMarkup = () => {
+    const media = getOverlayMedia();
+    const qualityLabel = getMediaQualityLabel(media);
+    const qualityBadge = qualityLabel
+      ? `<span class="ettpd-quality-badge ettpd-quality-${
+          media?.qualityTier === "hd"
+            ? "hd"
+            : media?.qualityTier === "sd"
+              ? "sd"
+              : "unknown"
+        }" title="${
+          getMediaQualityTitle(media)
+        }">${qualityLabel}</span>`
+      : "";
+    return `<span class="download-btn-icon" aria-hidden="true"></span><span class="download-btn-label">${defaultBtnLabel}</span>${qualityBadge}`;
+  };
 
   // Prevent duplicate buttons
   if (parentEl.querySelector(`.${CSS.escape(videoId)}`)) {
@@ -7500,69 +7564,42 @@ function createDownloadButton({
       return;
     }
 
+    if (isImage) {
+      media.isImage = true;
+      media.imagePostImages = Array.isArray(media.imagePostImages)
+        ? media.imagePostImages
+        : [];
+      media.imagePostImages[photoIndex || 0] = src;
+    } else {
+      const videoSources = Array.isArray(media.videoSources)
+        ? media.videoSources
+        : [];
+      if (!videoSources.some((source) => source?.url === src)) {
+        videoSources.push({
+          url: src,
+          qualityLabel: "?",
+          qualityTier: "unknown",
+          resolutionLabel: null,
+          sourcePriority: -1,
+        });
+      }
+      media.videoSources = videoSources;
+      media.url = videoSources[0]?.url || src;
+      media.qualityLabel = videoSources[0]?.qualityLabel || "?";
+      media.qualityTier = videoSources[0]?.qualityTier || "unknown";
+      media.resolutionLabel = videoSources[0]?.resolutionLabel || null;
+    }
+
     btn.disabled = true;
     btn.textContent = "Saving…";
     let hasFailed = false;
     try {
-      await downloadURLToDisk(
-        src,
-        getDownloadFilePath(media, {
-          imageIndex: photoIndex,
-        }),
-        {
-          getFreshUrl: async ({ url, error, attempt }) => {
-            const staleBlobError =
-              typeof url === "string" &&
-              /^blob:/i.test(url) &&
-              (error?.code === "ERR_BLOB_FETCH" ||
-                /Failed to fetch|ERR_FILE_NOT_FOUND/i.test(
-                  error?.message || "",
-                ));
-
-            if (!staleBlobError) {
-              return null;
-            }
-
-            await new Promise((resolve) =>
-              setTimeout(resolve, Math.min(150 * attempt, 500)),
-            );
-
-            const nextTarget = resolveDownloadTarget();
-            const nextSrc = nextTarget.src;
-
-            if (AppState.debug.active) {
-              console.warn("IMAGES_DL 🔄 Retrying stale blob source", {
-                videoId,
-                from,
-                attempt,
-                previousSrc: typeof url === "string" ? url.slice(0, 96) : url,
-                nextSrc:
-                  typeof nextSrc === "string" ? nextSrc.slice(0, 96) : nextSrc,
-                changed: nextSrc !== url,
-              });
-            }
-
-            if (
-              typeof nextSrc === "string" &&
-              /^(https?:|blob:)/.test(nextSrc)
-            ) {
-              resolvedTarget = nextTarget;
-              return nextSrc;
-            }
-
-            return null;
-          },
-        },
-      );
+      await downloadSingleMedia(media, { imageIndex: photoIndex || 0 });
       btn.textContent = "";
       const savedIcon = createIcon("check", 16);
       savedIcon.style.marginRight = "4px";
       btn.appendChild(savedIcon);
       btn.appendChild(document.createTextNode("Saved"));
-      showCelebration(
-        "downloads",
-        getRandomDownloadSuccessMessage(isImage ? "photo" : "video"),
-      );
       if (!AppState.downloadPreferences.skipFailedDownloads) {
         setTimeout(() => {
           showRateUsPopUpLegacy();
@@ -7590,6 +7627,33 @@ function createDownloadButton({
     injectedInto: parentEl,
     container,
     from,
+  });
+}
+
+function refreshDownloadButtonQualityBadges() {
+  document.querySelectorAll("button.download-btn").forEach((button) => {
+    if (button.disabled) return;
+    const videoId = Array.from(button.classList).find((className) =>
+      /^\d{5,}$/.test(className),
+    );
+    if (!videoId) return;
+
+    const media = AppState.allDirectLinks?.find(
+      (candidate) => String(candidate?.videoId) === videoId,
+    );
+    const badge = button.querySelector(".ettpd-quality-badge");
+    const qualityLabel = getMediaQualityLabel(media);
+    if (!qualityLabel || !badge) return;
+
+    badge.textContent = qualityLabel;
+    badge.className = `ettpd-quality-badge ettpd-quality-${
+      media?.qualityTier === "hd"
+        ? "hd"
+        : media?.qualityTier === "sd"
+          ? "sd"
+          : "unknown"
+    }`;
+    badge.title = getMediaQualityTitle(media);
   });
 }
 
@@ -7800,8 +7864,63 @@ function injectExploreDownloadButtons() {
   });
 }
 
+function getRelevantFeedWrappers() {
+  const isMediaDetailPath = /^\/@[^/]+\/(photo|video)\/[A-Za-z0-9]+$/.test(
+    window.location.pathname,
+  );
+
+  if (!isMediaDetailPath) {
+    return Array.from(document.querySelectorAll("div[id^='xgwrapper-']"));
+  }
+
+  const roots = [];
+  const currentArticle = getCurrentPlayingArticle();
+  const viewportHeight =
+    window.innerHeight || document.documentElement.clientHeight || 0;
+
+  const pushRoot = (root) => {
+    if (!(root instanceof Element) || roots.includes(root)) return;
+    roots.push(root);
+  };
+
+  pushRoot(currentArticle);
+
+  Array.from(document.querySelectorAll("article"))
+    .filter((article) => {
+      if (!(article instanceof HTMLElement)) return false;
+      const rect = article.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return false;
+      }
+
+      return (
+        rect.bottom > viewportHeight * -0.25 && rect.top < viewportHeight * 1.25
+      );
+    })
+    .slice(0, 3)
+    .forEach(pushRoot);
+
+  if (!roots.length) {
+    return Array.from(document.querySelectorAll("div[id^='xgwrapper-']"));
+  }
+
+  const seen = new Set();
+  const wrappers = [];
+
+  roots.forEach((root) => {
+    root.querySelectorAll("div[id^='xgwrapper-']").forEach((wrapper) => {
+      if (!seen.has(wrapper)) {
+        seen.add(wrapper);
+        wrappers.push(wrapper);
+      }
+    });
+  });
+
+  return wrappers;
+}
+
 function injectFeedWrapperDownloadButtons() {
-  document.querySelectorAll("div[id^='xgwrapper-']").forEach((wrapper) => {
+  getRelevantFeedWrappers().forEach((wrapper) => {
     if (
       wrapper.closest('div[data-e2e="explore-item"]') ||
       wrapper.closest('div[data-e2e="user-post-item"]') ||
@@ -8768,6 +8887,7 @@ export function attachDownloadButtons() {
   injectYouMayLikeGridDownloadButtons();
   // injectImageFeedDownloadButtons(); // optional
   downloadBtnInjectorForMainVideoSideGrid();
+  refreshDownloadButtonQualityBadges();
   schedulePlaylistHeaderSync();
 }
 
@@ -8937,16 +9057,22 @@ export function handleSingleImage(picture) {
 }
 
 export function scanAndInject() {
-  console.log("IMAGES_DL scanAndInject init...");
+  if (AppState.debug.active) {
+    console.log("IMAGES_DL scanAndInject init...");
+  }
   const swipers = Array.from(document.querySelectorAll("div.swiper"));
   const activeSwiper = document.querySelector("div.swiper.swiper-initialized");
-  console.log("IMAGES_DL scanAndInject init...", { swipers, activeSwiper });
+  if (AppState.debug.active) {
+    console.log("IMAGES_DL scanAndInject init...", { swipers, activeSwiper });
+  }
 
   if (
     /^\/@[^\/]+\/(photo|video)\/[A-Za-z0-9]+$/.test(window.location.pathname) &&
     activeSwiper
   ) {
-    console.log("IMAGES_DL photo/video match found init...");
+    if (AppState.debug.active) {
+      console.log("IMAGES_DL photo/video match found init...");
+    }
 
     clearDownloadContainers();
     swipers.length = 0;
@@ -8968,12 +9094,14 @@ export function clearDownloadContainers() {
     !/^\/@[^\/]+\/(photo|video)\/[A-Za-z0-9]+$/.test(window.location.pathname)
   )
     return;
-  console.log(
-    "IMAGES_DL photo/video match cleaning buttons...",
-    document.querySelectorAll(
-      ".photo-download-btn-container, .download-btn-container",
-    ),
-  );
+  if (AppState.debug.active) {
+    console.log(
+      "IMAGES_DL photo/video match cleaning buttons...",
+      document.querySelectorAll(
+        ".photo-download-btn-container, .download-btn-container",
+      ),
+    );
+  }
 
   document
     .querySelectorAll(".photo-download-btn-container, .download-btn-container")

@@ -39,12 +39,14 @@ export function getCurrentPageUsername() {
   const parts = window.location.pathname.split("/");
   const at = parts.find((p) => p.startsWith("@"));
   const username = at ? at.slice(1) : "😃";
-  console.log("[Username Detection] getCurrentPageUsername:", {
-    pathname: window.location.pathname,
-    parts,
-    foundAt: at,
-    username,
-  });
+  if (AppState.debug.active) {
+    console.log("[Username Detection] getCurrentPageUsername:", {
+      pathname: window.location.pathname,
+      parts,
+      foundAt: at,
+      username,
+    });
+  }
   return username;
 }
 
@@ -1175,33 +1177,119 @@ function sanitizeDownloadFilename(filename) {
   return `${cleanedBasePath || "download"}${extension}`;
 }
 
+function getFirstHttpUrl(urls) {
+  const candidates = Array.isArray(urls) ? urls : [urls];
+  return candidates.find((url) => url?.startsWith?.("http")) || null;
+}
+
+function getRenditionResolutionHint(rendition) {
+  const width = Number(rendition.width) || 0;
+  const height = Number(rendition.height) || 0;
+  const explicitShortEdge = width && height ? Math.min(width, height) : 0;
+  const label = `${rendition.gearName || ""} ${rendition.definition || ""}`;
+  const labelResolution = Math.max(
+    0,
+    ...Array.from(label.matchAll(/(?:^|\D)(\d{3,4})(?:p|\D|$)/gi), (match) =>
+      Number(match[1]),
+    ),
+  );
+
+  return {
+    shortEdge: explicitShortEdge || labelResolution,
+    pixelArea: width * height,
+  };
+}
+
+export function getVideoRenditions(...videos) {
+  const renditions = videos.filter(Boolean).flatMap((video) => {
+    const bitrateRenditions = (video.bitrateInfo || []).map((entry) => ({
+      url: getFirstHttpUrl(entry?.PlayAddr?.UrlList),
+      bitrate: Number(entry?.Bitrate) || 0,
+      width: Number(entry?.PlayAddr?.Width) || 0,
+      height: Number(entry?.PlayAddr?.Height) || 0,
+      dataSize: Number(entry?.PlayAddr?.DataSize) || 0,
+      definition: entry?.GearName || null,
+      gearName: entry?.GearName || null,
+      sourcePriority: 3,
+    }));
+
+    return [
+      ...bitrateRenditions,
+      {
+        url: getFirstHttpUrl(video.playAddr),
+        bitrate: Number(video.bitrate) || 0,
+        width: Number(video.width) || 0,
+        height: Number(video.height) || 0,
+        dataSize: Number(video.dataSize) || 0,
+        definition: video.definition || video.ratio || null,
+        sourcePriority: 2,
+      },
+      {
+        url: getFirstHttpUrl(video.downloadAddr),
+        bitrate: Number(video.bitrate) || 0,
+        width: Number(video.width) || 0,
+        height: Number(video.height) || 0,
+        dataSize: Number(video.dataSize) || 0,
+        definition: video.definition || video.ratio || null,
+        sourcePriority: 1,
+      },
+    ];
+  });
+
+  const sortedRenditions = renditions
+    .filter((rendition) => rendition.url)
+    .sort((left, right) => {
+      const leftResolution = getRenditionResolutionHint(left);
+      const rightResolution = getRenditionResolutionHint(right);
+
+      return (
+        rightResolution.shortEdge - leftResolution.shortEdge ||
+        rightResolution.pixelArea - leftResolution.pixelArea ||
+        right.bitrate - left.bitrate ||
+        right.dataSize - left.dataSize ||
+        right.sourcePriority - left.sourcePriority
+      );
+    });
+  const seenUrls = new Set();
+
+  return sortedRenditions
+    .filter((rendition) => {
+      if (seenUrls.has(rendition.url)) return false;
+      seenUrls.add(rendition.url);
+      return true;
+    })
+    .map((rendition) => {
+      const resolution = getRenditionResolutionHint(rendition).shortEdge;
+      return {
+        ...rendition,
+        qualityLabel: resolution >= 1080 ? "HD" : "SD",
+        qualityTier: resolution >= 1080 ? "hd" : "sd",
+        resolutionLabel: resolution ? `${resolution}p` : null,
+      };
+    });
+}
+
+export function getBestVideoRendition(...videos) {
+  return getVideoRenditions(...videos)[0] || null;
+}
+
 export function getSrcById(id) {
   // Helper to extract video URL from various item structures
   const extractVideoUrl = (item) => {
     if (!item) return null;
 
-    // 1) Standard: item.video.playAddr
-    if (item.video?.playAddr?.startsWith?.("http")) {
-      return item.video.playAddr;
+    // 1) Prefer the highest-resolution explicit rendition.
+    const bestRendition = getBestVideoRendition(item.video);
+    if (bestRendition) {
+      return bestRendition.url;
     }
 
-    // 2) Stories/Alternative: item.video.downloadAddr
-    if (item.video?.downloadAddr?.startsWith?.("http")) {
-      return item.video.downloadAddr;
-    }
-
-    // 3) Direct URL on item (some fiber structures)
+    // 2) Direct URL on item (some fiber structures)
     if (item.url?.startsWith?.("http")) {
       return item.url;
     }
 
-    // 4) Nested bitrateInfo structure
-    const bitrateUrl = item.video?.bitrateInfo?.[0]?.PlayAddr?.UrlList?.[0];
-    if (bitrateUrl?.startsWith?.("http")) {
-      return bitrateUrl;
-    }
-
-    // 5) Stories: imagePost structure for slideshows
+    // 3) Stories: imagePost structure for slideshows
     if (item.imagePost?.images?.[0]?.imageURL?.urlList?.[0]) {
       return item.imagePost.images[0].imageURL.urlList[0];
     }
@@ -1686,9 +1774,13 @@ export function saveCSVFile(dataArray) {
 
   // Gather all unique keys across all objects
   const standardFields = ["filename", "filepath"];
+  const internalFields = ["videoSources"];
   const dynamicFields = Array.from(
     new Set(dataArray.flatMap((item) => Object.keys(item))),
-  ).filter((key) => !standardFields.includes(key));
+  ).filter(
+    (key) =>
+      !standardFields.includes(key) && !internalFields.includes(key),
+  );
 
   const headers = ["index", ...dynamicFields.sort(), ...standardFields];
 
@@ -1741,10 +1833,7 @@ export function saveCSVFile(dataArray) {
 
 export function convertTikTokRawToMediaObject(tiktokRaw) {
   if (!tiktokRaw) return;
-  const defaultBitrate = tiktokRaw.defaultBitrate;
-  const mainBitrateInfo =
-    tiktokRaw.bitrateInfo?.find((b) => b.Bitrate === defaultBitrate) ||
-    tiktokRaw.bitrateInfo?.[0];
+  const bestRendition = getBestVideoRendition(tiktokRaw);
 
   return {
     id: tiktokRaw.id,
@@ -1752,11 +1841,13 @@ export function convertTikTokRawToMediaObject(tiktokRaw) {
       authorId: tiktokRaw.teaParams?.author_id || null,
     },
     video: {
-      playAddr:
-        tiktokRaw.url || mainBitrateInfo?.PlayAddr?.UrlList?.[0] || null,
+      playAddr: bestRendition?.url || tiktokRaw.url || null,
       duration: tiktokRaw.duration,
-      bitrate: defaultBitrate,
-      definition: tiktokRaw.defaultDefinition,
+      bitrate: bestRendition?.bitrate || tiktokRaw.defaultBitrate,
+      definition:
+        bestRendition?.definition || tiktokRaw.defaultDefinition,
+      width: bestRendition?.width || 0,
+      height: bestRendition?.height || 0,
       volumeInfo: {
         Loudness: tiktokRaw.volumeInfo?.Loudness,
         Peak: tiktokRaw.volumeInfo?.Peak,
@@ -1788,30 +1879,31 @@ export function buildVideoLinkMeta(media, index) {
     media?.video?.subtitleInfos
       ?.map((sub) => sub?.LanguageCodeName)
       .filter(Boolean) || [];
+  const cachedItem = AppState.allItemsEverSeen[media?.id];
+  const videoSources = getVideoRenditions(
+    media?.video,
+    cachedItem?.video,
+  );
+  const bestRendition = videoSources[0] || null;
+  const directUrl = media?.url?.startsWith?.("http") ? media.url : null;
+
+  if (directUrl && !videoSources.some((source) => source.url === directUrl)) {
+    videoSources.push({
+      url: directUrl,
+      qualityLabel: "?",
+      qualityTier: "unknown",
+      sourcePriority: 0,
+    });
+  }
 
   // Extract video URL from various possible locations (including Stories)
   const extractUrl = () => {
-    // Standard playAddr
-    if (media?.video?.playAddr?.startsWith?.("http")) {
-      return media.video.playAddr;
-    }
-    // Check AppState for cached playAddr
-    const cachedItem = AppState.allItemsEverSeen[media?.id];
-    if (cachedItem?.video?.playAddr?.startsWith?.("http")) {
-      return cachedItem.video.playAddr;
-    }
-    // Stories/Alternative: downloadAddr
-    if (media?.video?.downloadAddr?.startsWith?.("http")) {
-      return media.video.downloadAddr;
+    if (bestRendition) {
+      return bestRendition.url;
     }
     // Direct URL on media (some fiber structures)
     if (media?.url?.startsWith?.("http")) {
       return media.url;
-    }
-    // Nested bitrateInfo structure
-    const bitrateUrl = media?.video?.bitrateInfo?.[0]?.PlayAddr?.UrlList?.[0];
-    if (bitrateUrl?.startsWith?.("http")) {
-      return bitrateUrl;
     }
     // Fallback to cover images
     return media?.video?.originCover || media?.video?.cover;
@@ -1842,8 +1934,20 @@ export function buildVideoLinkMeta(media, index) {
     ),
     duration: media?.video?.duration,
     videoRatio: media?.video?.ratio,
-    videoBitrate: media?.video?.bitrate,
-    definition: media?.video?.definition,
+    videoBitrate: bestRendition?.bitrate || media?.video?.bitrate,
+    definition: bestRendition?.definition || media?.video?.definition,
+    videoWidth: bestRendition?.width || media?.video?.width || 0,
+    videoHeight: bestRendition?.height || media?.video?.height || 0,
+    qualityLabel: media.isImage
+      ? null
+      : bestRendition?.qualityLabel || "?",
+    qualityTier: media.isImage
+      ? null
+      : bestRendition?.qualityTier || "unknown",
+    resolutionLabel: media.isImage
+      ? null
+      : bestRendition?.resolutionLabel || null,
+    videoSources,
     coverImage: media?.video?.cover,
     dynamicCover: media?.video?.dynamicCover,
     originCover: media?.video?.originCover,
@@ -2127,10 +2231,65 @@ export async function downloadSingleMedia(
 
   const filename = getDownloadFilePath(media, { imageIndex });
   try {
-    let url = media.url;
-    if (media.isImage && media.imagePostImages)
-      url = media.imagePostImages[imageIndex];
-    await downloadURLToDisk(url, filename);
+    const imageUrl = media.isImage
+      ? media.imagePostImages?.[imageIndex]
+      : null;
+    const videoSources = media.isImage
+      ? []
+      : [
+          ...(Array.isArray(media.videoSources) ? media.videoSources : []),
+          {
+            url: media.url,
+            qualityLabel: media.qualityLabel || "?",
+            qualityTier: media.qualityTier || "unknown",
+          },
+        ];
+    const seenUrls = new Set();
+    const sources = (media.isImage ? [{ url: imageUrl }] : videoSources).filter(
+      (source) => {
+        if (!source?.url || seenUrls.has(source.url)) return false;
+        seenUrls.add(source.url);
+        return true;
+      },
+    );
+
+    if (!sources.length) {
+      const missingSourceError = new Error("No downloadable media source found");
+      missingSourceError.code = "ERR_MISSING_SOURCE";
+      throw missingSourceError;
+    }
+
+    for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
+      const source = sources[sourceIndex];
+      const isLastSource = sourceIndex === sources.length - 1;
+
+      try {
+        await downloadURLToDisk(source.url, filename, {
+          allowFailureModal: isLastSource,
+          maxRetries: isLastSource ? 3 : 2,
+        });
+
+        if (!media.isImage) {
+          media.url = source.url;
+          media.qualityLabel = source.qualityLabel || "?";
+          media.qualityTier = source.qualityTier || "unknown";
+          media.resolutionLabel = source.resolutionLabel || null;
+          media.videoBitrate = source.bitrate || media.videoBitrate;
+          media.definition = source.definition || media.definition;
+          media.videoWidth = source.width || media.videoWidth;
+          media.videoHeight = source.height || media.videoHeight;
+        }
+        break;
+      } catch (sourceError) {
+        if (isLastSource) throw sourceError;
+        console.warn("[Download] Trying lower-quality fallback source", {
+          mediaId: media?.id || media?.videoId || null,
+          failedQuality: source.qualityLabel || "?",
+          nextQuality: sources[sourceIndex + 1]?.qualityLabel || "?",
+          code: sourceError?.code || null,
+        });
+      }
+    }
 
     // Track download progress
     try {
@@ -2532,7 +2691,7 @@ function waitForBlobDownloadResponse(id, timeoutMs = 25000) {
 }
 window.__dl = downloadURLToDisk;
 export async function downloadURLToDisk(url, filename, options = {}) {
-  const maxRetries = 3;
+  const maxRetries = Math.max(1, Number(options.maxRetries) || 3);
   let attempt = options.retryCount || 1;
   let activeUrl = url;
   const getFreshUrl =
@@ -2757,6 +2916,10 @@ export async function downloadURLToDisk(url, filename, options = {}) {
         continue; // retry
       }
 
+      if (options.allowFailureModal === false) {
+        throw err;
+      }
+
       // final failure path -> optional fallback
       if (AppState?.downloadPreferences?.skipFailedDownloads) {
         console.error(
@@ -2867,7 +3030,6 @@ export function displayFoundUrls({ forced } = {}) {
       // Update the button regardless.
       // TODO: If this causes some bugs, remove it
       updateDownloadButtonLabelSimple();
-    console.log("UI CLOSED: ", AppState.ui);
     if (AppState.ui.isDownloaderClosed) return hideDownloader();
     // Think about cases the user moves to another page while downloading
     // They are not seing any progress on the downloader, re-render it
@@ -2936,7 +3098,6 @@ export function displayFoundUrls({ forced } = {}) {
       if (items.length === 0) {
         const emptyListEl =
           updateDownloaderList([], hashToDisplay) || createDownloaderWrapper();
-        console.warn("Returned empty list Element ", emptyListEl);
 
         if (emptyListEl instanceof Node) {
           document.body?.appendChild(emptyListEl);
@@ -2950,7 +3111,6 @@ export function displayFoundUrls({ forced } = {}) {
       }
 
       const listEl = updateDownloaderList(metas, hashToDisplay);
-      console.warn("Returned list Element ", listEl);
 
       if (listEl instanceof Node) {
         document.body?.appendChild(listEl);
@@ -4207,6 +4367,10 @@ export async function getTabSpans(timeoutMs = 5000, intervalMs = 100) {
 }
 
 export function getRenderedPostsMetadata() {
+  const isMediaDetailPath = /^\/@[^/]+\/(photo|video)\/[A-Za-z0-9]+$/.test(
+    window.location.pathname,
+  );
+
   const getUsernameNear = (el) => {
     const a = el.closest('a[href*="/@"]') || el.querySelector('a[href*="/@"]');
     return a?.getAttribute("href")?.match(/\/@([\w._-]+)/)?.[1] || null;
@@ -4217,18 +4381,92 @@ export function getRenderedPostsMetadata() {
     return null;
   };
 
+  const collectScopedElements = (selector, roots) => {
+    if (!roots.length) {
+      return Array.from(document.querySelectorAll(selector));
+    }
+
+    const seen = new Set();
+    const collected = [];
+
+    roots.forEach((root) => {
+      if (!(root instanceof Element)) return;
+
+      if (root.matches(selector) && !seen.has(root)) {
+        seen.add(root);
+        collected.push(root);
+      }
+
+      root.querySelectorAll(selector).forEach((node) => {
+        if (!seen.has(node)) {
+          seen.add(node);
+          collected.push(node);
+        }
+      });
+    });
+
+    return collected;
+  };
+
+  const getMediaDetailRoots = () => {
+    if (!isMediaDetailPath) {
+      return [];
+    }
+
+    const viewportHeight =
+      window.innerHeight || document.documentElement.clientHeight || 0;
+    const currentArticle = getCurrentPlayingArticle();
+    const nearbyArticles = Array.from(document.querySelectorAll("article"))
+      .filter((article) => {
+        if (!(article instanceof HTMLElement)) return false;
+        if (
+          !article.querySelector(
+            'video, picture, div.swiper, [class*="DivPlayerContainer"], [class*="DivStoriesPlayer"], [class*="DivVideoListContainer"]',
+          )
+        ) {
+          return false;
+        }
+
+        const rect = article.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+          return false;
+        }
+
+        return (
+          rect.bottom > viewportHeight * -0.25 &&
+          rect.top < viewportHeight * 1.25
+        );
+      })
+      .slice(0, 3);
+
+    const roots = [];
+    const pushRoot = (root) => {
+      if (!(root instanceof Element) || roots.includes(root)) return;
+      roots.push(root);
+    };
+
+    pushRoot(currentArticle);
+    nearbyArticles.forEach(pushRoot);
+    return roots;
+  };
+
+  const mediaDetailRoots = getMediaDetailRoots();
+
   // Get regular video containers
-  const containers = Array.from(
-    document.querySelectorAll('[class*="DivPlayerContainer"]'),
+  const containers = collectScopedElements(
+    '[class*="DivPlayerContainer"]',
+    mediaDetailRoots,
   );
 
-  const gridContainers = Array.from(
-    document.querySelectorAll('[class*="DivVideoListContainer"]'),
+  const gridContainers = collectScopedElements(
+    '[class*="DivVideoListContainer"]',
+    mediaDetailRoots,
   );
 
   // Get Stories containers (different class pattern)
-  const storiesContainers = Array.from(
-    document.querySelectorAll('[class*="DivStoriesPlayer"]'),
+  const storiesContainers = collectScopedElements(
+    '[class*="DivStoriesPlayer"]',
+    mediaDetailRoots,
   );
 
   const pickBestItemFromChildren = (children) => {

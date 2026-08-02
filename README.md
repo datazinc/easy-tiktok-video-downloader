@@ -2,6 +2,9 @@
 
 Easy TikTok Video Downloader is an open source browser extension for saving supported TikTok videos and bulk-download surfaces in browsers supported by this repository.
 
+> [!IMPORTANT]
+> **Independent and unofficial.** This project is not affiliated with, endorsed by, sponsored by, or approved by TikTok, ByteDance, or any of their affiliates. TikTok and related marks belong to their respective owners. The name is used only to identify compatibility. See the full [Legal and Responsible Use Notice](LEGAL.md).
+
 ## Open Source
 
 - This project is released under the MIT License. See [LICENSE](LICENSE).
@@ -45,11 +48,13 @@ npm run verify:versions
 - You are responsible for using this project ethically and in compliance with applicable law, creator rights, privacy obligations, and TikTok's Terms of Service and related policies.
 - Use this tool only for content and accounts you are authorized to access and save.
 
-## Trademark Notice
+## Independent Project And Trademark Notice
 
-- TikTok is a trademark of ByteDance Ltd. and/or its affiliates.
-- This project is not affiliated with, endorsed by, sponsored by, or approved by TikTok or ByteDance.
-- Any reference to TikTok is used only to describe compatibility and intended interoperability.
+- This is an independent, unofficial open source project maintained by its contributors.
+- It is not affiliated with, endorsed by, sponsored by, authorized by, or approved by TikTok, ByteDance, or any of their affiliates.
+- TikTok and related names, logos, and brand features are trademarks or other property of their respective owners.
+- References to TikTok are nominative and used only to identify compatibility and describe intended interoperability.
+- TikTok and ByteDance do not provide support for this extension. Project questions and bug reports belong in this repository or the project support channels.
 
 ## Contributing
 

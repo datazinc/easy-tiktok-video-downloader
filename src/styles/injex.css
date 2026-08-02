@@ -682,6 +682,10 @@
   color: var(--ettpd-text-primary);
 }
 
+.ettpd-current-video-btn .ettpd-quality-badge {
+  margin-left: 4px;
+}
+
 /* Fix current video button in dark mode */
 .ettpd-theme-dark .ettpd-current-video-btn {
   background-color: var(--ettpd-bg-secondary);
@@ -799,6 +803,41 @@ label[for="ettpd-current-profile"] {
   font-size: 12px;
 }
 
+.ettpd-quality-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 16px;
+  padding: 1px 4px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.ettpd-quality-hd {
+  color: #0f7b45;
+  background: #e8f8ef;
+}
+
+.ettpd-quality-sd {
+  color: var(--ettpd-text-secondary);
+  background: var(--ettpd-bg-tertiary);
+}
+
+.ettpd-quality-unknown {
+  color: var(--ettpd-text-secondary);
+  background: transparent;
+  border-style: dashed;
+}
+
+.download-btn .ettpd-quality-badge {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .download-btn-container {
   position: absolute;
   top: 0;
@@ -841,6 +880,7 @@ label[for="ettpd-current-profile"] {
   transition: all 0.3s ease;
   box-shadow: 0 4px 15px rgba(254, 44, 85, 0.3);
   padding: 4px 10px;
+  gap: 6px;
 }
 .ettpd-download-btn:hover {
   transform: translateY(-2px);
