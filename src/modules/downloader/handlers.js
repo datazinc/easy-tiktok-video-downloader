@@ -2,6 +2,7 @@
 import AppState from "../state/state.js";
 import {
   displayFoundUrls,
+  getBestVideoRendition,
   getCurrentPageUsername,
   isOnProfileOrCollectionPage,
 } from "../utils/utils.js";
@@ -13,6 +14,30 @@ const normId = (it) => String(it?.id ?? it?.videoId ?? "");
 const isFull = (it) => !!(it && !it.downloaderHasLowConfidence);
 const hasPlay = (it) => !!(it?.video?.playAddr || it?.url);
 
+function compareVideoQuality(left, right) {
+  const leftRendition = getBestVideoRendition(left?.video);
+  const rightRendition = getBestVideoRendition(right?.video);
+  const getQuality = (rendition) => {
+    const width = Number(rendition?.width) || 0;
+    const height = Number(rendition?.height) || 0;
+    return [
+      width && height ? Math.min(width, height) : 0,
+      width * height,
+      Number(rendition?.bitrate) || 0,
+    ];
+  };
+  const leftQuality = getQuality(leftRendition);
+  const rightQuality = getQuality(rightRendition);
+
+  for (let index = 0; index < leftQuality.length; index += 1) {
+    if (leftQuality[index] !== rightQuality[index]) {
+      return leftQuality[index] - rightQuality[index];
+    }
+  }
+
+  return 0;
+}
+
 /** Return true if `next` is a better copy than `curr` */
 function isBetterCopy(next, curr) {
   if (!curr) return true; // brand new
@@ -21,13 +46,16 @@ function isBetterCopy(next, curr) {
   // prefer one that actually has a playable URL
   if (hasPlay(next) && !hasPlay(curr)) return true;
   if (!hasPlay(next) && hasPlay(curr)) return false;
+  if (compareVideoQuality(next, curr) > 0) return true;
   // otherwise keep existing (stable)
   return false;
 }
 
 // Keep your existing name, but make it robust
 export function isVisitedItemBetterOrNew(it) {
-  console.log("CHECKING_NEW_ITEM", it.author, it.downloaderHasLowConfidence);
+  if (AppState.debug.active) {
+    console.log("CHECKING_NEW_ITEM", it.author, it.downloaderHasLowConfidence);
+  }
   const id = normId(it);
   if (!id) return false;
   const curr = AppState.allItemsEverSeen[id];

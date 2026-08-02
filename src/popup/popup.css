@@ -307,6 +307,22 @@ footer a {
   text-decoration: none;
 }
 
+.legal-disclaimer {
+  padding: 0 18px 12px;
+  color: var(--popup-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.legal-disclaimer strong {
+  color: var(--popup-text-primary);
+}
+
+.legal-disclaimer a {
+  color: var(--popup-link-color);
+  font-weight: 700;
+}
+
 /* Force Reset Button */
 .force-reset-btn {
   position: fixed;

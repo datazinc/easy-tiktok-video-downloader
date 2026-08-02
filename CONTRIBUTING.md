@@ -9,6 +9,7 @@ Thanks for contributing to this open source project.
 - Update documentation when behavior, permissions, release packaging, or compliance expectations change.
 - Do not add features intended to facilitate misuse, policy evasion, infringement, unauthorized access, or abusive automation.
 - Preserve the project's responsible-use, trademark, and platform-compliance language in [LEGAL.md](LEGAL.md) and [README.md](README.md).
+- Keep the extension and all derived listings clearly identified as independent and unofficial. Do not use third-party logos or wording that suggests affiliation, endorsement, sponsorship, authorization, or approval by TikTok or ByteDance.
 
 ## Development Setup
 
