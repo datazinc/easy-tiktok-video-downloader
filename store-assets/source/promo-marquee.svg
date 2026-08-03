@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="560" viewBox="0 0 1400 560">
+  <defs>
+    <linearGradient id="coral" x1="0" y1="0" x2="760" y2="560" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF6A86"/>
+      <stop offset="1" stop-color="#E91E52"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="780" y1="0" x2="1400" y2="560" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#74E9E3"/>
+      <stop offset="1" stop-color="#14AFC1"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="20" stdDeviation="20" flood-color="#101827" flood-opacity=".28"/>
+    </filter>
+  </defs>
+  <rect width="1400" height="560" fill="#101827"/>
+  <path d="M0 0h835L615 560H0Z" fill="url(#coral)"/>
+  <path d="M835 0h565v560H615Z" fill="url(#cyan)"/>
+  <g opacity=".16" fill="none" stroke="#fff" stroke-width="4">
+    <path d="M-80 500 430-40"/><path d="M165 610 730-25"/><path d="m1000 620 470-510"/><path d="m1130 585 340-365"/>
+  </g>
+  <g fill="#fff" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+    <text x="92" y="120" font-size="22" font-weight="700" letter-spacing="3">BEST AVAILABLE QUALITY</text>
+    <text x="88" y="205" font-size="68" font-weight="800">TikTok Video</text>
+    <text x="88" y="276" font-size="68" font-weight="800">Downloader</text>
+    <text x="92" y="333" font-size="27" font-weight="700" letter-spacing="2">BEST QUALITY • BULK SAVES • FAST</text>
+    <text x="92" y="390" font-size="22" font-weight="500">Save supported videos directly in your browser.</text>
+  </g>
+  <g filter="url(#shadow)" transform="translate(330)">
+    <rect x="382" y="116" width="230" height="330" rx="30" fill="#F9FBFF" transform="rotate(-8 382 116)"/>
+    <rect x="792" y="112" width="230" height="330" rx="30" fill="#F9FBFF" transform="rotate(8 792 112)"/>
+    <rect x="570" y="60" width="270" height="438" rx="40" fill="#172033"/>
+    <rect x="607" y="99" width="196" height="266" rx="24" fill="#27344A"/>
+    <circle cx="705" cy="232" r="54" fill="#fff"/>
+    <path d="m692 202 47 30-47 30Z" fill="#E91E52"/>
+    <path d="M705 363v58m0 0-24-24m24 24 24-24" fill="none" stroke="#6DE2DF" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M665 440h80" stroke="#6DE2DF" stroke-width="13" stroke-linecap="round"/>
+    <rect x="416" y="151" width="160" height="215" rx="20" fill="#FFE8EE" transform="rotate(-8 416 151)"/>
+    <rect x="828" y="151" width="160" height="215" rx="20" fill="#D8FBFA" transform="rotate(8 828 151)"/>
+  </g>
+  <circle cx="195" cy="172" r="18" fill="#fff" fill-opacity=".36"/>
+  <circle cx="1185" cy="402" r="26" fill="#fff" fill-opacity=".3"/>
+  <circle cx="1260" cy="128" r="12" fill="#fff" fill-opacity=".34"/>
+  <text x="92" y="518" fill="#fff" fill-opacity=".82" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="600" letter-spacing=".5">UNOFFICIAL • NOT AFFILIATED WITH TIKTOK OR BYTEDANCE</text>
+</svg>
