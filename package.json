@@ -1,7 +1,7 @@
 {
   "name": "easy-tiktok-video-downloader",
-  "version": "5.3.0",
-  "description": "Independent, unofficial browser extension for saving supported TikTok videos. Not affiliated with TikTok or ByteDance.",
+  "version": "5.3.1",
+  "description": "Save TikTok videos in the best available quality. Bulk-download profiles, likes, favorites, playlists and more. Unofficial.",
   "manifest_version": 3,
   "author": "Arsene I. Muhire",
   "license": "MIT",
