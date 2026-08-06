@@ -17,6 +17,9 @@ export const STORAGE_KEYS = {
   EXTENSION_ENABLED: "tik.tok::extensionEnabled",
   BROWSER_COMPAT_ALERT_DISMISSED: "tik.tok::browserCompatAlertDismissed",
   USE_NATIVE_DOWNLOAD: "tik.tok::useNativeDownload",
+  EXPERIMENTAL_HD: "tik.tok::experimentalHd",
+  EXPERIMENTAL_HD_BANNER_DISMISSED:
+    "tik.tok::experimentalHdBannerDismissed",
   FILE_PATH_HINT_SEEN: "tik.tok::filePathHintSeen",
 
   // Scrapper

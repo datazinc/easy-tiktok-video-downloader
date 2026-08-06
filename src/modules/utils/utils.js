@@ -2,6 +2,17 @@
 import AppState from "../state/state.js";
 import { createHtmlFragment, replaceElementHtml } from "./html.js";
 import {
+  BlobSource,
+  BufferTarget,
+  EncodedAudioPacketSource,
+  EncodedPacketSink,
+  EncodedVideoPacketSource,
+  Input,
+  Mp4InputFormat,
+  Mp4OutputFormat,
+  Output,
+} from "mediabunny";
+import {
   STORAGE_KEYS,
   DOWNLOAD_FOLDER_DEFAULT,
   DOM_IDS,
@@ -1177,9 +1188,165 @@ function sanitizeDownloadFilename(filename) {
   return `${cleanedBasePath || "download"}${extension}`;
 }
 
-function getFirstHttpUrl(urls) {
-  const candidates = Array.isArray(urls) ? urls : [urls];
-  return candidates.find((url) => url?.startsWith?.("http")) || null;
+function getHttpUrls(value) {
+  const candidates = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : [
+          ...(value?.UrlList || []),
+          ...(value?.urlList || []),
+          ...(value?.url_list || []),
+        ];
+  return Array.from(
+    new Set(candidates.filter((url) => url?.startsWith?.("http"))),
+  );
+}
+
+function getFirstHttpUrl(value) {
+  return getHttpUrls(value)[0] || null;
+}
+
+export function isAdaptiveGearName(value) {
+  return /(?:^|_)adapt(?:_|$)/i.test(String(value || ""));
+}
+
+function isTikTokPlaybackGateway(url) {
+  if (!url?.startsWith?.("http")) return false;
+  try {
+    return (
+      new URL(url).hostname.endsWith("tiktok.com") &&
+      new URL(url).pathname === "/aweme/v1/play/"
+    );
+  } catch {
+    return false;
+  }
+}
+
+const adaptiveAudioUrlsByToken = new Map();
+const videoDetailHydrationPromises = new Map();
+
+export function hydrateTikTokVideoDetail(videoId, authorId = "") {
+  const normalizedId = String(videoId || "").trim();
+  if (!/^\d+$/.test(normalizedId)) return Promise.resolve(null);
+  if (videoDetailHydrationPromises.has(normalizedId)) {
+    return videoDetailHydrationPromises.get(normalizedId);
+  }
+
+  const normalizedAuthor = String(authorId || "")
+    .replace(/^@/, "")
+    .trim();
+  const path = normalizedAuthor
+    ? `/@${encodeURIComponent(normalizedAuthor)}/video/${normalizedId}`
+    : `/video/${normalizedId}`;
+  const promise = fetch(new URL(path, window.location.origin), {
+    credentials: "include",
+  })
+    .then((response) => (response.ok ? response.text() : null))
+    .then((html) => {
+      if (!html) return null;
+      const documentNode = new DOMParser().parseFromString(html, "text/html");
+      const script = documentNode.getElementById(
+        "__UNIVERSAL_DATA_FOR_REHYDRATION__",
+      );
+      if (!script?.textContent) return null;
+      const item = JSON.parse(script.textContent)?.__DEFAULT_SCOPE__?.[
+        "webapp.video-detail"
+      ]?.itemInfo?.itemStruct;
+      return String(item?.id || "") === normalizedId ? item : null;
+    })
+    .catch((error) => {
+      if (AppState.debug.active) {
+        console.warn("Failed to hydrate TikTok video quality metadata", error);
+      }
+      return null;
+    });
+  videoDetailHydrationPromises.set(normalizedId, promise);
+  return promise;
+}
+
+function getAdaptivePlaybackToken(url) {
+  if (!url?.startsWith?.("http")) return null;
+
+  try {
+    return new URL(url).searchParams.get("l") || null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberAdaptiveAudioUrl(url, startTime = 0) {
+  if (!url?.includes?.("/media-audio-")) return false;
+  const token = getAdaptivePlaybackToken(url);
+  if (!token) return false;
+  const candidates = adaptiveAudioUrlsByToken.get(token) || [];
+  if (candidates.some((candidate) => candidate.url === url)) return false;
+  candidates.push({ url, startTime: Number(startTime) || 0 });
+  adaptiveAudioUrlsByToken.set(token, candidates);
+  return true;
+}
+
+function indexAdaptiveAudioResources() {
+  try {
+    const entries = performance.getEntriesByType?.("resource") || [];
+    entries.forEach((entry) =>
+      rememberAdaptiveAudioUrl(entry?.name, entry?.startTime),
+    );
+  } catch {}
+}
+
+indexAdaptiveAudioResources();
+
+try {
+  const observer = new PerformanceObserver((list) => {
+    let changed = false;
+    list.getEntries().forEach((entry) => {
+      changed =
+        rememberAdaptiveAudioUrl(entry?.name, entry?.startTime) || changed;
+    });
+    if (changed && AppState.downloadPreferences.experimentalHd) {
+      requestAnimationFrame(() => displayFoundUrls({ forced: true }));
+    }
+  });
+  observer.observe({ type: "resource", buffered: true });
+} catch {}
+
+export function findAdaptiveAudioUrl(videoUrl) {
+  indexAdaptiveAudioResources();
+  const token = getAdaptivePlaybackToken(videoUrl);
+  const candidates = token ? adaptiveAudioUrlsByToken.get(token) || [] : [];
+  if (!candidates.length) return null;
+
+  let videoPath = "";
+  try {
+    videoPath = new URL(videoUrl).pathname.replace(/\/media-video-[^/]+\/$/, "");
+  } catch {}
+  const sameMediaPathCandidates = videoPath
+    ? candidates.filter((candidate) => {
+        try {
+          return (
+            new URL(candidate.url).pathname.replace(
+              /\/media-audio-[^/]+\/$/,
+              "",
+            ) === videoPath
+          );
+        } catch {
+          return false;
+        }
+      })
+    : [];
+  if (!sameMediaPathCandidates.length) return null;
+
+  const videoEntry = (performance.getEntriesByType?.("resource") || []).find(
+    (entry) => entry?.name === videoUrl,
+  );
+  if (!videoEntry) return sameMediaPathCandidates.at(-1)?.url || null;
+
+  return [...sameMediaPathCandidates].sort(
+    (left, right) =>
+      Math.abs(left.startTime - videoEntry.startTime) -
+      Math.abs(right.startTime - videoEntry.startTime),
+  )[0]?.url || null;
 }
 
 function getRenditionResolutionHint(rendition) {
@@ -1202,47 +1369,137 @@ function getRenditionResolutionHint(rendition) {
 
 export function getVideoRenditions(...videos) {
   const renditions = videos.filter(Boolean).flatMap((video) => {
-    const bitrateRenditions = (video.bitrateInfo || []).map((entry) => ({
-      url: getFirstHttpUrl(entry?.PlayAddr?.UrlList),
-      bitrate: Number(entry?.Bitrate) || 0,
-      width: Number(entry?.PlayAddr?.Width) || 0,
-      height: Number(entry?.PlayAddr?.Height) || 0,
-      dataSize: Number(entry?.PlayAddr?.DataSize) || 0,
-      definition: entry?.GearName || null,
-      gearName: entry?.GearName || null,
-      sourcePriority: 3,
-    }));
+    const playUrls = Array.from(
+      new Set([
+        ...getHttpUrls(video.playAddr),
+        ...getHttpUrls(video.PlayAddrStruct),
+      ]),
+    );
+    const downloadUrls = getHttpUrls(video.downloadAddr);
+    const playUrl = playUrls[0] || null;
+    const downloadUrl = downloadUrls[0] || null;
+    const bitrateRenditions = (video.bitrateInfo || []).map((entry) => {
+      const urls = getHttpUrls(entry?.PlayAddr);
+      const gatewayUrl = urls.find(isTikTokPlaybackGateway) || null;
+      const cdnUrl = urls.find((url) => !isTikTokPlaybackGateway(url)) || null;
+      const gearName = entry?.GearName || null;
+      const isStandardSource =
+        urls.some((url) => playUrls.includes(url)) ||
+        urls.some((url) => downloadUrls.includes(url));
+      const isAdaptiveSource = isAdaptiveGearName(gearName);
+      const audioUrl =
+        isAdaptiveSource && !gatewayUrl
+          ? findAdaptiveAudioUrl(cdnUrl)
+          : null;
+      const url = isAdaptiveSource
+        ? gatewayUrl || cdnUrl
+        : cdnUrl || gatewayUrl;
+      const audioStatus =
+        isStandardSource || /^normal(?:_|$)/i.test(gearName || "")
+          ? "muxed"
+          : isAdaptiveSource
+            ? gatewayUrl
+              ? "muxed"
+              : audioUrl
+              ? "separate"
+              : "video-only"
+            : "unknown";
+
+      return {
+        url,
+        bitrate: Number(entry?.Bitrate) || 0,
+        width: Number(entry?.PlayAddr?.Width) || 0,
+        height: Number(entry?.PlayAddr?.Height) || 0,
+        dataSize: Number(entry?.PlayAddr?.DataSize) || 0,
+        definition: gearName,
+        gearName,
+        codecType: entry?.CodecType || null,
+        audioStatus,
+        audioUrl,
+        gatewayUrl,
+        cdnUrl,
+        urlKey: entry?.PlayAddr?.UrlKey || null,
+        uri: entry?.PlayAddr?.Uri || null,
+        isAdaptive: isAdaptiveSource,
+        experimentalOnly: isAdaptiveSource,
+        deliveryMethod: gatewayUrl
+          ? isTikTokPlaybackGateway(url)
+            ? "tiktok-gateway-muxed"
+            : "direct-muxed"
+          : audioUrl
+            ? "client-remux"
+            : isAdaptiveSource
+              ? "video-only"
+              : "direct-muxed",
+        sourcePriority: 3,
+      };
+    });
 
     return [
       ...bitrateRenditions,
       {
-        url: getFirstHttpUrl(video.playAddr),
+        url: playUrl,
         bitrate: Number(video.bitrate) || 0,
         width: Number(video.width) || 0,
         height: Number(video.height) || 0,
         dataSize: Number(video.dataSize) || 0,
         definition: video.definition || video.ratio || null,
+        audioStatus: "muxed",
         sourcePriority: 2,
       },
+      ...playUrls
+        .filter((url) => url !== playUrl)
+        .map((url) => ({
+          url,
+          bitrate: Number(video.bitrate) || 0,
+          width:
+            Number(video.PlayAddrStruct?.Width) || Number(video.width) || 0,
+          height:
+            Number(video.PlayAddrStruct?.Height) || Number(video.height) || 0,
+          dataSize:
+            Number(video.PlayAddrStruct?.DataSize) || Number(video.size) || 0,
+          definition: video.definition || video.ratio || null,
+          codecType: video.codecType || null,
+          audioStatus: "muxed",
+          deliveryMethod: isTikTokPlaybackGateway(url)
+            ? "tiktok-gateway-muxed"
+            : "direct-muxed",
+          sourcePriority: isTikTokPlaybackGateway(url) ? 2 : 1,
+        })),
       {
-        url: getFirstHttpUrl(video.downloadAddr),
+        url: downloadUrl,
         bitrate: Number(video.bitrate) || 0,
         width: Number(video.width) || 0,
         height: Number(video.height) || 0,
         dataSize: Number(video.dataSize) || 0,
         definition: video.definition || video.ratio || null,
+        audioStatus: "muxed",
         sourcePriority: 1,
       },
     ];
   });
 
   const sortedRenditions = renditions
-    .filter((rendition) => rendition.url)
+    .filter(
+      (rendition) =>
+        rendition.url &&
+        rendition.audioStatus !== "video-only" &&
+        (!rendition.experimentalOnly ||
+          AppState.downloadPreferences.experimentalHd) &&
+        (rendition.audioStatus !== "separate" ||
+          AppState.downloadPreferences.experimentalHd),
+    )
     .sort((left, right) => {
+      const getAudioConfidence = (rendition) =>
+        rendition.audioStatus === "muxed" ||
+        rendition.audioStatus === "separate"
+          ? 2
+          : 1;
       const leftResolution = getRenditionResolutionHint(left);
       const rightResolution = getRenditionResolutionHint(right);
 
       return (
+        getAudioConfidence(right) - getAudioConfidence(left) ||
         rightResolution.shortEdge - leftResolution.shortEdge ||
         rightResolution.pixelArea - leftResolution.pixelArea ||
         right.bitrate - left.bitrate ||
@@ -1270,7 +1527,135 @@ export function getVideoRenditions(...videos) {
 }
 
 export function getBestVideoRendition(...videos) {
-  return getVideoRenditions(...videos)[0] || null;
+  return (
+    getVideoRenditions(...videos).find(
+      (rendition) => !rendition.experimentalOnly,
+    ) || null
+  );
+}
+
+async function remuxAdaptiveVideoAndAudio(
+  videoBlob,
+  audioBlob,
+  onProgress = null,
+) {
+  const formats = [new Mp4InputFormat()];
+  const videoInput = new Input({
+    formats,
+    source: new BlobSource(videoBlob),
+  });
+  const audioInput = new Input({
+    formats,
+    source: new BlobSource(audioBlob),
+  });
+
+  try {
+    const videoTrack = await videoInput.getPrimaryVideoTrack();
+    const audioTrack = await audioInput.getPrimaryAudioTrack();
+    if (!videoTrack || !audioTrack) {
+      throw new Error("Adaptive HD tracks are incomplete");
+    }
+
+    const [videoDuration, audioDuration] = await Promise.all([
+      videoTrack.computeDuration(),
+      audioTrack.computeDuration(),
+    ]);
+    const durationTolerance = Math.max(1, videoDuration * 0.01);
+    if (Math.abs(videoDuration - audioDuration) > durationTolerance) {
+      throw new Error("Adaptive HD tracks do not belong to the same video");
+    }
+
+    const videoCodec = await videoTrack.getCodec();
+    const audioCodec = await audioTrack.getCodec();
+    const videoConfig = await videoTrack.getDecoderConfig();
+    const audioConfig = await audioTrack.getDecoderConfig();
+    if (!videoCodec || !audioCodec || !videoConfig || !audioConfig) {
+      throw new Error("Adaptive HD track metadata is unsupported");
+    }
+
+    const videoSource = new EncodedVideoPacketSource(videoCodec);
+    const audioSource = new EncodedAudioPacketSource(audioCodec);
+    const target = new BufferTarget();
+    const output = new Output({
+      format: new Mp4OutputFormat(),
+      target,
+    });
+    output.addVideoTrack(videoSource);
+    output.addAudioTrack(audioSource);
+    await output.start();
+
+    const videoIterator = new EncodedPacketSink(videoTrack)
+      .packets()
+      [Symbol.asyncIterator]();
+    const audioIterator = new EncodedPacketSink(audioTrack)
+      .packets()
+      [Symbol.asyncIterator]();
+    let videoNext = await videoIterator.next();
+    let audioNext = await audioIterator.next();
+    const firstTimestamp = Math.min(
+      await videoTrack.getFirstTimestamp(),
+      await audioTrack.getFirstTimestamp(),
+      0,
+    );
+    const timestampOffset = -firstTimestamp;
+    let firstVideoPacket = true;
+    let firstAudioPacket = true;
+    const totalDuration = Math.max(videoDuration, audioDuration, 0.001);
+    let lastReportedProgress = -1;
+
+    while (!videoNext.done || !audioNext.done) {
+      const takeVideo =
+        !videoNext.done &&
+        (audioNext.done ||
+          videoNext.value.timestamp <= audioNext.value.timestamp);
+
+      if (takeVideo) {
+        const packet = timestampOffset
+          ? videoNext.value.clone({
+              timestamp: videoNext.value.timestamp + timestampOffset,
+            })
+          : videoNext.value;
+        await videoSource.add(
+          packet,
+          firstVideoPacket ? { decoderConfig: videoConfig } : undefined,
+        );
+        firstVideoPacket = false;
+        videoNext = await videoIterator.next();
+      } else {
+        const packet = timestampOffset
+          ? audioNext.value.clone({
+              timestamp: audioNext.value.timestamp + timestampOffset,
+            })
+          : audioNext.value;
+        await audioSource.add(
+          packet,
+          firstAudioPacket ? { decoderConfig: audioConfig } : undefined,
+        );
+        firstAudioPacket = false;
+        audioNext = await audioIterator.next();
+      }
+
+      const nextTimestamp = Math.min(
+        videoNext.done ? Infinity : videoNext.value.timestamp,
+        audioNext.done ? Infinity : audioNext.value.timestamp,
+      );
+      const muxProgress = Number.isFinite(nextTimestamp)
+        ? Math.min(1, Math.max(0, nextTimestamp / totalDuration))
+        : 1;
+      const roundedProgress = Math.floor(muxProgress * 100);
+      if (roundedProgress !== lastReportedProgress) {
+        lastReportedProgress = roundedProgress;
+        onProgress?.({ phase: "mux", progress: muxProgress });
+      }
+    }
+
+    await output.finalize();
+    if (!target.buffer) throw new Error("Adaptive HD mux produced no output");
+    return new Blob([target.buffer], { type: "video/mp4" });
+  } finally {
+    videoInput.dispose();
+    audioInput.dispose();
+  }
 }
 
 export function getSrcById(id) {
@@ -1884,7 +2269,12 @@ export function buildVideoLinkMeta(media, index) {
     media?.video,
     cachedItem?.video,
   );
-  const bestRendition = videoSources[0] || null;
+  const bestRendition =
+    videoSources.find((source) => !source.experimentalOnly) || null;
+  const experimentalRendition =
+    videoSources.find(
+      (source) => source.experimentalOnly && source.qualityTier === "hd",
+    ) || null;
   const directUrl = media?.url?.startsWith?.("http") ? media.url : null;
 
   if (directUrl && !videoSources.some((source) => source.url === directUrl)) {
@@ -1947,6 +2337,22 @@ export function buildVideoLinkMeta(media, index) {
     resolutionLabel: media.isImage
       ? null
       : bestRendition?.resolutionLabel || null,
+    observedMaxResolution: videoSources[0]?.resolutionLabel || null,
+    observedMaxWidth: videoSources[0]?.width || 0,
+    observedMaxHeight: videoSources[0]?.height || 0,
+    observedMaxBitrate: videoSources[0]?.bitrate || 0,
+    observedMaxCodec: videoSources[0]?.codecType || null,
+    observedQualityScope: "TikTok delivery renditions observed in this session",
+    standardSelectedResolution: bestRendition?.resolutionLabel || null,
+    standardDeliveryMethod:
+      bestRendition?.deliveryMethod || "direct-muxed",
+    experimentalSelectedResolution:
+      experimentalRendition?.resolutionLabel || null,
+    experimentalDeliveryMethod:
+      experimentalRendition?.deliveryMethod || null,
+    creatorUploadCeilingStatus: "unknown",
+    creatorUploadCeilingReason:
+      "TikTok does not expose trusted creator-upload dimensions",
     videoSources,
     coverImage: media?.video?.cover,
     dynamicCover: media?.video?.dynamicCover,
@@ -2154,9 +2560,192 @@ export async function downloadAllPostImagesHandler(e, media) {
   return successfulDownloads;
 }
 
+async function fetchBlobWithProgress(url, onProgress) {
+  const response = await fetch(url, { credentials: "include" });
+  if (!response.ok) return { response, blob: null };
+
+  const total = Number(response.headers.get("content-length")) || 0;
+  if (!response.body) {
+    const blob = await response.blob();
+    onProgress?.(blob.size, total || blob.size);
+    return { response, blob };
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    onProgress?.(loaded, total);
+  }
+
+  return {
+    response,
+    blob: new Blob(chunks, {
+      type: response.headers.get("content-type") || "video/mp4",
+    }),
+  };
+}
+
+async function downloadExperimentalHdSource(source, filename, onProgress) {
+  if (!source?.url || !source?.audioUrl) {
+    const error = new Error("Experimental HD audio pair is unavailable");
+    error.code = "ERR_EXPERIMENTAL_HD_PAIR";
+    throw error;
+  }
+
+  let videoLoaded = 0;
+  let videoTotal = 0;
+  let audioLoaded = 0;
+  let audioTotal = 0;
+  const reportFetchProgress = () => {
+    const total = videoTotal + audioTotal;
+    const loaded = videoLoaded + audioLoaded;
+    onProgress?.({
+      phase: "fetch",
+      progress: total ? Math.min(1, loaded / total) : null,
+      loaded,
+      total,
+    });
+  };
+  const [videoResult, audioResult] = await Promise.all([
+    fetchBlobWithProgress(source.url, (loaded, total) => {
+      videoLoaded = loaded;
+      videoTotal = total;
+      reportFetchProgress();
+    }),
+    fetchBlobWithProgress(source.audioUrl, (loaded, total) => {
+      audioLoaded = loaded;
+      audioTotal = total;
+      reportFetchProgress();
+    }),
+  ]);
+  const videoResponse = videoResult.response;
+  const audioResponse = audioResult.response;
+  if (!videoResponse.ok || !audioResponse.ok) {
+    const error = new Error(
+      `Experimental HD fetch failed (${videoResponse.status}/${audioResponse.status})`,
+    );
+    error.code = "ERR_EXPERIMENTAL_HD_FETCH";
+    throw error;
+  }
+
+  onProgress?.({ phase: "mux", progress: 0 });
+  const muxedBlob = await remuxAdaptiveVideoAndAudio(
+    videoResult.blob,
+    audioResult.blob,
+    onProgress,
+  );
+  const muxedUrl = URL.createObjectURL(muxedBlob);
+
+  try {
+    onProgress?.({ phase: "save", progress: 0 });
+    await downloadURLToDisk(muxedUrl, filename, {
+      allowFailureModal: false,
+      maxRetries: 1,
+    });
+    onProgress?.({ phase: "save", progress: 1 });
+  } finally {
+    URL.revokeObjectURL(muxedUrl);
+  }
+}
+
+async function downloadExperimentalGatewaySource(source, filename, onProgress) {
+  let loadedBytes = 0;
+  let totalBytes = 0;
+  const result = await fetchBlobWithProgress(source.url, (loaded, total) => {
+    loadedBytes = loaded;
+    totalBytes = total;
+    onProgress?.({
+      phase: "fetch",
+      progress: total ? Math.min(1, loaded / total) : null,
+      loaded,
+      total,
+    });
+  });
+  if (!result.response.ok || !result.blob) {
+    const error = new Error(
+      `Experimental HD gateway fetch failed (${result.response.status})`,
+    );
+    error.code = "ERR_EXPERIMENTAL_HD_GATEWAY";
+    throw error;
+  }
+
+  if (!totalBytes) {
+    onProgress?.({
+      phase: "fetch",
+      progress: 1,
+      loaded: loadedBytes || result.blob.size,
+      total: loadedBytes || result.blob.size,
+    });
+  }
+  const input = new Input({
+    formats: [new Mp4InputFormat()],
+    source: new BlobSource(result.blob),
+  });
+  try {
+    const videoTrack = await input.getPrimaryVideoTrack();
+    const audioTrack = await input.getPrimaryAudioTrack();
+    if (!videoTrack || !audioTrack) {
+      const error = new Error(
+        "Experimental HD gateway did not return complete audio and video",
+      );
+      error.code = "ERR_EXPERIMENTAL_HD_INCOMPLETE";
+      throw error;
+    }
+
+    const [width, height, videoDuration, audioDuration] = await Promise.all([
+      videoTrack.getDisplayWidth(),
+      videoTrack.getDisplayHeight(),
+      videoTrack.computeDuration(),
+      audioTrack.computeDuration(),
+    ]);
+    const actualShortEdge = Math.min(width, height);
+    const expectedShortEdge = Math.min(
+      Number(source.width) || 0,
+      Number(source.height) || 0,
+    );
+    const durationTolerance = Math.max(1, videoDuration * 0.01);
+    if (
+      (expectedShortEdge && actualShortEdge < expectedShortEdge) ||
+      Math.abs(videoDuration - audioDuration) > durationTolerance
+    ) {
+      const error = new Error(
+        "Experimental HD gateway media did not match its advertised rendition",
+      );
+      error.code = "ERR_EXPERIMENTAL_HD_MISMATCH";
+      throw error;
+    }
+    source.probedWidth = width;
+    source.probedHeight = height;
+    source.probedVideoDuration = videoDuration;
+    source.probedAudioDuration = audioDuration;
+  } finally {
+    input.dispose();
+  }
+  const blobUrl = URL.createObjectURL(result.blob);
+  try {
+    onProgress?.({ phase: "save", progress: 0 });
+    await downloadURLToDisk(blobUrl, filename, {
+      allowFailureModal: false,
+      maxRetries: 1,
+    });
+    onProgress?.({ phase: "save", progress: 1 });
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+}
+
 export async function downloadSingleMedia(
   media,
-  { imageIndex = 0 } = { imageIndex: 0 },
+  {
+    imageIndex = 0,
+    experimentalHd = false,
+    onProgress = null,
+  } = { imageIndex: 0 },
 ) {
   console.log("DEBUG_DL_ALLA ondownload received ", {
     imageIndex,
@@ -2234,7 +2823,7 @@ export async function downloadSingleMedia(
     const imageUrl = media.isImage
       ? media.imagePostImages?.[imageIndex]
       : null;
-    const videoSources = media.isImage
+    const allVideoSources = media.isImage
       ? []
       : [
           ...(Array.isArray(media.videoSources) ? media.videoSources : []),
@@ -2244,6 +2833,18 @@ export async function downloadSingleMedia(
             qualityTier: media.qualityTier || "unknown",
           },
         ];
+    const videoSources = experimentalHd
+      ? [
+          ...allVideoSources.filter(
+            (source) => source.experimentalOnly,
+          ),
+          ...allVideoSources.filter(
+            (source) => !source.experimentalOnly,
+          ),
+        ]
+      : allVideoSources.filter(
+          (source) => !source.experimentalOnly,
+        );
     const seenUrls = new Set();
     const sources = (media.isImage ? [{ url: imageUrl }] : videoSources).filter(
       (source) => {
@@ -2264,12 +2865,27 @@ export async function downloadSingleMedia(
       const isLastSource = sourceIndex === sources.length - 1;
 
       try {
-        await downloadURLToDisk(source.url, filename, {
-          allowFailureModal: isLastSource,
-          maxRetries: isLastSource ? 3 : 2,
-        });
+        if (experimentalHd && source.experimentalOnly) {
+          if (source.deliveryMethod === "tiktok-gateway-muxed") {
+            await downloadExperimentalGatewaySource(
+              source,
+              filename,
+              onProgress,
+            );
+          } else if (source.audioStatus === "separate" && source.audioUrl) {
+            await downloadExperimentalHdSource(source, filename, onProgress);
+          } else {
+            throw new Error("Experimental HD source is incomplete");
+          }
+        } else {
+          await downloadURLToDisk(source.url, filename, {
+            allowFailureModal: isLastSource,
+            maxRetries: isLastSource ? 3 : 2,
+            onProgress,
+          });
+        }
 
-        if (!media.isImage) {
+        if (!media.isImage && !source.experimentalOnly) {
           media.url = source.url;
           media.qualityLabel = source.qualityLabel || "?";
           media.qualityTier = source.qualityTier || "unknown";
@@ -2282,6 +2898,9 @@ export async function downloadSingleMedia(
         break;
       } catch (sourceError) {
         if (isLastSource) throw sourceError;
+        if (source.experimentalOnly) {
+          onProgress?.({ phase: "fallback", progress: null });
+        }
         console.warn("[Download] Trying lower-quality fallback source", {
           mediaId: media?.id || media?.videoId || null,
           failedQuality: source.qualityLabel || "?",
@@ -2781,7 +3400,32 @@ export async function downloadURLToDisk(url, filename, options = {}) {
         throw err;
       }
 
-      const blob = await resp.blob();
+      const totalBytes = Number(resp.headers.get("content-length")) || 0;
+      let blob;
+      if (resp.body && typeof options.onProgress === "function") {
+        const reader = resp.body.getReader();
+        const chunks = [];
+        let loadedBytes = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loadedBytes += value.byteLength;
+          options.onProgress({
+            phase: "fetch",
+            progress: totalBytes
+              ? Math.min(1, loadedBytes / totalBytes)
+              : null,
+            loaded: loadedBytes,
+            total: totalBytes,
+          });
+        }
+        blob = new Blob(chunks, {
+          type: resp.headers.get("content-type") || "application/octet-stream",
+        });
+      } else {
+        blob = await resp.blob();
+      }
       if (!blob || blob.size === 0) {
         console.error("[Download] Fetch returned an empty blob", {
           requestId,
@@ -2798,6 +3442,7 @@ export async function downloadURLToDisk(url, filename, options = {}) {
       const blobUrl = URL.createObjectURL(blob);
 
       try {
+        options.onProgress?.({ phase: "save", progress: 0 });
         // ask background to save to disk
         // When native download is enabled, force saveAs: false to prevent save dialog
         postBlobDownloadRequest({
@@ -2819,6 +3464,7 @@ export async function downloadURLToDisk(url, filename, options = {}) {
 
         if (res?.success) {
           AppState.sessionHasConfirmedDownloads = true;
+          options.onProgress?.({ phase: "save", progress: 1 });
           return true;
         }
 

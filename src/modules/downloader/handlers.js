@@ -14,6 +14,48 @@ const normId = (it) => String(it?.id ?? it?.videoId ?? "");
 const isFull = (it) => !!(it && !it.downloaderHasLowConfidence);
 const hasPlay = (it) => !!(it?.video?.playAddr || it?.url);
 
+let cachedUniversalDataText = null;
+let cachedUniversalScope = null;
+
+function getUniversalDataScope() {
+  const runtimeScope = window?.__$UNIVERSAL_DATA$__?.__DEFAULT_SCOPE__;
+  const script = document.getElementById(
+    "__UNIVERSAL_DATA_FOR_REHYDRATION__",
+  );
+  const scriptText = script?.textContent || "";
+
+  if (scriptText && scriptText !== cachedUniversalDataText) {
+    cachedUniversalDataText = scriptText;
+    try {
+      cachedUniversalScope = JSON.parse(scriptText)?.__DEFAULT_SCOPE__ || null;
+    } catch (error) {
+      cachedUniversalScope = null;
+      if (AppState.debug.active) {
+        console.warn("Failed to parse TikTok universal video data", error);
+      }
+    }
+  }
+
+  const mergedScope = {
+    ...(cachedUniversalScope || {}),
+    ...(runtimeScope || {}),
+  };
+  const inlineVideoDetail = cachedUniversalScope?.["webapp.video-detail"];
+  const runtimeVideoDetail = runtimeScope?.["webapp.video-detail"];
+  const inlineItem = inlineVideoDetail?.itemInfo?.itemStruct;
+  const runtimeItem = runtimeVideoDetail?.itemInfo?.itemStruct;
+  const getItemRichness = (item) =>
+    (item?.video?.bitrateInfo?.length || 0) * 10 +
+    (item?.video?.PlayAddrStruct?.UrlList?.length || 0) +
+    (item?.video?.playAddr ? 1 : 0);
+
+  if (getItemRichness(inlineItem) > getItemRichness(runtimeItem)) {
+    mergedScope["webapp.video-detail"] = inlineVideoDetail;
+  }
+
+  return mergedScope;
+}
+
 function compareVideoQuality(left, right) {
   const leftRendition = getBestVideoRendition(left?.video);
   const rightRendition = getBestVideoRendition(right?.video);
@@ -82,7 +124,7 @@ export function handleFoundItems(newItems) {
     }
 
     // Opportunistically fold in video-detail + updated-items if present
-    const scope = window?.__$UNIVERSAL_DATA$__?.__DEFAULT_SCOPE__;
+    const scope = getUniversalDataScope();
     const struct = scope?.["webapp.video-detail"]?.itemInfo?.itemStruct;
     if (normId(struct)) {
       const id = normId(struct);
