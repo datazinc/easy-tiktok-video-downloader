@@ -4408,12 +4408,30 @@ function getExperimentalHdSource(media) {
     return null;
   }
 
+  const standardWidth = Number(media?.videoWidth) || 0;
+  const standardHeight = Number(media?.videoHeight) || 0;
+  const standardShortEdge =
+    standardWidth && standardHeight
+      ? Math.min(standardWidth, standardHeight)
+      : 0;
+  const standardArea = standardWidth * standardHeight;
+
   return (media?.videoSources || []).find(
     (source) =>
       source.experimentalOnly &&
       source.audioStatus !== "video-only" &&
       (source.deliveryMethod === "tiktok-gateway-muxed" || source.audioUrl) &&
-      source.qualityTier === "hd",
+      source.qualityTier === "hd" &&
+      (() => {
+        const width = Number(source.width) || 0;
+        const height = Number(source.height) || 0;
+        if (!standardShortEdge || !width || !height) return true;
+        const shortEdge = Math.min(width, height);
+        return (
+          shortEdge > standardShortEdge ||
+          (shortEdge === standardShortEdge && width * height > standardArea)
+        );
+      })(),
   ) || null;
 }
 
