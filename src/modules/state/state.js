@@ -210,6 +210,9 @@ const AppState = {
     hasSeenFilePathHint: getBooleanFromStorage(
       STORAGE_KEYS.FILE_PATH_HINT_SEEN,
     ),
+    hasDismissedExperimentalHdBanner: getBooleanFromStorage(
+      STORAGE_KEYS.EXPERIMENTAL_HD_BANNER_DISMISSED,
+    ),
     themeMode: getStringOrNull(STORAGE_KEYS.THEME_MODE) || "system",
     autoSwipeConfigurations: {
       nextClickTimeout: null,
@@ -232,6 +235,7 @@ const AppState = {
       STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI,
     ),
     useNativeDownload: getBooleanOrNull(STORAGE_KEYS.USE_NATIVE_DOWNLOAD, null),
+    experimentalHd: getBooleanFromStorage(STORAGE_KEYS.EXPERIMENTAL_HD),
     // null = auto (use native for Brave), true = always native, false = always chrome.downloads
   },
   rateDonate: safeParseRateDonateDates(
@@ -277,6 +281,8 @@ export function resetAppStateToDefaults() {
   localStorage.removeItem(STORAGE_KEYS.SHOW_FOLDER_PICKER);
   localStorage.removeItem(STORAGE_KEYS.THEME_MODE);
   localStorage.removeItem(STORAGE_KEYS.FILE_PATH_HINT_SEEN);
+  localStorage.removeItem(STORAGE_KEYS.EXPERIMENTAL_HD);
+  localStorage.removeItem(STORAGE_KEYS.EXPERIMENTAL_HD_BANNER_DISMISSED);
 
   // Reset AppState
   AppState.debug.active = false;
@@ -321,6 +327,7 @@ export function resetAppStateToDefaults() {
     isDragging: false,
     hasSeenShowButtonHint: false,
     hasSeenFilePathHint: false,
+    hasDismissedExperimentalHdBanner: false,
     themeMode: "dark",
     autoSwipeConfigurations: {
       nextClickTimeout: null,
@@ -335,6 +342,7 @@ export function resetAppStateToDefaults() {
     includeCSV: false,
     fullPathTemplate: {},
     showFolderPicker: false,
+    experimentalHd: false,
   };
   // Set default
   localStorage.setItem(

@@ -52,6 +52,8 @@ import {
   findFiberItemsInContainer,
   detectBrowserType,
   syncPlaylistStateWithLocation,
+  hydrateTikTokVideoDetail,
+  isAdaptiveGearName,
 } from "../utils/utils.js";
 import {
   startAutoSwipeLoop,
@@ -70,6 +72,7 @@ import { handleFoundItems, handleResumeDownload } from "./handlers.js";
 
 // Track current username to detect profile changes for resume downloads
 let lastTrackedUsername = null;
+const experimentalHdHydrationState = new Map();
 
 const CHROME_EXTENSION_REVIEW_URL =
   "https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg";
@@ -4315,6 +4318,248 @@ function createCurrentVideoButton() {
   return btn;
 }
 
+function createExperimentalHdButton(className, label = "Save Experimental HD") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.dataset.defaultLabel = label;
+  setExperimentalHdIdleContent(button);
+  button.style.display = "none";
+  return button;
+}
+
+function setExperimentalHdIdleContent(button) {
+  button.replaceChildren();
+  if (button.dataset.overlayCompact === "true") {
+    const icon = document.createElement("span");
+    icon.className = "download-btn-icon";
+    icon.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.className = "download-btn-label";
+    label.textContent = button.dataset.defaultLabel || "HD";
+    button.append(icon, label);
+    return;
+  }
+  if (button.dataset.compact === "true") {
+    const icon = createIcon("download", 14);
+    icon.setAttribute("aria-hidden", "true");
+    button.appendChild(icon);
+  }
+  button.appendChild(
+    document.createTextNode(button.dataset.defaultLabel || "Save Experimental HD"),
+  );
+}
+
+function setCompactStandardDownloadContent(button, media) {
+  button.replaceChildren();
+  const icon = createIcon("download", 14);
+  icon.setAttribute("aria-hidden", "true");
+  const actionLabel = getDownloadActionLabel(media);
+  button.append(icon, document.createTextNode(actionLabel));
+  button.title = getStandardDownloadTitle(media);
+  button.setAttribute(
+    "aria-label",
+    `${actionLabel} standard download`,
+  );
+}
+
+function getDownloadActionLabel(media) {
+  const qualityLabel = getMediaQualityLabel(media);
+  return !qualityLabel || qualityLabel === "?" ? "Save" : qualityLabel;
+}
+
+function getResolutionDetails({
+  width = 0,
+  height = 0,
+  resolutionLabel = null,
+} = {}) {
+  const normalizedWidth = Number(width) || 0;
+  const normalizedHeight = Number(height) || 0;
+  if (normalizedWidth && normalizedHeight) {
+    return `${normalizedWidth}×${normalizedHeight}${
+      resolutionLabel ? ` (${resolutionLabel})` : ""
+    }`;
+  }
+  return resolutionLabel || "resolution unavailable";
+}
+
+function getStandardDownloadTitle(media) {
+  return `Standard download · Expected ${getResolutionDetails({
+    width: media?.videoWidth,
+    height: media?.videoHeight,
+    resolutionLabel: media?.resolutionLabel,
+  })} · Complete audio + video`;
+}
+
+function getExperimentalHdTitle(source) {
+  const method =
+    source?.deliveryMethod === "tiktok-gateway-muxed"
+      ? "TikTok complete audio + video source"
+      : "Matched video + audio streams";
+  return `Experimental HD · Expected ${getResolutionDetails({
+    width: source?.width,
+    height: source?.height,
+    resolutionLabel: source?.resolutionLabel,
+  })} · ${method}`;
+}
+
+function getExperimentalHdSource(media) {
+  if (!AppState.downloadPreferences.experimentalHd || media?.isImage) {
+    return null;
+  }
+
+  return (media?.videoSources || []).find(
+    (source) =>
+      source.experimentalOnly &&
+      source.audioStatus !== "video-only" &&
+      (source.deliveryMethod === "tiktok-gateway-muxed" || source.audioUrl) &&
+      source.qualityTier === "hd",
+  ) || null;
+}
+
+function updateExperimentalHdProgress(button, status) {
+  const phase = status?.phase || "fetch";
+  const phaseProgress = Number(status?.progress);
+  const hasProgress = Number.isFinite(phaseProgress);
+  const phaseDetails = {
+    fetch: { label: "Downloading HD", start: 0, weight: 0.7 },
+    mux: { label: "Combining audio", start: 0.7, weight: 0.25 },
+    save: { label: "Saving file", start: 0.95, weight: 0.05 },
+    fallback: {
+      label: "HD unavailable · Saving standard",
+      start: 0,
+      weight: 0,
+    },
+  };
+  const details = phaseDetails[phase] || phaseDetails.fetch;
+  const overallProgress = hasProgress
+    ? Math.round(
+        Math.min(1, details.start + details.weight * phaseProgress) * 100,
+      )
+    : null;
+  const isCompact =
+    button.dataset.compact === "true" ||
+    button.dataset.overlayCompact === "true";
+
+  button.replaceChildren();
+  const label = document.createElement("span");
+  label.className = "ettpd-hd-progress-label";
+  label.textContent = isCompact
+    ? overallProgress == null
+      ? phase === "fallback"
+        ? "SD"
+        : phase === "mux"
+          ? "MUX"
+          : "…"
+      : `${overallProgress}%`
+    : `${details.label}${
+        overallProgress == null ? "" : ` · ${overallProgress}%`
+      }`;
+  const track = document.createElement("span");
+  track.className = "ettpd-hd-progress-track";
+  const fill = document.createElement("span");
+  fill.className = "ettpd-hd-progress-fill";
+  fill.style.width = `${overallProgress ?? 100}%`;
+  if (overallProgress == null) fill.classList.add("is-indeterminate");
+  track.appendChild(fill);
+  button.append(label, track);
+  button.title = details.label;
+}
+
+async function runExperimentalHdDownload(button, media, options = {}) {
+  button.disabled = true;
+  let usedFallback = false;
+  updateExperimentalHdProgress(button, { phase: "fetch", progress: 0 });
+
+  try {
+    await downloadSingleMedia(media, {
+      imageIndex: options.imageIndex || 0,
+      experimentalHd: true,
+      onProgress: (status) => {
+        if (status.phase === "fallback") usedFallback = true;
+        updateExperimentalHdProgress(button, status);
+      },
+    });
+    button.replaceChildren(
+      document.createTextNode(
+        usedFallback ? "Saved standard fallback" : "HD saved",
+      ),
+    );
+  } catch (error) {
+    console.warn("Experimental HD download failed", error);
+    button.replaceChildren(document.createTextNode("HD save failed"));
+  } finally {
+    setTimeout(() => {
+      button.disabled = false;
+      setExperimentalHdIdleContent(button);
+      button.title = button.dataset.defaultTitle || "";
+    }, 2500);
+  }
+}
+
+function updateStandardDownloadProgress(button, media, status) {
+  const phase = status?.phase || "fetch";
+  const progress = Number(status?.progress);
+  const hasProgress = Number.isFinite(progress);
+  const quality = getMediaQualityLabel(media) || "Video";
+  const label = phase === "save" ? "Saving file" : `Downloading ${quality}`;
+  const overallProgress = hasProgress
+    ? Math.round(
+        (phase === "save" ? 0.92 + 0.08 * progress : 0.92 * progress) * 100,
+      )
+    : null;
+  const isCompact = button.matches(
+    ".ettpd-compact-quality-download, .download-btn",
+  );
+
+  button.replaceChildren();
+  const text = document.createElement("span");
+  text.className = "ettpd-hd-progress-label";
+  text.textContent = isCompact
+    ? overallProgress == null
+      ? "…"
+      : `${overallProgress}%`
+    : `${label}${
+        overallProgress == null ? "" : ` · ${overallProgress}%`
+      }`;
+  const track = document.createElement("span");
+  track.className = "ettpd-hd-progress-track";
+  const fill = document.createElement("span");
+  fill.className = "ettpd-hd-progress-fill";
+  fill.style.width = `${overallProgress ?? 100}%`;
+  if (overallProgress == null) fill.classList.add("is-indeterminate");
+  track.appendChild(fill);
+  button.append(text, track);
+  button.title = label;
+}
+
+async function runStandardDownload(button, media, options = {}) {
+  button.disabled = true;
+  updateStandardDownloadProgress(button, media, {
+    phase: "fetch",
+    progress: 0,
+  });
+
+  try {
+    const downloaded = await downloadSingleMedia(media, {
+      imageIndex: options.imageIndex || 0,
+      onProgress: (status) =>
+        updateStandardDownloadProgress(button, media, status),
+    });
+    button.replaceChildren(
+      document.createTextNode(downloaded === false ? "Already saved" : "Saved"),
+    );
+  } catch (error) {
+    console.warn("Standard download failed", error);
+    button.replaceChildren(document.createTextNode("Save failed"));
+  } finally {
+    setTimeout(() => {
+      button.disabled = false;
+      options.reset?.();
+    }, 2000);
+  }
+}
+
 function getMediaQualityLabel(media) {
   if (media?.isImage) return null;
   if (media?.qualityTier === "hd") return "HD";
@@ -4328,19 +4573,23 @@ function getMediaQualityTitle(media) {
   }
 
   if (media?.qualityTier !== "hd") {
-    return media?.resolutionLabel
-      ? `SD source selected (${media.resolutionLabel})`
-      : "SD source selected";
+    return `SD source selected · Expected ${getResolutionDetails({
+      width: media?.videoWidth,
+      height: media?.videoHeight,
+      resolutionLabel: media?.resolutionLabel,
+    })}`;
   }
 
-  return media?.resolutionLabel
-    ? `HD source selected (${media.resolutionLabel})`
-    : "HD source selected";
+  return `HD source selected · Expected ${getResolutionDetails({
+    width: media?.videoWidth,
+    height: media?.videoHeight,
+    resolutionLabel: media?.resolutionLabel,
+  })}`;
 }
 
 function createQualityBadge(media) {
   const qualityLabel = getMediaQualityLabel(media);
-  if (!qualityLabel) return null;
+  if (!qualityLabel || qualityLabel === "?") return null;
 
   const badge = document.createElement("span");
   badge.className = `ettpd-quality-badge ettpd-quality-${
@@ -4359,9 +4608,10 @@ function setButtonLabelWithQuality(button, label, media) {
   button.replaceChildren(document.createTextNode(label));
   const badge = createQualityBadge(media);
   if (badge) button.appendChild(badge);
+  button.title = getStandardDownloadTitle(media);
 }
 
-function updateCurrentVideoButton(btn, items = []) {
+function updateCurrentVideoButton(btn, experimentalHdBtn, items = []) {
   if (!btn) return;
   const currentVideoId = document.location.pathname.split("/")[3];
   const currentMedia = items.find(
@@ -4374,6 +4624,10 @@ function updateCurrentVideoButton(btn, items = []) {
     btn.disabled = true;
     btn.textContent = "Download Current";
     btn.onclick = () => {};
+    if (experimentalHdBtn) {
+      experimentalHdBtn.style.display = "none";
+      experimentalHdBtn.onclick = null;
+    }
     return;
   }
 
@@ -4386,37 +4640,32 @@ function updateCurrentVideoButton(btn, items = []) {
     : "Download Current";
   setButtonLabelWithQuality(btn, defaultLabel, currentMedia);
 
+  const experimentalHdSource = getExperimentalHdSource(currentMedia);
+  if (experimentalHdBtn) {
+    experimentalHdBtn.style.display = experimentalHdSource ? "block" : "none";
+    experimentalHdBtn.textContent = experimentalHdBtn.dataset.defaultLabel;
+    experimentalHdBtn.title = experimentalHdSource
+      ? getExperimentalHdTitle(experimentalHdSource)
+      : "";
+    experimentalHdBtn.dataset.defaultTitle = experimentalHdBtn.title;
+    experimentalHdBtn.onclick = experimentalHdSource
+      ? (event) => {
+          event.stopPropagation();
+          void runExperimentalHdDownload(experimentalHdBtn, currentMedia);
+        }
+      : null;
+  }
+
   if (currentMedia.isImage) {
     btn.onclick = (e) => downloadAllPostImagesHandler(e, currentMedia);
   } else {
-    btn.onclick = async (e) => {
+    btn.onclick = (e) => {
       e?.stopPropagation?.();
-      btn.disabled = true;
-      btn.textContent = "";
-      const downloadingIcon = createIcon("hourglass", 16);
-      downloadingIcon.style.marginRight = "4px";
-      btn.appendChild(downloadingIcon);
-      btn.appendChild(document.createTextNode("Downloading..."));
-      try {
-        await downloadSingleMedia(currentMedia);
-        btn.textContent = "";
-        const doneIcon = createIcon("check", 16);
-        doneIcon.style.marginRight = "4px";
-        btn.appendChild(doneIcon);
-        btn.appendChild(document.createTextNode("Done!"));
-      } catch (err) {
-        console.warn("Download current failed", err);
-        btn.textContent = "";
-        const failedIcon = createIcon("error", 16);
-        failedIcon.style.marginRight = "4px";
-        btn.appendChild(failedIcon);
-        btn.appendChild(document.createTextNode("Failed"));
-      } finally {
-        setTimeout(() => {
-          btn.disabled = false;
+      void runStandardDownload(btn, currentMedia, {
+        reset: () => {
           setButtonLabelWithQuality(btn, defaultLabel, currentMedia);
-        }, 1500);
-      }
+        },
+      });
     };
   }
 }
@@ -4660,6 +4909,182 @@ export function createControlButtons(preferencesBox) {
   return { container, settingsBtn, userPostsBtn };
 }
 
+function createExperimentalHdBanner(preferencesBox, settingsBtn) {
+  const banner = document.createElement("aside");
+  banner.className = "ettpd-experimental-hd-banner";
+  banner.setAttribute("aria-label", "Experimental HD announcement");
+  banner.style.display =
+    AppState.downloadPreferences.experimentalHd ||
+    AppState.ui.hasDismissedExperimentalHdBanner
+      ? "none"
+      : "grid";
+
+  const icon = document.createElement("span");
+  icon.className = "ettpd-experimental-hd-banner-icon";
+  icon.textContent = "HD";
+
+  const copy = document.createElement("div");
+  copy.className = "ettpd-experimental-hd-banner-copy";
+  const title = document.createElement("strong");
+  title.textContent = "Try Experimental HD";
+  const detail = document.createElement("span");
+  detail.textContent = "Save higher-quality video with matched audio when available.";
+  copy.append(title, detail);
+
+  const actions = document.createElement("div");
+  actions.className = "ettpd-experimental-hd-banner-actions";
+  const tryButton = document.createElement("button");
+  tryButton.type = "button";
+  tryButton.className = "ettpd-experimental-hd-banner-try";
+  tryButton.textContent = "Try it";
+  tryButton.onclick = (event) => {
+    event.stopPropagation();
+    if (!AppState.ui.isPreferenceBoxOpen) settingsBtn.click();
+    setTimeout(() => {
+      const checkbox = preferencesBox.querySelector(
+        'input[name="experimentalHd"]',
+      );
+      const settingRow = checkbox?.closest("label");
+      if (!checkbox || !settingRow) return;
+
+      preferencesBox.scrollTop = Math.max(
+        0,
+        settingRow.offsetTop - preferencesBox.clientHeight / 3,
+      );
+      settingRow.classList.remove("ettpd-setting-spotlight");
+      void settingRow.offsetWidth;
+      settingRow.classList.add("ettpd-setting-spotlight");
+      settingRow.setAttribute("aria-live", "polite");
+      checkbox?.focus();
+      setTimeout(() => {
+        settingRow.classList.remove("ettpd-setting-spotlight");
+        settingRow.removeAttribute("aria-live");
+      }, 6000);
+    }, 100);
+  };
+  const dismissButton = document.createElement("button");
+  dismissButton.type = "button";
+  dismissButton.className = "ettpd-experimental-hd-banner-dismiss";
+  dismissButton.setAttribute("aria-label", "Dismiss Experimental HD announcement");
+  dismissButton.title = "Dismiss";
+  dismissButton.textContent = "×";
+  dismissButton.onclick = (event) => {
+    event.stopPropagation();
+    AppState.ui.hasDismissedExperimentalHdBanner = true;
+    localStorage.setItem(
+      STORAGE_KEYS.EXPERIMENTAL_HD_BANNER_DISMISSED,
+      "true",
+    );
+    banner.remove();
+  };
+  actions.append(tryButton, dismissButton);
+  banner.append(icon, copy, actions);
+  return banner;
+}
+
+function createExperimentalHdStatus() {
+  const status = document.createElement("aside");
+  status.className = "ettpd-experimental-hd-status";
+  status.setAttribute("aria-live", "polite");
+  status.style.display = "none";
+  return status;
+}
+
+function updateExperimentalHdStatus(status, items = []) {
+  if (!status) return;
+  const wrapper = status.closest("#" + DOM_IDS.DOWNLOADER_WRAPPER);
+  wrapper?.classList.toggle(
+    "ettpd-experimental-hd-enabled",
+    AppState.downloadPreferences.experimentalHd,
+  );
+  if (!AppState.downloadPreferences.experimentalHd) {
+    status.style.display = "none";
+    status.replaceChildren();
+    return;
+  }
+
+  const currentVideoId = document.location.pathname.match(/\/video\/(\d+)/)?.[1];
+  const currentMedia = items.find(
+    (media) => String(media?.videoId) === String(currentVideoId),
+  );
+  const experimentalSource = getExperimentalHdSource(currentMedia);
+  const rawItem = currentVideoId
+    ? AppState.allItemsEverSeen?.[currentVideoId]
+    : null;
+  const rawHdSource = (rawItem?.video?.bitrateInfo || []).find((entry) => {
+    const width = Number(entry?.PlayAddr?.Width) || 0;
+    const height = Number(entry?.PlayAddr?.Height) || 0;
+    return (
+      isAdaptiveGearName(entry?.GearName) &&
+      Math.min(width, height) >= 1080
+    );
+  });
+  const hydrationState = currentVideoId
+    ? experimentalHdHydrationState.get(currentVideoId)
+    : null;
+
+  if (currentMedia && !experimentalSource && !hydrationState) {
+    experimentalHdHydrationState.set(currentVideoId, "loading");
+    void hydrateTikTokVideoDetail(
+      currentVideoId,
+      currentMedia.authorId,
+    ).then((item) => {
+      experimentalHdHydrationState.set(
+        currentVideoId,
+        item ? "loaded" : "unavailable",
+      );
+      if (item) handleFoundItems([item]);
+      displayFoundUrls({ forced: true });
+    });
+  }
+
+  let state = "waiting";
+  let headline = "Experimental HD is on";
+  let detail = "Standard Save stays unchanged. Save HD appears when a safe matched stream is found.";
+  if (experimentalSource) {
+    state = "ready";
+    headline = `${getResolutionDetails({
+      width: experimentalSource.width,
+      height: experimentalSource.height,
+      resolutionLabel: experimentalSource.resolutionLabel,
+    })} HD available`;
+    detail = "Use the separate HD download button for the higher-quality version.";
+  } else if (
+    currentVideoId &&
+    (rawHdSource || hydrationState === "loading" || !hydrationState)
+  ) {
+    state = "scanning";
+    headline = "Checking for a higher-quality version";
+    detail = "Keep the video playing briefly. Standard download remains available.";
+  } else if (currentVideoId) {
+    state = "unavailable";
+    const observedQuality = getResolutionDetails({
+      width: currentMedia?.observedMaxWidth,
+      height: currentMedia?.observedMaxHeight,
+      resolutionLabel: currentMedia?.observedMaxResolution,
+    });
+    headline = currentMedia?.observedMaxResolution
+      ? `Best available quality: ${observedQuality}`
+      : "HD not available for this video";
+    detail = "Use the standard download button for this video.";
+  }
+
+  status.dataset.state = state;
+  status.style.display = "flex";
+  status.replaceChildren();
+  const indicator = document.createElement("span");
+  indicator.className = "ettpd-experimental-hd-status-indicator";
+  indicator.textContent = state === "ready" ? "HD" : "ON";
+  const copy = document.createElement("span");
+  copy.className = "ettpd-experimental-hd-status-copy";
+  const title = document.createElement("strong");
+  title.textContent = headline;
+  const description = document.createElement("span");
+  description.textContent = detail;
+  copy.append(title, description);
+  status.append(indicator, copy);
+}
+
 export function updateDownloaderList(items, hashToDisplay) {
   if (AppState.downloading.isActive || AppState.downloading.isDownloadingAll)
     return;
@@ -4678,8 +5103,13 @@ export function updateDownloaderList(items, hashToDisplay) {
 
   const refs = wrapper._ettpdRefs;
   refs?.updateVisibleBox?.();
+  updateExperimentalHdStatus(refs?.experimentalHdStatus, items);
   updateDownloadAllButtonState(refs?.downloadAllBtn, items);
-  updateCurrentVideoButton(refs?.currentVideoBtn, items);
+  updateCurrentVideoButton(
+    refs?.currentVideoBtn,
+    refs?.experimentalCurrentVideoBtn,
+    items,
+  );
 
   if (items.length > 0) {
     AppState.recommendationsLeaderboard.newlyRecommendedUrls = items;
@@ -4717,6 +5147,11 @@ function initializeDownloaderStructure(wrapper) {
     settingsBtn,
     userPostsBtn,
   } = createControlButtons(preferencesBox);
+  const experimentalHdBanner = createExperimentalHdBanner(
+    preferencesBox,
+    settingsBtn,
+  );
+  const experimentalHdStatus = createExperimentalHdStatus();
 
   const scrapperContainer = document.createElement("div");
   scrapperContainer.id = DOM_IDS.DOWNLOADER_SCRAPPER_CONTAINER;
@@ -4725,6 +5160,9 @@ function initializeDownloaderStructure(wrapper) {
     "#" + DOM_IDS.DOWNLOAD_ALL_BUTTON,
   );
   const currentVideoBtn = createCurrentVideoButton();
+  const experimentalCurrentVideoBtn = createExperimentalHdButton(
+    "ettpd-btn ettpd-experimental-current-video-btn",
+  );
   const reportBugBtn = createReportBugButton();
   const creditsSpan = createCreditsSpan();
   const list = document.createElement("ol");
@@ -4733,10 +5171,13 @@ function initializeDownloaderStructure(wrapper) {
 
   wrapper.append(
     settingsAndScrapperBtnContainer,
+    experimentalHdBanner,
+    experimentalHdStatus,
     scrapperContainer,
     preferencesBox,
     downloadAllContainer,
     currentVideoBtn,
+    experimentalCurrentVideoBtn,
     reportBugBtn,
     creditsSpan,
     list,
@@ -4750,6 +5191,8 @@ function initializeDownloaderStructure(wrapper) {
     scrapperContainer,
     downloadAllBtn,
     currentVideoBtn,
+    experimentalCurrentVideoBtn,
+    experimentalHdStatus,
     list,
   };
 
@@ -4889,6 +5332,7 @@ function getMediaEntryHash(media) {
     media.downloaderHasLowConfidence ? "1" : "0",
     media.isAd ? "1" : "0",
     media.qualityLabel || "?",
+    getExperimentalHdSource(media)?.url || "",
     media.isImage
       ? `img:${(media.imagePostImages || []).join("|")}`
       : `vid:${media.url || ""}`,
@@ -5108,61 +5552,38 @@ function buildMediaListItem(media, options = {}) {
     viewBtnContainer.appendChild(viewBtn);
 
     const downloadBtn = document.createElement("button");
-    downloadBtn.className = "ettpd-download-btn";
-    setButtonLabelWithQuality(downloadBtn, "Download", media);
+    downloadBtn.className = "ettpd-download-btn ettpd-compact-quality-download";
+    setCompactStandardDownloadContent(downloadBtn, media);
+    const experimentalHdSource = getExperimentalHdSource(media);
+    const experimentalHdBtn = experimentalHdSource
+      ? createExperimentalHdButton(
+          "ettpd-download-btn ettpd-experimental-hd-list-btn",
+          "HD",
+        )
+      : null;
+    if (experimentalHdBtn) {
+      experimentalHdBtn.dataset.compact = "true";
+      setExperimentalHdIdleContent(experimentalHdBtn);
+      experimentalHdBtn.style.display = "inline-flex";
+      experimentalHdBtn.title = getExperimentalHdTitle(experimentalHdSource);
+      experimentalHdBtn.dataset.defaultTitle = experimentalHdBtn.title;
+      experimentalHdBtn.onclick = (event) => {
+        event.stopPropagation();
+        void runExperimentalHdDownload(experimentalHdBtn, media);
+      };
+    }
 
-    downloadBtn.onclick = async (e) => {
+    downloadBtn.onclick = (e) => {
       e.stopPropagation();
-
-      const originalContent2 = downloadBtn.cloneNode(true);
-      downloadBtn.textContent = "";
-      const downloadingIcon4 = createIcon("hourglass", 16);
-      downloadingIcon4.style.marginRight = "4px";
-      downloadBtn.appendChild(downloadingIcon4);
-      downloadBtn.appendChild(document.createTextNode("Downloading..."));
-      const delayBeforeStart = 600;
-      const minDisplayAfter = 1000;
-      const startedAt = Date.now();
-
-      await new Promise((r) => setTimeout(r, delayBeforeStart));
-
-      try {
-        await downloadSingleMedia(media);
-
-        const elapsed = Date.now() - startedAt;
-        const remaining = Math.max(0, minDisplayAfter - elapsed);
-
-        setTimeout(() => {
-          downloadBtn.textContent = "";
-          const doneIcon4 = createIcon("check", 16);
-          doneIcon4.style.marginRight = "4px";
-          downloadBtn.appendChild(doneIcon4);
-          downloadBtn.appendChild(document.createTextNode("Done!"));
-          setTimeout(() => {
-            downloadBtn.replaceWith(originalContent2.cloneNode(true));
-          }, 3000);
-        }, remaining);
-      } catch (err) {
-        console.error("Download failed:", err);
-        const elapsed = Date.now() - startedAt;
-        const remaining = Math.max(0, minDisplayAfter - elapsed);
-
-        setTimeout(() => {
-          downloadBtn.textContent = "";
-          const failedIcon4 = createIcon("error", 16);
-          failedIcon4.style.marginRight = "4px";
-          downloadBtn.appendChild(failedIcon4);
-          downloadBtn.appendChild(document.createTextNode("Failed!"));
-          setTimeout(() => {
-            downloadBtn.replaceWith(originalContent2.cloneNode(true));
-          }, 3000);
-        }, remaining);
-      }
+      void runStandardDownload(downloadBtn, media, {
+        reset: () => setCompactStandardDownloadContent(downloadBtn, media),
+      });
     };
 
     const holderEl = document.createElement("div");
     holderEl.className = "ettpd-download-btns-container";
     holderEl.append(tiktokBtnContainer, viewBtnContainer, downloadBtn);
+    if (experimentalHdBtn) holderEl.appendChild(experimentalHdBtn);
     downloadBtnHolder.append(holderEl);
   }
 
@@ -6895,6 +7316,30 @@ export function createPreferencesBox() {
     AppState.downloadPreferences.disableConfetti,
   );
 
+  const experimentalHdCheckbox = createCheckbox(
+    "Enable Experimental HD",
+    "experimentalHd",
+    (event) => {
+      AppState.downloadPreferences.experimentalHd = event.target.checked;
+      localStorage.setItem(
+        STORAGE_KEYS.EXPERIMENTAL_HD,
+        String(AppState.downloadPreferences.experimentalHd),
+      );
+      if (event.target.checked) {
+        AppState.ui.hasDismissedExperimentalHdBanner = true;
+        localStorage.setItem(
+          STORAGE_KEYS.EXPERIMENTAL_HD_BANNER_DISMISSED,
+          "true",
+        );
+        document.querySelector(".ettpd-experimental-hd-banner")?.remove();
+      }
+      displayFoundUrls({ forced: true });
+    },
+    AppState.downloadPreferences.experimentalHd,
+    "Combines TikTok's separate HD video and audio only when an exact pair is detected. Downloads may take longer and use more memory. Falls back automatically.",
+  );
+  experimentalHdCheckbox.dataset.setting = "experimental-hd";
+
   // Theme dropdown
   function createThemeToggle() {
     const container = document.createElement("div");
@@ -7293,6 +7738,7 @@ export function createPreferencesBox() {
     skipAdsCheckbox,
     includeCSVFile,
     disableConfetti,
+    experimentalHdCheckbox,
     themeToggle,
     autoScrollSettingUI,
     prefLabel,
@@ -7454,27 +7900,13 @@ function createDownloadButton({
 
   const className = `download-btn ${videoId}`;
   const mediaTypeLabel = isImage ? "Image" : "Video";
-  // const defaultBtnLabel = isSmallView ? "Save" : `Save ${mediaTypeLabel}`;
-  const defaultBtnLabel = "Save";
   const getOverlayMedia = () =>
     AppState.allDirectLinks?.find(
       (media) => String(media?.videoId) === String(videoId),
     ) || { isImage, qualityLabel: "?", qualityTier: "unknown" };
   const buildDefaultMarkup = () => {
     const media = getOverlayMedia();
-    const qualityLabel = getMediaQualityLabel(media);
-    const qualityBadge = qualityLabel
-      ? `<span class="ettpd-quality-badge ettpd-quality-${
-          media?.qualityTier === "hd"
-            ? "hd"
-            : media?.qualityTier === "sd"
-              ? "sd"
-              : "unknown"
-        }" title="${
-          getMediaQualityTitle(media)
-        }">${qualityLabel}</span>`
-      : "";
-    return `<span class="download-btn-icon" aria-hidden="true"></span><span class="download-btn-label">${defaultBtnLabel}</span>${qualityBadge}`;
+    return `<span class="download-btn-icon" aria-hidden="true"></span><span class="download-btn-label">${getDownloadActionLabel(media)}</span>`;
   };
 
   // Prevent duplicate buttons
@@ -7492,11 +7924,12 @@ function createDownloadButton({
   btn.type = "button";
   btn.className = className;
   btn.dataset.wrapperId = wrapperId;
-  btn.title = `Download ${mediaTypeLabel}`;
-  btn.setAttribute("aria-label", `Download ${mediaTypeLabel}`);
+  btn.title = getStandardDownloadTitle(getOverlayMedia());
+  btn.setAttribute("aria-label", `Standard ${mediaTypeLabel} download`);
   const resetButtonToDefault = () => {
     btn.disabled = false;
     replaceElementHtml(btn, buildDefaultMarkup());
+    btn.title = getStandardDownloadTitle(getOverlayMedia());
   };
   resetButtonToDefault();
 
@@ -7590,36 +8023,16 @@ function createDownloadButton({
       media.resolutionLabel = videoSources[0]?.resolutionLabel || null;
     }
 
-    btn.disabled = true;
-    btn.textContent = "Saving…";
-    let hasFailed = false;
-    try {
-      await downloadSingleMedia(media, { imageIndex: photoIndex || 0 });
-      btn.textContent = "";
-      const savedIcon = createIcon("check", 16);
-      savedIcon.style.marginRight = "4px";
-      btn.appendChild(savedIcon);
-      btn.appendChild(document.createTextNode("Saved"));
-      if (!AppState.downloadPreferences.skipFailedDownloads) {
-        setTimeout(() => {
-          showRateUsPopUpLegacy();
-        }, 8000);
-      }
-    } catch (err) {
-      if (AppState.debug.active)
-        console.warn("IMAGES_DL ❌ Download failed", err);
-      hasFailed = true;
-    } finally {
-      if (hasFailed) btn.textContent = "Save Failed";
-      setTimeout(() => {
-        resetButtonToDefault();
-      }, 5000);
-    }
+    void runStandardDownload(btn, media, {
+      imageIndex: photoIndex || 0,
+      reset: resetButtonToDefault,
+    });
   });
 
   // Style the container
 
   container.appendChild(btn);
+  syncOverlayExperimentalHdButton(container, videoId);
 
   parentEl.appendChild(container);
 
@@ -7630,8 +8043,60 @@ function createDownloadButton({
   });
 }
 
+function syncOverlayExperimentalHdButton(container, videoId) {
+  const media = AppState.allDirectLinks?.find(
+    (candidate) => String(candidate?.videoId) === String(videoId),
+  );
+  const source = getExperimentalHdSource(media);
+  let button = container.querySelector(".ettpd-experimental-hd-overlay-btn");
+
+  if (!source) {
+    button?.remove();
+    if (
+      AppState.downloadPreferences.experimentalHd &&
+      media &&
+      !experimentalHdHydrationState.has(String(videoId))
+    ) {
+      experimentalHdHydrationState.set(String(videoId), "loading");
+      void hydrateTikTokVideoDetail(videoId, media.authorId).then((item) => {
+        experimentalHdHydrationState.set(
+          String(videoId),
+          item ? "loaded" : "unavailable",
+        );
+        if (item) handleFoundItems([item]);
+        displayFoundUrls({ forced: true });
+      });
+    }
+    return;
+  }
+  if (button) return;
+
+  button = createExperimentalHdButton(
+    "download-btn ettpd-experimental-hd-overlay-btn",
+    "HD",
+  );
+  button.dataset.overlayCompact = "true";
+  setExperimentalHdIdleContent(button);
+  button.style.display = "inline-flex";
+  button.title = getExperimentalHdTitle(source);
+  button.dataset.defaultTitle = button.title;
+  button.setAttribute("aria-label", "Save experimental HD video with audio");
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const latestMedia = AppState.allDirectLinks?.find(
+      (candidate) => String(candidate?.videoId) === String(videoId),
+    );
+    if (getExperimentalHdSource(latestMedia)) {
+      void runExperimentalHdDownload(button, latestMedia);
+    }
+  });
+  container.appendChild(button);
+}
+
 function refreshDownloadButtonQualityBadges() {
   document.querySelectorAll("button.download-btn").forEach((button) => {
+    if (button.classList.contains("ettpd-experimental-hd-overlay-btn")) return;
     if (button.disabled) return;
     const videoId = Array.from(button.classList).find((className) =>
       /^\d{5,}$/.test(className),
@@ -7641,19 +8106,14 @@ function refreshDownloadButtonQualityBadges() {
     const media = AppState.allDirectLinks?.find(
       (candidate) => String(candidate?.videoId) === videoId,
     );
-    const badge = button.querySelector(".ettpd-quality-badge");
-    const qualityLabel = getMediaQualityLabel(media);
-    if (!qualityLabel || !badge) return;
+    const qualityLabel = getDownloadActionLabel(media);
+    const label = button.querySelector(".download-btn-label");
+    if (!qualityLabel || !label) return;
 
-    badge.textContent = qualityLabel;
-    badge.className = `ettpd-quality-badge ettpd-quality-${
-      media?.qualityTier === "hd"
-        ? "hd"
-        : media?.qualityTier === "sd"
-          ? "sd"
-          : "unknown"
-    }`;
-    badge.title = getMediaQualityTitle(media);
+    label.textContent = qualityLabel;
+    button.title = getStandardDownloadTitle(media);
+    const container = button.closest(".download-btn-container");
+    if (container) syncOverlayExperimentalHdButton(container, videoId);
   });
 }
 
@@ -8792,7 +9252,14 @@ function syncMainVideoSideGridDownloadButton(card) {
     return;
   }
 
-  if (parentEl.querySelector(`button.download-btn.${CSS.escape(videoId)}`)) {
+  const existingDownloadButton = parentEl.querySelector(
+    `button.download-btn.${CSS.escape(videoId)}`,
+  );
+  if (existingDownloadButton) {
+    const container = existingDownloadButton.closest(
+      ".download-btn-container",
+    );
+    if (container) syncOverlayExperimentalHdButton(container, videoId);
     activeMainVideoSideGridCard = card;
     return;
   }
