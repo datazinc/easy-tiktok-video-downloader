@@ -933,14 +933,17 @@
 }
 
 .ettpd-experimental-hd-list-btn {
-  min-width: 50px;
-  margin-left: 6px;
+  width: 58px;
+  min-width: 58px;
+  flex: 0 0 58px;
   padding-inline: 7px;
   gap: 4px;
 }
 
 .ettpd-compact-quality-download {
-  min-width: 50px;
+  width: 58px;
+  min-width: 58px;
+  flex: 0 0 58px;
   padding-inline: 7px;
   gap: 4px;
 }
@@ -954,7 +957,7 @@
 
 .ettpd-experimental-hd-overlay-btn {
   min-width: 58px;
-  margin-left: 6px;
+  margin-left: 0;
   padding-inline: 10px;
   background: rgba(8, 127, 121, 0.92);
 }
@@ -1158,16 +1161,27 @@ label[for="ettpd-current-profile"] {
   left: 0;
   right: 0;
   display: flex;
-  justify-content: flex-end;
-  padding: 8px 64px 0;
+  justify-content: center;
+  padding: 8px 12px 0;
   z-index: 3000; /* Smallest before it goes above a tiktok modal, eg: playlist. */
   pointer-events: none;
   gap: 6px;
 }
 
+.download-btn-container > .download-btn {
+  min-width: 108px;
+  min-height: 48px;
+  flex: 0 0 108px;
+  justify-content: center;
+}
+
+.download-btn-container .download-btn-icon {
+  flex: 0 0 18px;
+}
+
 .ettpd-download-btn-holder {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   flex-wrap: wrap;
   align-items: center;
   margin-bottom: 10px;
@@ -1177,8 +1191,15 @@ label[for="ettpd-current-profile"] {
 .ettpd-download-btns-container {
   display: flex;
   width: 100%;
-  justify-content: flex-end;
-  padding-right: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-inline: 4px;
+  box-sizing: border-box;
+}
+
+.ettpd-download-btns-container > * {
+  flex-shrink: 0;
 }
 .ettpd-label {
   color: var(--ettpd-text-primary);
@@ -1833,6 +1854,11 @@ label[for="ettpd-current-profile"] {
 .ettpd-preferences-box {
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
+  min-height: 0;
+  max-height: calc(100% - 190px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   gap: 3px;
   padding: 12px;
   background: linear-gradient(
@@ -2163,12 +2189,17 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-options-buttons {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-start;
   align-items: center;
-  margin-top: 6px;
+  margin: 6px -4px -4px;
+  padding: 8px 4px 4px;
+  background: var(--ettpd-bg-secondary);
 }
 
 .ettpd-options-buttons .ettpd-pref-btn {

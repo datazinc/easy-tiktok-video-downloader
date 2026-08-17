@@ -68,10 +68,10 @@ export const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS = [
   {
     label: "🟢 Recommended (@folder, all core info)",
     template:
-      "@/@{authorUsername|:profile:}/{tabName}/{ad}-{authorUsername|no-author}-{createTime|-}-{sequenceNumber}-{desc:100|-}-{videoId:-4|no-id}.mp4",
+      "@/@{authorUsername|:profile:}/{tabName}/{ad}-{authorUsername|no-author}-{createTime|-}-{sequenceNumber}-{desc:100|-}-{videoId:-4|no-id}-{quality|SD}.mp4",
     example:
       DOWNLOAD_FOLDER_DEFAULT +
-      "/@coolguy/Liked/@coolguy-2025-08-14_0110-1-BEST-BELIEVE-me-this-dude-cooked-6775.mp4",
+      "/@coolguy/Liked/@coolguy-2025-08-14_0110-1-BEST-BELIEVE-me-this-dude-cooked-6775-HD.mp4",
     isRecommended: true,
   },
   {

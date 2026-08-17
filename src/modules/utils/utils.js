@@ -939,6 +939,14 @@ export function getDownloadFilePath(
     const descMaxLen = getFieldMaxLength(template, "desc");
     const isDescMaxLenDefined = descMaxLen !== undefined;
     const rawVideoId = sanitize(media.videoId || media.id);
+    const qualityValue =
+      options.quality ||
+      options.qualityTier ||
+      media.qualityLabel ||
+      media.qualityTier;
+    const quality = String(qualityValue || "SD").toLowerCase() === "hd"
+      ? "HD"
+      : "SD";
     const fieldValues = {
       videoId: rawVideoId,
       authorUsername: media.authorId,
@@ -962,6 +970,7 @@ export function getDownloadFilePath(
       downloadTime: formattedDate(new Date()),
       isImage: media.isImage,
       isAd: media.isAd,
+      quality,
     };
 
     const fullTemplate = template?.trim();
@@ -2818,7 +2827,10 @@ export async function downloadSingleMedia(
     }
   }
 
-  const filename = getDownloadFilePath(media, { imageIndex });
+  let filename = getDownloadFilePath(media, {
+    imageIndex,
+    options: { quality: media.qualityLabel },
+  });
   try {
     const imageUrl = media.isImage
       ? media.imagePostImages?.[imageIndex]
@@ -2863,6 +2875,13 @@ export async function downloadSingleMedia(
     for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
       const source = sources[sourceIndex];
       const isLastSource = sourceIndex === sources.length - 1;
+      filename = getDownloadFilePath(media, {
+        imageIndex,
+        options: {
+          quality: media.isImage ? "SD" : source.qualityLabel,
+          qualityTier: source.qualityTier,
+        },
+      });
 
       try {
         if (experimentalHd && source.experimentalOnly) {
@@ -2992,6 +3011,33 @@ export async function downloadSingleMedia(
   }
 }
 
+async function prepareBatchMediaForDownload(media) {
+  if (
+    !AppState.downloadPreferences.experimentalHd ||
+    media?.isImage ||
+    !media?.videoId
+  ) {
+    return media;
+  }
+
+  const standardIsHd = media.qualityTier === "hd";
+  const hasExperimentalHdSource = (media.videoSources || []).some(
+    (source) =>
+      source.experimentalOnly &&
+      source.qualityTier === "hd" &&
+      source.audioStatus !== "video-only",
+  );
+  if (standardIsHd || hasExperimentalHdSource) return media;
+
+  const hydratedItem = await hydrateTikTokVideoDetail(
+    media.videoId,
+    media.authorId,
+  );
+  if (!hydratedItem) return media;
+
+  return buildVideoLinkMeta(hydratedItem, media.index) || media;
+}
+
 // Batch download function for scrapper
 export async function downloadBatch(items, batchNumber) {
   if (AppState.debug.active)
@@ -3022,7 +3068,7 @@ export async function downloadBatch(items, batchNumber) {
         break;
       }
 
-      const media = items[i];
+      const media = await prepareBatchMediaForDownload(items[i]);
 
       // Skip if saved in this session
       if (AppState.downloadedURLs.includes(media.url)) {
@@ -3039,7 +3085,10 @@ export async function downloadBatch(items, batchNumber) {
       try {
         updateDownloadButtonLabelSimple();
         const result = await (!media.isImage
-          ? downloadSingleMedia(media)
+          ? downloadSingleMedia(media, {
+              experimentalHd:
+                AppState.downloadPreferences.experimentalHd,
+            })
           : downloadAllPostImagesHandler(null, media));
 
         const didDownload = media.isImage ? result > 0 : result !== false;
@@ -3866,7 +3915,7 @@ export async function downloadAllLinks(mainBtn, options = {}) {
         break;
       }
 
-      const media = links[i];
+      const media = await prepareBatchMediaForDownload(links[i]);
 
       // Skip if saved in this session
       if (AppState.downloadedURLs.includes(media.url)) {
@@ -3884,7 +3933,10 @@ export async function downloadAllLinks(mainBtn, options = {}) {
       try {
         updateDownloadButtonLabelSimple();
         const result = await (!media.isImage
-          ? downloadSingleMedia(media)
+          ? downloadSingleMedia(media, {
+              experimentalHd:
+                AppState.downloadPreferences.experimentalHd,
+            })
           : downloadAllPostImagesHandler(null, media));
 
         const didDownload = media.isImage ? result > 0 : result !== false;

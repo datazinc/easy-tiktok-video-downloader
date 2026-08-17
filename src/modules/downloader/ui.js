@@ -6739,6 +6739,7 @@ export function createFilenameTemplateModal() {
     "sequenceNumber",
     "ad",
     "mediaType",
+    "quality",
     "tabName",
   ];
 
@@ -6767,6 +6768,7 @@ export function createFilenameTemplateModal() {
             <li><strong>Paths</strong>: keep them relative; no leading <code>/</code> or <code>..</code>. If a filename would be invalid, the downloader cleans it automatically.</li>
             <li><strong>Leading dots</strong>: browsers can hide or reject dot-prefixed names, so <code>.name</code> is rewritten to <code>_name</code>. Example: <code>@.dernful</code> becomes <code>@_dernful</code>.</li>
             <li><strong>Ads & media</strong>: <code>{ad}</code> adds "ad"; <code>{mediaType}</code> is <em>image</em>/<em>video</em>.</li>
+            <li><strong>Quality</strong>: <code>{quality}</code> is <em>HD</em> or <em>SD</em> based on the file actually saved.</li>
             <li><strong>Context</strong>: <code>{tabName}</code> follows the scrapper tab (Videos, Reposts, Liked, Favorited).</li>
           </ul>
         </details>
@@ -6794,6 +6796,7 @@ export function createFilenameTemplateModal() {
           <div><strong>{sequenceNumber}</strong><span>Index for multi-asset posts</span></div>
           <div><strong>{ad}</strong><span>"ad" when marked as ad</span></div>
           <div><strong>{mediaType}</strong><span>image or video</span></div>
+          <div><strong>{quality}</strong><span>HD or SD for the file actually saved</span></div>
           <div><strong>{tabName}</strong><span>Videos, Reposts, Liked, or Favorited</span></div>
         </div>
       `,
@@ -6974,6 +6977,7 @@ export function createFilenameTemplateModal() {
       isImage: false,
       imagePostImages: ["img1", "img2", "img3", "img4"],
       tabName: "Reposts",
+      quality: "HD",
     };
 
     const sanitizeDesc = (val, maxLen = 100) => {
@@ -7032,6 +7036,7 @@ export function createFilenameTemplateModal() {
       downloadTime: sample.downloadTime,
       isAd: sample.isAd,
       isImage: sample.isImage,
+      quality: sample.quality,
     };
 
     const previewTemplate = tpl.startsWith("@/")
