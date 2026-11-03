@@ -53,6 +53,11 @@ function sendProgressMessage(action, data) {
  * We're in page context, so we use window.postMessage to communicate with content script
  * @returns {Promise<Object>} The progress object
  */
+export async function getDownloadStatuses(downloadIds, waitForComplete = false) {
+  const response = await sendProgressMessage("DOWNLOAD_STATUS", { downloadIds, waitForComplete });
+  return response.statuses || [];
+}
+
 export async function loadProgressObject() {
   try {
     const resp = await sendProgressMessage("GET", null);

@@ -19,6 +19,8 @@ Easy TikTok Video Downloader is an open source browser extension for saving supp
 - `easy-tiktok-video-downloader-v<version>-chrome.zip`
 - `easy-tiktok-video-downloader-v<version>-firefox.zip`
 
+Before publishing, the workflow runs the download regression suite and validates each browser package's manifest, popup entry point, runtime files, and copied assets. Chrome and Firefox use the same local `storage` permission as the Chromium build for extension settings and cooldowns; this does not add analytics or remote data collection.
+
 ## Local Development
 
 ### Prerequisites
@@ -39,9 +41,61 @@ npm run setup:hooks
 npm run build:prod
 npm run buildff:prod
 npm run verify:versions
+npm run verify:recovery
 ```
 
+After all three release directories have been assembled (`dist`, `distchrome`, and `distff`), run `npm run verify:packages` to validate their contents. The same guard runs in the release workflow before the zip assets are published.
+
+## Batch Download Progress
+
+The wide download button shows the current post or file, transfer percentage and bytes when available, and separate source-preparation, retry, recovery, muxing, and saving phases. Unknown transfer totals use an animated indicator rather than an estimated percentage. Photo posts include the current image index.
+
+While a list page is loading, the button shows **Loading posts** and the number already confirmed saved, without a guessed total. Once the current batch is queued, its counter uses only those confirmed posts. The configured maximum batch size is never presented as a discovered post count or a whole-list total.
+
+Pause takes effect before the next file; an in-flight save is allowed to finish. Pause and Stop are hidden when the batch completes or stops. Resumed queues use the same progress display.
+
+## Account List Batches
+
+Profile tabs for **Videos, Reposts, Likes, and Favorites**, plus playlist/collection cards, have download controls. The default maximum is **30 posts per batch**, adjustable from 1 to 100. Lists are fetched one page at a time; files are saved and checked by the browser before another page is requested. There is no full-list preload.
+
+If TikTok refuses a direct profile-list request, the job can use TikTok's own selected tab and scroll only after saving the current visible batch. It verifies the account and selected grid before using posts. If no further page loads, it pauses with completed batches retained rather than guessing that the list is complete.
+
+Profile-list dialogs check TikTok's selected tab before offering Start batches. Private or explicitly empty lists show an explanation and Close instead; they do not start a download or retry loop. A private Likes list does not prevent downloading the account's accessible Videos. Loading failures remain distinct from confirmed empty lists.
+
+Opening a post author's profile from the home feed does not require a page reload before using its list controls. Account identity is resolved from matching feed metadata or the current profile, rather than assuming the initial page data still describes the account being viewed.
+
+Completed post IDs and a bounded current-file checkpoint are stored per account/list in tab-local session storage. If a later request fails, earlier files remain downloaded. Reopen that list's download dialog and choose **Resume saved progress** to continue; an interrupted save is checked before retrying it. Checkpoints expire after 30 minutes without progress. Starting over is explicit and can download files again.
+
+Pause and Stop apply to the whole progressive job. A navigation change stops it, and its single refresh-recovery allowance remains spent across later batches. Private or unavailable account lists still require TikTok access; these controls do not bypass restrictions. Browser-level save errors or unknown file outcomes pause the job rather than assuming success.
+
+## Collection Downloads
+
+Collection pages such as `/@username/collection/Collection-123` have a **Download collection** button beside the title. It opens the same bounded batch dialog, preserves collection order, and downloads video/photo posts incrementally. The scraper and automatic scrolling are not required.
+
+Collection batches reuse the normal SD/experimental-HD preference, live progress, Pause/Stop controls, and one-refresh recovery budget. Recovery resolves missing metadata from the same collection. Deleted, inaccessible, prohibited, and source-less posts may be absent from the downloadable total; the native collection count can therefore be higher.
+
+## Short Drama Episodes
+
+On a short-drama episode page, a download icon beside **Episodes** opens a range dialog. The extension reads the series' paginated episode list, sorts by episode number, and offers only episodes with complete audio-and-video sources. Previews, highlights, prohibited posts, and entries without a usable source are omitted. Access restrictions are not bypassed.
+
+Client-side navigation from the drama listing does not require a reload: episode requests are remembered independently of browser resource timings, with a direct same-origin lookup when no request was captured. A failed lookup can be retried in the dialog without refreshing or starting a download batch.
+
+Episode batches reuse the normal SD/experimental-HD preference, live progress, Pause/Stop controls, and one-refresh recovery budget. The selected range and episode positions survive recovery, including episodes beyond the first page. Move or collapse the floating panel if it covers the native episode list.
+
+Video overlays show a disabled **Loading** indicator until matching downloadable metadata is available. A playable `blob:` URL alone does not enable Save. Metadata lookup is targeted to the visible or hovered video; unavailable sources stay disabled instead of immediately opening a download-failure popup.
+
+## Download Recovery
+
+- Normal download attempts run first. After a source failure, recovery tries cached audio-and-video sources before requesting fresh metadata for that post.
+- The failure dialog offers **Refresh and resume** when the current operation can be checkpointed safely. It preserves the captured queue, image indexes, filenames, settings, and confirmed completed files in tab-local session storage. Playback blobs and signed media URLs are not stored.
+- Each operation can refresh **once**. The allowance is recorded before reloading and stays spent after restoration. Further failures pause for Retry Download, Skip This File, or Stop Batch.
+- Pending or uncertain browser saves block refresh to avoid duplicate files. Checkpoints expire after 30 minutes and restore only on the originating page. Another interruption requires explicit confirmation to resume.
+- Recovery continues the captured queue, not undiscovered posts. Automatic scrolling stays off after recovery. Complete any TikTok verification yourself before retrying; recovery does not bypass access restrictions.
+- Console diagnostics include `fallback-fix-applied` (with `cached` or `hydrated` stage), `fallback-fix-metadata-unavailable`, `refresh-resume-checkpoint-saved`, and `refresh-resume-started`.
+
 ## Responsible Use
+
+The extension's coffee, tip-jar, and Support buttons keep their familiar labels but reveal a local pay-it-forward message when clicked, instead of opening a payment page. Clicking grants the same 90-day break from review/tip prompts as a donation. This uses a local support-click timestamp, synchronized across the extension's pages; no click analytics or payment event is sent to a server.
 
 - This project is maintained for educational, research, interoperability, archival, accessibility, and other lawful uses.
 - The maintainers do not endorse misuse of the software, including copyright infringement, privacy violations, unauthorized copying, abusive automation, or attempts to evade platform restrictions.

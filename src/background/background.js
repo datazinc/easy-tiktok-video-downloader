@@ -84,6 +84,26 @@ function detectBrowser() {
   return detectBrowserFromRuntime() || detectBrowserUA();
 }
 
+async function detectFeedbackBrowser() {
+  try {
+    if (await globalThis.navigator?.brave?.isBrave?.()) return "Brave";
+  } catch {}
+
+  const brands = globalThis.navigator?.userAgentData?.brands || [];
+  if (brands.some(({ brand }) => /brave/i.test(brand))) return "Brave";
+  if (brands.some(({ brand }) => /microsoft edge/i.test(brand))) return "Edge";
+  if (brands.some(({ brand }) => /opera/i.test(brand))) return "Opera";
+
+  const names = {
+    chrome: "Chrome",
+    firefox: "Firefox",
+    edge: "Edge",
+    opera: "Opera",
+    safari: "Safari",
+  };
+  return names[detectBrowserUA()] || "Unknown";
+}
+
 function supportsUninstallTelemetry() {
   return detectBrowser() !== "firefox";
 }
@@ -187,6 +207,68 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Keep channel open for async branches
   const KEEP_ALIVE = true;
+
+  if (action === "recordSupportClick") {
+    if (sender.id !== chrome.runtime.id) return false;
+    const timestamp = Date.now();
+    chrome.storage.local.set({ "tik.tok::lastSupportedAt": timestamp }, () => {
+      const error = chrome.runtime.lastError;
+      finish(error ? makeError("ERR_SUPPORT_COOLDOWN", error.message) : { success: true, timestamp });
+    });
+    return KEEP_ALIVE;
+  }
+
+  if (action === "getDownloadStatuses") {
+    const ids = message.downloadIds;
+    if (sender.id !== chrome.runtime.id || !Array.isArray(ids) || ids.length > 10000 ||
+      !ids.every(id => Number.isInteger(id) && id >= 0)) {
+      finish(makeError("ERR_INVALID_DOWNLOAD_IDS", "Invalid download status request."));
+      return false;
+    }
+    const query = () => Promise.all([...new Set(ids)].map(id => new Promise((resolve, reject) => {
+      chrome.downloads.search({ id }, items => {
+        const error = chrome.runtime.lastError;
+        if (error) return reject(new Error(error.message));
+        const item = items?.[0];
+        resolve({
+          id,
+          state: item && (!item.byExtensionId || item.byExtensionId === chrome.runtime.id)
+            ? item.state : "unknown",
+        });
+      });
+    })));
+    let settled = false;
+    const done = result => {
+      if (settled) return;
+      settled = true;
+      if (message.waitForComplete) chrome.downloads.onChanged.removeListener(changed);
+      finish(result);
+    };
+    const check = () => query().then(statuses => {
+      if (!message.waitForComplete || statuses.every(item => item.state !== "in_progress")) done({ success: true, statuses });
+    }).catch(error => done(makeError("ERR_DOWNLOAD_STATUS", error.message)));
+    const changed = delta => { if (ids.includes(delta.id) && delta.state) void check(); };
+    if (message.waitForComplete) {
+      chrome.downloads.onChanged.addListener(changed);
+      watchdogId = setTimeout(() => { query().then(statuses => done({ success: true, statuses })).catch(error => done(makeError("ERR_DOWNLOAD_STATUS", error.message))); }, 7500);
+    }
+    void check();
+    return KEEP_ALIVE;
+  }
+
+  if (action === "openBraveDownloadSettings") {
+    try {
+      chrome.tabs.create({ url: "brave://settings/downloads" }, () => {
+        const error = chrome.runtime.lastError;
+        finish(error
+          ? makeError("ERR_OPEN_SETTINGS", error.message)
+          : { success: true });
+      });
+    } catch (error) {
+      finish(makeError("ERR_OPEN_SETTINGS", error?.message || String(error)));
+    }
+    return KEEP_ALIVE;
+  }
 
   if (action === "getState") {
     (async () => {
@@ -673,6 +755,7 @@ const FORM = {
     installed_at: "entry.1114905105",
     days_used: "entry.736618219",
     platform: "entry.1118263614",
+    browser: "entry.1121208026",
     ui_language: "entry.499043465",
     anon_id: "entry.1638558729",
   },
@@ -779,6 +862,7 @@ function buildFormURL(params) {
   set("days_used", params.days_used);
   set("ui_language", params.ui_language);
   set("platform", params.platform);
+  set("browser", params.browser);
   set("anon_id", params.anon_id);
 
   // leave visible fields for user
@@ -816,6 +900,7 @@ async function refreshUninstallURL() {
     days_used: daysBetween(installedAt),
     ui_language: uiLang,
     platform: platformStr,
+    browser: await detectFeedbackBrowser(),
     anon_id: anonId,
   });
 

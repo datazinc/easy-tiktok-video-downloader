@@ -25,6 +25,7 @@ function safeParseRateDonateDates(jsonValue, fallback = {}) {
   const parsed = safeParseJSON(jsonValue, fallback);
   return {
     lastDonatedAt: normalizeTs(parsed.lastDonatedAt),
+    lastSupportedAt: normalizeTs(parsed.lastSupportedAt) || normalizeTs(getStringOrNull(STORAGE_KEYS.LAST_SUPPORTED_AT)),
     lastRatedAt: normalizeTs(parsed.lastRatedAt),
     lastShownAt: normalizeTs(parsed.lastShownAt),
     shownCount: Number.isFinite(parsed.shownCount) ? parsed.shownCount : 0,
@@ -187,6 +188,7 @@ const AppState = {
     pausedAll: false,
     batchType: null,
     activeBatchUrls: [],
+    batchProgress: null,
   },
   ui: {
     downloaderPositionType:
@@ -213,6 +215,9 @@ const AppState = {
     hasDismissedExperimentalHdBanner: getBooleanFromStorage(
       STORAGE_KEYS.EXPERIMENTAL_HD_BANNER_DISMISSED,
     ),
+    hasSeenDownloadMessagesNotice: getBooleanFromStorage(
+      STORAGE_KEYS.DOWNLOAD_MESSAGES_NOTICE_SEEN,
+    ),
     themeMode: getStringOrNull(STORAGE_KEYS.THEME_MODE) || "system",
     autoSwipeConfigurations: {
       nextClickTimeout: null,
@@ -233,6 +238,9 @@ const AppState = {
     showFolderPicker: getBooleanFromStorage(STORAGE_KEYS.SHOW_FOLDER_PICKER),
     disableConfetti: getBooleanFromStorage(
       STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI,
+    ),
+    showDownloadMessages: getBooleanFromStorage(
+      STORAGE_KEYS.SHOW_DOWNLOAD_MESSAGES,
     ),
     useNativeDownload: getBooleanOrNull(STORAGE_KEYS.USE_NATIVE_DOWNLOAD, null),
     experimentalHd: getBooleanFromStorage(STORAGE_KEYS.EXPERIMENTAL_HD),
@@ -307,6 +315,7 @@ export function resetAppStateToDefaults() {
     pausedAll: false,
     batchType: null,
     activeBatchUrls: [],
+    batchProgress: null,
   };
   AppState.playlist = {
     currentId: null,
@@ -328,6 +337,7 @@ export function resetAppStateToDefaults() {
     hasSeenShowButtonHint: false,
     hasSeenFilePathHint: false,
     hasDismissedExperimentalHdBanner: false,
+    hasSeenDownloadMessagesNotice: false,
     themeMode: "dark",
     autoSwipeConfigurations: {
       nextClickTimeout: null,
@@ -342,6 +352,8 @@ export function resetAppStateToDefaults() {
     includeCSV: false,
     fullPathTemplate: {},
     showFolderPicker: false,
+    showDownloadMessages: false,
+    disableConfetti: false,
     experimentalHd: false,
   };
   // Set default

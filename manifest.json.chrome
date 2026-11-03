@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Easy TikTok Video Downloader (Remove Watermark)",
-  "version": "5.3.5",
+  "version": "5.4.0",
   "description": "Save TikTok videos in the best available quality. Bulk-download profiles, likes, favorites, playlists and more. Unofficial.",
   "host_permissions": [
     "*://*.tiktok.com/*"
   ],
   "permissions": [
-    "downloads"
+    "downloads",
+    "storage"
   ],
   "background": {
     "service_worker": "js/background.bundle.js",

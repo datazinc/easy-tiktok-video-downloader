@@ -1090,6 +1090,105 @@ label[for="ettpd-current-profile"] {
   background-color: rgba(10, 10, 14, 0.95);
 }
 
+.ettpd-account-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  margin-left: 6px;
+  padding: 0;
+  vertical-align: middle;
+  border: 1px solid #79eddf;
+  border-radius: 6px;
+  background: #54ddcc;
+  color: #102124;
+  cursor: pointer;
+}
+.ettpd-account-download:hover { background: #8af0e3; }
+.ettpd-account-download:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.ettpd-account-list-card { position: relative; }
+.ettpd-account-card-download { position: absolute; right: 8px; bottom: 8px; z-index: 2; }
+.ettpd-account-batch-size { display: block; margin: 16px 0; font-size: 13px; }
+.ettpd-account-batch-size input { display: block; box-sizing: border-box; max-width: 100%; width: 120px; margin-top: 6px; padding: 8px; border: 1px solid currentColor; border-radius: 4px; background: transparent; color: inherit; }
+.ettpd-episode-dialog [hidden] { display: none !important; }
+
+.ettpd-collection-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 36px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  border: 1px solid #79eddf;
+  border-radius: 6px;
+  background: #54ddcc;
+  color: #102124;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ettpd-collection-download:hover:not(:disabled) { background: #8af0e3; }
+.ettpd-collection-download:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.ettpd-collection-download:disabled { opacity: 0.6; cursor: wait; }
+
+.ettpd-episode-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-left: 10px;
+  padding: 0;
+  vertical-align: middle;
+  border: 1px solid #79eddf;
+  border-radius: 6px;
+  background: #54ddcc;
+  color: #102124;
+  box-shadow: 0 0 0 3px rgba(84, 221, 204, 0.12);
+  cursor: pointer;
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.ettpd-episode-download:disabled { opacity: 0.6; cursor: wait; }
+.ettpd-episode-download:hover:not(:disabled) { background: #8af0e3; box-shadow: 0 0 0 4px rgba(84, 221, 204, 0.22); }
+.ettpd-episode-download:focus-visible { outline: 2px solid #ffffff; outline-offset: 3px; }
+.ettpd-episode-dialog { padding: 12px; text-align: left; }
+.ettpd-episode-dialog h3 { margin: 0 0 12px; font-size: 18px; }
+.ettpd-episode-dialog p { line-height: 1.5; overflow-wrap: anywhere; }
+.ettpd-episode-range { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.ettpd-episode-range label { min-width: 0; font-size: 13px; }
+.ettpd-episode-range input { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 8px; border: 1px solid currentColor; border-radius: 4px; background: transparent; color: inherit; }
+.ettpd-episode-dialog .ettpd-action-btn { margin: 8px 8px 0 0; }
+
+.download-btn.is-source-loading::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  margin-right: 5px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: ettpd-source-spin 900ms linear infinite;
+}
+
+@keyframes ettpd-source-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .download-btn.is-source-loading::before { animation: none; }
+}
+
 .download-btn:disabled {
   opacity: 0.55;
   cursor: progress;
@@ -3151,6 +3250,69 @@ label[for="ettpd-current-profile"] {
 
 .ettpd-download-all-container .download-all-btn {
   flex: 1;
+}
+
+.ettpd-download-all-container .download-all-btn.ettpd-batch-progress {
+  position: relative;
+  height: 88px;
+  min-height: 88px;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 10px 12px 14px;
+  white-space: normal;
+}
+
+.ettpd-batch-progress-label,
+.ettpd-batch-progress-detail {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.ettpd-batch-progress-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ettpd-batch-progress-label {
+  font-size: 14px;
+}
+
+.ettpd-batch-progress-track {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 5px;
+  background: rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+.ettpd-batch-progress-fill {
+  display: block;
+  height: 100%;
+  background: #b7f4ff;
+  transition: width 180ms linear;
+}
+
+.ettpd-batch-progress-fill.is-indeterminate {
+  width: 32% !important;
+  animation: ettpd-batch-working 1.4s ease-in-out infinite;
+}
+
+@keyframes ettpd-batch-working {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(420%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ettpd-batch-progress-fill.is-indeterminate { animation: none; }
+  .ettpd-batch-progress-fill { transition: none; }
 }
 
 .ettpd-download-all-container .download-all-btn-pause,

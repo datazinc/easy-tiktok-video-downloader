@@ -2,6 +2,20 @@
 (() => {
   const DEBUG = () => globalThis?.AppStateETTVD?.debug?.active ?? false;
   const PENDING_RESUME_DOWNLOAD_KEY = "tik.tok::pendingResumeDownload";
+  const SUPPORT_CLICK_KEY = "tik.tok::lastSupportedAt";
+  const syncSupportClick = value => {
+    const timestamp = Number(value);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return;
+    try {
+      const previous = Number(localStorage.getItem(SUPPORT_CLICK_KEY)) || 0;
+      if (timestamp > previous) localStorage.setItem(SUPPORT_CLICK_KEY, String(timestamp));
+      window.postMessage({ type: "SUPPORT_CLICK_STATE", timestamp: Math.max(timestamp, previous) }, window.location.origin);
+    } catch {}
+  };
+  chrome.storage.local.get(SUPPORT_CLICK_KEY, values => syncSupportClick(values?.[SUPPORT_CLICK_KEY]));
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes[SUPPORT_CLICK_KEY]) syncSupportClick(changes[SUPPORT_CLICK_KEY].newValue);
+  });
 
   // -------- Browser detection (API-first, UA fallback) --------
   function detectBrowserUA() {
@@ -308,6 +322,27 @@
 
     const data = event.data;
 
+    if (data?.type === "SUPPORT_CLICK_REQUEST") {
+      sendMessage("recordSupportClick", {}).then(response => {
+        if (response?.success) syncSupportClick(response.timestamp);
+      });
+      return;
+    }
+
+    if (data?.type === "BRAVE_DOWNLOAD_SETTINGS_REQUEST") {
+      sendMessage("openBraveDownloadSettings", {}).then((response) => {
+        window.postMessage(
+          {
+            type: "BRAVE_DOWNLOAD_SETTINGS_RESPONSE",
+            id: data.id,
+            success: response?.success === true,
+          },
+          window.location.origin,
+        );
+      });
+      return;
+    }
+
     // Handle extension state (enable/disable) bridge
     if (data?.type === "EXT_STATE_REQUEST") {
       const { id, action, enabled } = data;
@@ -369,6 +404,7 @@
         GET: "getProgress",
         SET: "setProgress",
         CLEAR: "clearProgress",
+        DOWNLOAD_STATUS: "getDownloadStatuses",
       };
 
       const backgroundAction = backgroundActionMap[action];
@@ -381,6 +417,8 @@
       const messagePayload =
         action === "SET"
           ? { action: backgroundAction, progress: payload?.progress }
+          : action === "DOWNLOAD_STATUS"
+            ? { action: backgroundAction, downloadIds: payload?.downloadIds, waitForComplete: payload?.waitForComplete === true }
           : { action: backgroundAction };
 
       // Use chrome.runtime.sendMessage directly (like the blob download code does)
@@ -394,7 +432,13 @@
           return;
         }
 
-        if (action === "GET") {
+        if (action === "DOWNLOAD_STATUS") {
+          reply({
+            success: response?.success === true,
+            statuses: response?.statuses || [],
+            error: response?.error,
+          });
+        } else if (action === "GET") {
           reply({
             success: response?.success !== false,
             progress: response?.progress || {},

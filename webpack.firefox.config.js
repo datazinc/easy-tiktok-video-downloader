@@ -16,8 +16,11 @@ module.exports = (_env, argv) => {
     },
     output: {
       path: path.resolve(__dirname, "distff"),
-      filename: (pathData) =>
-        pathData.chunk.name === "index" ? "js/injex.js" : "js/[name].bundle.js",
+      filename: (pathData) => {
+        if (pathData.chunk.name === "index") return "js/injex.js";
+        if (pathData.chunk.name === "popup") return "popup/popup.bundle.js";
+        return "js/[name].bundle.js";
+      },
       clean: true,
     },
     devtool: false,
@@ -73,7 +76,7 @@ module.exports = (_env, argv) => {
                   dead_code: true, // remove unused code
                   unused: true,
                   passes: 2,
-                  drop_console: true, // belt + suspenders
+                  drop_console: ["log", "debug", "info"],
                   // ensure pure calls (helps DCE on IIFEs)
                   pure_funcs: ["console.log", "console.debug"],
                 },

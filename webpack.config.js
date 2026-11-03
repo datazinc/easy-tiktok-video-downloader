@@ -78,7 +78,7 @@ module.exports = (_env, argv) => {
                   dead_code: true, // remove unused code
                   unused: true,
                   passes: 2,
-                  drop_console: true, // belt + suspenders
+                  drop_console: ["log", "debug", "info"],
                   // ensure pure calls (helps DCE on IIFEs)
                   pure_funcs: ["console.log", "console.debug"],
                 },
