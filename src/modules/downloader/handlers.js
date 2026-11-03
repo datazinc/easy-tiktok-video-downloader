@@ -1,5 +1,6 @@
 // handlers.js
 import AppState from "../state/state.js";
+import { rememberAccountIdentity } from "../utils/accountLists.js";
 import {
   displayFoundUrls,
   getBestVideoRendition,
@@ -117,6 +118,7 @@ export function handleFoundItems(newItems) {
     for (const it of newItems) {
       const id = normId(it);
       if (!id) continue;
+      rememberAccountIdentity(it.author);
       if (isVisitedItemBetterOrNew(it)) {
         AppState.allItemsEverSeen[id] = it;
         changed = true;
@@ -128,6 +130,7 @@ export function handleFoundItems(newItems) {
     const struct = scope?.["webapp.video-detail"]?.itemInfo?.itemStruct;
     if (normId(struct)) {
       const id = normId(struct);
+      rememberAccountIdentity(struct.author);
       if (isBetterCopy(struct, AppState.allItemsEverSeen[id])) {
         AppState.allItemsEverSeen[id] = struct;
         changed = true;
@@ -137,6 +140,7 @@ export function handleFoundItems(newItems) {
     for (const it of updatedItems) {
       const id = normId(it);
       if (!id) continue;
+      rememberAccountIdentity(it.author);
       if (isBetterCopy(it, AppState.allItemsEverSeen[id])) {
         AppState.allItemsEverSeen[id] = it;
         changed = true;

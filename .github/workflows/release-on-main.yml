@@ -33,6 +33,9 @@ jobs:
       - name: Verify version sync
         run: npm run verify:versions
 
+      - name: Verify download regressions
+        run: npm run verify:recovery
+
       - name: Compute release metadata
         id: metadata
         run: |
@@ -68,6 +71,9 @@ jobs:
             cd distchrome
             zip -r "../release-artifacts/easy-tiktok-video-downloader-v${VERSION}-chrome.zip" . -x '__MACOSX/*' -x '.*' -x '*.zip'
           )
+
+      - name: Verify release packages
+        run: npm run verify:packages
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2

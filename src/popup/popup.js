@@ -1,4 +1,12 @@
 /* main.js */
+import { showPayItForwardDialog } from "../modules/utils/payItForward.js";
+
+document.addEventListener("click", event => {
+  if (!event.target.closest("[data-pay-it-forward]")) return;
+  event.preventDefault();
+  showPayItForwardDialog({ dark: document.body.classList.contains("theme-dark") });
+});
+
 // Initialize theme
 (function () {
   const THEME_MODE_KEY = "tik.tok::themeMode";
@@ -40,11 +48,11 @@ function renderFooterMeta() {
   footerMeta.replaceChildren();
   footerMeta.append(`v${version} © ${year} `);
 
-  const link = document.createElement("a");
-  link.href = "https://linktr.ee/aimuhire";
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.textContent = "linktr.ee/aimuhire";
+  const link = document.createElement("button");
+  link.type = "button";
+  link.dataset.payItForward = "true";
+  link.className = "pay-it-forward-link";
+  link.textContent = "buy me a coffee ☕";
   footerMeta.appendChild(link);
 }
 

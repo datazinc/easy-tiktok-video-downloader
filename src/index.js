@@ -8,6 +8,8 @@ import {
   displayFoundUrls,
   checkAndUpgradeRecommendedTemplate,
   showBrowserCompatibilityAlert,
+  showDownloadMessagesNotice,
+  restoreDownloadRecovery,
 } from "./modules/utils/utils.js";
 import { isExtensionEnabledSync } from "./modules/utils/extensionState.js";
 import { hideDownloader } from "./modules/downloader/ui.js";
@@ -34,7 +36,9 @@ setTimeout(async () => {
   checkAndUpgradeRecommendedTemplate();
 
   // Show browser compatibility alert for non-Chrome users (if not dismissed)
-  showBrowserCompatibilityAlert();
+  if (!restoreDownloadRecovery() && !showDownloadMessagesNotice()) {
+    showBrowserCompatibilityAlert();
+  }
 
   // Awful initial poll mechanism. Injecting on time seems to not be efficient.
   [1, 3, 5, 10, 15, 20, 30, 60, 180].forEach((sec) =>

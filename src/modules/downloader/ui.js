@@ -1,5 +1,10 @@
 // ui.js
 import AppState, { resetAppStateToDefaults } from "../state/state.js";
+import { showPayItForwardDialog, hasSupportCooldown } from "../utils/payItForward.js";
+import { getShortDramaId, resolveShortDramaRequest, collectShortDramaEpisodes, getEpisodeNumber } from "../utils/shortDrama.js";
+import { getCollectionContext, resolveCollectionRequest, collectCollectionItems } from "../utils/collection.js";
+import { getAccountUsername, resolveAccountList, rememberAccountIdentity } from "../utils/accountLists.js";
+import { DEFAULT_BATCH_SIZE } from "../storage/progressiveBatch.js";
 import { createHtmlFragment, replaceElementHtml } from "../utils/html.js";
 import {
   STORAGE_KEYS,
@@ -21,6 +26,8 @@ import {
   downloadURLToDisk,
   displayFoundUrls,
   downloadAllLinks,
+  downloadAccountListBatches,
+  getProgressiveListCheckpoint,
   getSavedTemplates,
   saveTemplates,
   getPresetTemplates,
@@ -33,6 +40,7 @@ import {
   getUserDownloadsCurrentTier,
   getUserRecommendationsCurrentTier,
   showCelebration,
+  claimAutomaticPopup,
   getRandomDownloadSuccessMessage,
   getTabSpans,
   listScrollingCompleted,
@@ -2842,7 +2850,7 @@ function createDownloadAllButton() {
   btn.disabled = true;
   btn.onclick = (e) => {
     e.stopPropagation();
-    if (btn.disabled) return;
+    if (notifyDownloadBusy() || btn.disabled) return;
     downloadAllLinks(btn);
   };
 
@@ -2856,7 +2864,8 @@ function createDownloadAllButton() {
   pauseBtn.onclick = (e) => {
     e.stopPropagation();
     if (!AppState.downloading.isDownloadingAll) return;
-    AppState.downloading.pausedAll = !AppState.downloading.pausedAll;
+    AppState.downloading.pausedAll = !(AppState.downloading.accountBatch?.paused ?? AppState.downloading.pausedAll);
+    if (AppState.downloading.accountBatch) AppState.downloading.accountBatch.paused = AppState.downloading.pausedAll;
     if (AppState.downloading.pausedAll) {
       setButtonWithIcon(pauseBtn, "Resume", "play");
       pauseBtn.title = "Resume downloading";
@@ -2864,6 +2873,7 @@ function createDownloadAllButton() {
       setButtonWithIcon(pauseBtn, "Pause", "pause");
       pauseBtn.title = "Pause downloading";
     }
+    updateBatchDownloadProgress({});
   };
 
   const stopBtn = document.createElement("button");
@@ -2907,7 +2917,7 @@ function getActiveDownloadBatchType() {
     return null;
   }
 
-  return AppState.downloading.batchType === "playlist" ? "playlist" : "all";
+  return ["playlist", "episodes", "collection"].includes(AppState.downloading.batchType) ? AppState.downloading.batchType : "all";
 }
 
 function getActiveDownloadBatchUrls() {
@@ -3182,6 +3192,118 @@ function showAbandonScrappingModal() {
   });
 }
 
+export function updateBatchDownloadProgress(status = {}) {
+  if (!AppState.downloading.isDownloadingAll) return;
+  const previous = AppState.downloading.batchProgress || {};
+  AppState.downloading.batchProgress = {
+    ...previous,
+    ...(status.phase && status.phase !== previous.phase ? { progress: null, loaded: null, total: null } : {}),
+    ...status,
+  };
+  const button = document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
+  if (button) renderBatchDownloadProgress(button);
+}
+
+function setBusyDownloadButton(button) {
+  button.disabled = false;
+  button.setAttribute("aria-disabled", "true");
+}
+
+function renderBatchDownloadProgress(button) {
+  const status = AppState.downloading.batchProgress;
+  const isLoadingList = status?.batchTotal == null && ["load", "paused"].includes(status?.phase);
+  if (!AppState.downloading.isDownloadingAll || !status || !status.batchTotal && !isLoadingList) {
+    button.classList.remove("ettpd-batch-progress");
+    button.removeAttribute("aria-busy");
+    button.removeAttribute("aria-disabled");
+    return false;
+  }
+  const paused = AppState.downloading.accountBatch?.paused || AppState.downloading.pausedAll ||
+    AppState.scrapperDetails.isAutoBatchDownloading && AppState.scrapperDetails.paused;
+  const progress = typeof status.progress === "number" && Number.isFinite(status.progress)
+    ? Math.max(0, Math.min(1, status.progress)) : null;
+  const phases = {
+    load: "Finding downloadable posts",
+    prepare: "Preparing source",
+    fetch: "Downloading file",
+    "fetch-video": "Downloading video",
+    "fetch-audio": "Downloading audio",
+    mux: "Combining audio and video",
+    save: "Saving file",
+    fallback: "Recovering source",
+    retry: `Retry ${status.attempt || 1} of ${status.maxRetries || 3}`,
+    waiting: "Waiting for your choice",
+    paused: "Paused",
+  };
+  const waiting = status.phase === "waiting" || status.phase === "paused";
+  const phase = paused && !waiting ? "Pause requested; finishing this file" :
+    phases[status.phase] || "Working";
+  const percent = progress === null ? "" : ` · ${Math.round(progress * 100)}%`;
+  const bytes = status.loaded > 0
+    ? ` · ${(status.loaded / 1048576).toFixed(1)}${status.total > 0 ? ` / ${(status.total / 1048576).toFixed(1)}` : ""} MB`
+    : "";
+  const batchLabel = status.batchNumber ? `Batch ${status.batchNumber} · ` : "";
+  const label = isLoadingList
+    ? `${batchLabel}${waiting || paused ? "Paused before loading posts" : "Loading posts"}`
+    : `${batchLabel}${status.phase === "paused" ? "Paused at" : "Downloading"} ${status.batchIndex || 1} of ${status.batchTotal} ${status.unit || "posts"}`;
+  const photo = !isLoadingList && status.unit === "posts" && status.imageTotal > 1
+    ? ` · Photo ${(status.imageIndex || 0) + 1} of ${status.imageTotal}` : "";
+  const detail = isLoadingList ? `${status.savedPosts || 0} posts confirmed saved` : `${phase}${percent}${bytes}${photo}`;
+  button.classList.add("ettpd-batch-progress");
+  setBusyDownloadButton(button);
+  button.setAttribute("aria-busy", String(!waiting));
+  button.title = `${label}. ${detail}`;
+  let heading = button.querySelector(".ettpd-batch-progress-label");
+  if (!heading) {
+    heading = document.createElement("span");
+    heading.className = "ettpd-batch-progress-label";
+    const description = document.createElement("span");
+    description.className = "ettpd-batch-progress-detail";
+    const track = document.createElement("span");
+    track.className = "ettpd-batch-progress-track";
+    track.setAttribute("role", "progressbar");
+    track.setAttribute("aria-label", "Batch download progress");
+    track.setAttribute("aria-valuemin", "0");
+    track.setAttribute("aria-valuemax", "100");
+    const fill = document.createElement("span");
+    fill.className = "ettpd-batch-progress-fill";
+    track.appendChild(fill);
+    button.replaceChildren(heading, description, track);
+  }
+  heading.textContent = label;
+  button.querySelector(".ettpd-batch-progress-detail").textContent = detail;
+  const track = button.querySelector(".ettpd-batch-progress-track");
+  const fileFraction = progress === null ? 0
+    : status.phase === "save" ? 0.95 + 0.05 * progress
+      : status.phase === "mux" ? 0.9 + 0.05 * progress : 0.9 * progress;
+  const fraction = status.unit === "posts" && status.imageTotal > 1
+    ? ((status.imageIndex || 0) + fileFraction) / status.imageTotal : fileFraction;
+  const overall = isLoadingList ? null : Math.min(99, 100 * ((status.settled || 0) + fraction) / status.batchTotal);
+  const fill = track.firstElementChild;
+  fill.style.width = `${overall === null ? 100 : Math.max(1, overall)}%`;
+  fill.classList.toggle("is-indeterminate", (isLoadingList || progress === null) && !waiting);
+  track.setAttribute("aria-valuetext", `${label}. ${detail}`);
+  if (isLoadingList || progress === null) track.removeAttribute("aria-valuenow");
+  else track.setAttribute("aria-valuenow", String(Math.round(overall)));
+  const container = button.parentElement;
+  const pauseButton = container?.querySelector(`#${DOM_IDS.DOWNLOAD_ALL_BUTTON}-pause`);
+  const stopButton = container?.querySelector(`#${DOM_IDS.DOWNLOAD_ALL_BUTTON}-stop`);
+  if (pauseButton) {
+    pauseButton.style.display = "inline-flex";
+    pauseButton.disabled = false;
+    if (pauseButton.dataset.progressPaused !== String(paused)) {
+      setButtonWithIcon(pauseButton, paused ? "Resume" : "Pause", paused ? "play" : "pause");
+      pauseButton.dataset.progressPaused = String(paused);
+    }
+    pauseButton.title = paused ? "Resume downloading" : "Pause after the current file";
+  }
+  if (stopButton) {
+    stopButton.style.display = "inline-flex";
+    stopButton.disabled = false;
+  }
+  return true;
+}
+
 function updateDownloadAllButtonState(btn, items = []) {
   if (!btn) return;
 
@@ -3297,6 +3419,10 @@ function updateDownloadAllButtonState(btn, items = []) {
   }
 
   const activeBatchType = getActiveDownloadBatchType();
+  if (renderBatchDownloadProgress(actualBtn)) {
+    syncPlaylistButton();
+    return;
+  }
   const activeBatchProgress = AppState.downloading.isDownloadingAll
     ? getActiveBatchProgressSnapshot(
         items.length ? items : AppState.allDirectLinks,
@@ -3360,7 +3486,7 @@ function updateDownloadAllButtonState(btn, items = []) {
         ),
       );
     }
-    actualBtn.disabled = true;
+    setBusyDownloadButton(actualBtn);
     if (pauseBtn) {
       pauseBtn.style.display = "inline-flex";
       pauseBtn.disabled = false;
@@ -3401,12 +3527,14 @@ function updateDownloadAllButtonState(btn, items = []) {
 export function updateDownloadButtonLabel(btnElement, text) {
   const btn =
     btnElement || document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
-  if (AppState.debug.active)
-    if (btn) {
-      btn.innerText = text;
-    } else {
-      console.warn("Download All button not found in the DOM.");
-    }
+  if (!btn) return;
+  if (!AppState.downloading.isDownloadingAll) {
+    AppState.downloading.batchProgress = null;
+    updateDownloadAllButtonState(btn, AppState.allDirectLinks);
+  }
+  if (btn.id === DOM_IDS.DOWNLOAD_ALL_BUTTON &&
+    AppState.downloading.isDownloadingAll && renderBatchDownloadProgress(btn)) return;
+  btn.textContent = text;
 }
 
 export function updateDownloadButtonLabelSimple() {
@@ -3464,6 +3592,10 @@ export function updateDownloadButtonLabelSimple() {
   if (message) message.style.display = "none";
 
   const activeBatchType = getActiveDownloadBatchType();
+  if (renderBatchDownloadProgress(downloadAllBtn)) {
+    schedulePlaylistHeaderSync();
+    return;
+  }
   const activeBatchProgress = AppState.downloading.isDownloadingAll
     ? getActiveBatchProgressSnapshot(AppState.allDirectLinks)
     : null;
@@ -3488,7 +3620,7 @@ export function updateDownloadButtonLabelSimple() {
     } else {
       downloadAllBtn.textContent = `Downloading item ${currentItem} of ${total} items discovered`;
     }
-    downloadAllBtn.disabled = true;
+    setBusyDownloadButton(downloadAllBtn);
     if (pauseBtn) {
       pauseBtn.style.display = "none";
       pauseBtn.disabled = true;
@@ -3525,7 +3657,7 @@ export function updateDownloadButtonLabelSimple() {
             : `Playlist download complete (${total})`,
         ),
       );
-      downloadAllBtn.disabled = true;
+      setBusyDownloadButton(downloadAllBtn);
       if (pauseBtn) {
         pauseBtn.style.display = "inline-flex";
         pauseBtn.disabled = false;
@@ -3552,7 +3684,7 @@ export function updateDownloadButtonLabelSimple() {
           `Downloading ${done} of ${total} Post${total !== 1 ? "s" : ""}…`,
         ),
       );
-      downloadAllBtn.disabled = true;
+      setBusyDownloadButton(downloadAllBtn);
       if (pauseBtn) {
         pauseBtn.style.display = "inline-flex";
         pauseBtn.disabled = false;
@@ -4186,9 +4318,9 @@ function getPlaylistHeaderButtonState(
 
   if (!total) {
     return {
-      label: "Loading Playlist…",
-      icon: "hourglass",
-      disabled: true,
+      label: "Download playlist",
+      icon: "down",
+      disabled: !pageInfo.playlistId,
     };
   }
 
@@ -4227,21 +4359,6 @@ function _syncPlaylistHeaderActionButtonImpl() {
 
   const playlistLinks = getCurrentPlaylistDirectLinks(pageInfo);
 
-  if (
-    pageInfo.playlistId &&
-    !playlistLinks.length &&
-    !AppState.playlist.isHydrating
-  ) {
-    // IMPORTANT: schedule on an animation frame, NOT a microtask.
-    // ensurePlaylistLinksHydrated is async and may resolve instantly
-    // (e.g. when no request URL exists yet). A .then() on a resolved
-    // promise fires as a microtask — calling sync directly from that
-    // creates an infinite microtask loop that freezes the tab.
-    void ensurePlaylistLinksHydrated(pageInfo).then(() => {
-      schedulePlaylistHeaderSync();
-    });
-  }
-
   let button = document.getElementById(PLAYLIST_HEADER_BUTTON_ID);
   if (!button) {
     button = document.createElement("button");
@@ -4252,27 +4369,12 @@ function _syncPlaylistHeaderActionButtonImpl() {
       event.preventDefault();
       event.stopPropagation();
 
-      if (AppState.downloading.isDownloadingAll) {
+      if (notifyDownloadBusy()) {
         return;
       }
 
-      const playlistLinks = getCurrentPlaylistDirectLinks(
-        getPlaylistButtonContext(),
-      );
-      if (!playlistLinks.length) {
-        showToast(
-          "Playlist still loading",
-          "Wait a moment for the playlist posts to load, then try again.",
-        );
-        return;
-      }
-
-      await downloadAllLinks(button, {
-        links: playlistLinks,
-        batchType: "playlist",
-      });
-      displayFoundUrls({ forced: true });
-      schedulePlaylistHeaderSync();
+      const current = getPlaylistButtonContext();
+      await showAccountBatchDialog({ kind: "playlist", id: current.playlistId, title: current.playlistName || "Playlist" });
     });
   }
 
@@ -4301,7 +4403,8 @@ function _syncPlaylistHeaderActionButtonImpl() {
 
   const state = getPlaylistHeaderButtonState(pageInfo, playlistLinks);
   setButtonWithIcon(button, state.label, state.icon);
-  button.disabled = state.disabled;
+  button.disabled = state.disabled && !AppState.downloading.isDownloadingAll;
+  button.setAttribute("aria-disabled", String(state.disabled));
   button.dataset.playlistId = pageInfo.playlistId || "";
 }
 
@@ -4485,6 +4588,7 @@ function updateExperimentalHdProgress(button, status) {
 }
 
 async function runExperimentalHdDownload(button, media, options = {}) {
+  button.dataset.downloadActive = "true";
   button.disabled = true;
   let usedFallback = false;
   updateExperimentalHdProgress(button, { phase: "fetch", progress: 0 });
@@ -4511,6 +4615,8 @@ async function runExperimentalHdDownload(button, media, options = {}) {
       button.disabled = false;
       setExperimentalHdIdleContent(button);
       button.title = button.dataset.defaultTitle || "";
+      delete button.dataset.downloadActive;
+      clearDownloadBtnContainers();
     }, 2500);
   }
 }
@@ -4552,6 +4658,7 @@ function updateStandardDownloadProgress(button, media, status) {
 }
 
 async function runStandardDownload(button, media, options = {}) {
+  button.dataset.downloadActive = "true";
   button.disabled = true;
   updateStandardDownloadProgress(button, media, {
     phase: "fetch",
@@ -4574,6 +4681,8 @@ async function runStandardDownload(button, media, options = {}) {
     setTimeout(() => {
       button.disabled = false;
       options.reset?.();
+      delete button.dataset.downloadActive;
+      clearDownloadBtnContainers();
     }, 2000);
   }
 }
@@ -4812,13 +4921,16 @@ function createCreditsSpan() {
   const version = getExtensionVersion();
 
   // Create coffee link with consistent styling
-  const coffeeLink = document.createElement("a");
-  coffeeLink.href = "https://linktr.ee/aimuhire";
-  coffeeLink.target = "_blank";
-  coffeeLink.rel = "noopener noreferrer";
+  const coffeeLink = document.createElement("button");
+  coffeeLink.type = "button";
   coffeeLink.textContent = "buy me a coffee ☕";
   coffeeLink.style.cssText = `
     color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
     text-decoration: none;
     opacity: 0.8;
     transition: opacity 0.2s;
@@ -4831,6 +4943,7 @@ function createCreditsSpan() {
   };
   coffeeLink.onclick = (e) => {
     e.stopPropagation();
+    showPayItForwardDialog({ dark: getResolvedThemeMode() === "dark" });
   };
 
   // Add Discord link (replaces "no refunds lol")
@@ -5104,10 +5217,12 @@ function updateExperimentalHdStatus(status, items = []) {
 }
 
 export function updateDownloaderList(items, hashToDisplay) {
-  if (AppState.downloading.isActive || AppState.downloading.isDownloadingAll)
-    return;
   const _id = DOM_IDS.DOWNLOADER_WRAPPER;
   let wrapper = document.getElementById(_id);
+  if (
+    wrapper &&
+    (AppState.downloading.isActive || AppState.downloading.isDownloadingAll)
+  ) return wrapper;
   let isNewWrapper = false;
   if (!wrapper) {
     wrapper = createDownloaderWrapper();
@@ -5120,6 +5235,14 @@ export function updateDownloaderList(items, hashToDisplay) {
   }
 
   const refs = wrapper._ettpdRefs;
+  const messagesCheckbox = wrapper.querySelector('input[name="showDownloadMessages"]');
+  if (messagesCheckbox) {
+    messagesCheckbox.checked = AppState.downloadPreferences.showDownloadMessages;
+  }
+  const confettiCheckbox = wrapper.querySelector('input[name="disableConfetti"]');
+  if (confettiCheckbox) {
+    confettiCheckbox.checked = !AppState.downloadPreferences.disableConfetti;
+  }
   refs?.updateVisibleBox?.();
   updateExperimentalHdStatus(refs?.experimentalHdStatus, items);
   updateDownloadAllButtonState(refs?.downloadAllBtn, items);
@@ -6188,8 +6311,14 @@ export function hideDownloader() {
         localStorage.setItem(STORAGE_KEYS.IS_DOWNLOADER_CLOSED, "false");
         AppState.ui.isDownloaderClosed = false;
         AppState.ui.isPreferenceBoxOpen = false;
-        document.getElementById(DOM_IDS.SHOW_DOWNLOADER)?.remove();
         displayFoundUrls({ forced: true });
+        if (document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER)) {
+          showBtn._cleanupDraggable?.();
+          showBtn.remove();
+        } else {
+          AppState.ui.isDownloaderClosed = true;
+          localStorage.setItem(STORAGE_KEYS.IS_DOWNLOADER_CLOSED, "true");
+        }
       }
     }, 50);
   });
@@ -6445,11 +6574,11 @@ export function showStatsPopUp() {
   rateBtn.className = "ettpd-modal-button";
   setButtonWithIcon(rateBtn, "Rate Us", "star");
 
-  const coffeeBtn = document.createElement("a");
-  coffeeBtn.href = "https://linktr.ee/aimuhire";
-  coffeeBtn.target = "_blank";
+  const coffeeBtn = document.createElement("button");
+  coffeeBtn.type = "button";
   coffeeBtn.className = "ettpd-modal-button";
   coffeeBtn.textContent = "☕ Tip/Coffee Jar";
+  coffeeBtn.onclick = () => showPayItForwardDialog({ dark: getResolvedThemeMode() === "dark" });
 
   const resetBtn = document.createElement("button");
   resetBtn.className = "ettpd-modal-button reset-leaderboard";
@@ -6567,11 +6696,22 @@ export function createModal({ children = [], onClose = null }) {
 }
 
 export function showMorpheusRateUsPage() {
+  if (hasSupportCooldown(AppState.rateDonate.lastDonatedAt, AppState.rateDonate.lastSupportedAt)) return;
+  if (!claimAutomaticPopup()) return;
   const reviewTarget = getExtensionReviewTarget();
   AppState.ui.isRatePopupOpen = true;
   hideDownloader();
   showCelebration("mindblown");
   setTimeout(() => {
+    if (
+      !isExtensionEnabledSync() || document.hidden ||
+      hasSupportCooldown(AppState.rateDonate.lastDonatedAt, AppState.rateDonate.lastSupportedAt) ||
+      AppState.downloading.isActive || AppState.downloading.isDownloadingAll ||
+      document.querySelector(".ettpd-modal-overlay")
+    ) {
+      AppState.ui.isRatePopupOpen = false;
+      return;
+    }
     createModalMorpheus({
       message: `<div class="ettpd-morpheus-message">
   You've just seen how good this downloader is.<br>
@@ -6580,16 +6720,14 @@ export function showMorpheusRateUsPage() {
   Take the blue pill ⭐ — rate us.</strong>
 </div>`,
       redPillClick: (e, overlay) => {
-        console.log("✅ User took the red pill — bought coffee.");
-        window.open("https://linktr.ee/aimuhire", "_blank");
         AppState.rateDonate.lastShownAt = Date.now();
-        AppState.rateDonate.lastDonatedAt = Date.now();
         localStorage.setItem(
           STORAGE_KEYS.RATE_DONATE_DATA,
           JSON.stringify(AppState.rateDonate),
         );
         overlay?.remove();
-        if (typeof onClose === "function") onClose();
+        AppState.ui.isRatePopupOpen = false;
+        showPayItForwardDialog({ dark: getResolvedThemeMode() === "dark" });
       },
       bluePillClick: (e, overlay) => {
         console.log("✅ User took the blue pill — rated us.");
@@ -6601,7 +6739,7 @@ export function showMorpheusRateUsPage() {
           JSON.stringify(AppState.rateDonate),
         );
         overlay?.remove();
-        if (typeof onClose === "function") onClose();
+        AppState.ui.isRatePopupOpen = false;
       },
       onClose: (overlay) => {
         AppState.ui.isRatePopupOpen = false;
@@ -7325,18 +7463,31 @@ export function createPreferencesBox() {
     AppState.downloadPreferences.includeCSV,
   );
 
+  const downloadMessagesCheckbox = createCheckbox(
+    "Funny download messages",
+    "showDownloadMessages",
+    (event) => {
+      AppState.downloadPreferences.showDownloadMessages = event.target.checked;
+      localStorage.setItem(
+        STORAGE_KEYS.SHOW_DOWNLOAD_MESSAGES,
+        String(event.target.checked),
+      );
+    },
+    AppState.downloadPreferences.showDownloadMessages,
+    'Random jokes after a download, such as "Saved. Your Downloads folder has accepted another side quest."',
+  );
+
   const disableConfetti = createCheckbox(
-    "Hide Confetti 🎉",
+    "Confetti",
     "disableConfetti",
-    () => {
-      AppState.downloadPreferences.disableConfetti =
-        !AppState.downloadPreferences.disableConfetti;
+    (event) => {
+      AppState.downloadPreferences.disableConfetti = !event.target.checked;
       localStorage.setItem(
         STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI,
         AppState.downloadPreferences.disableConfetti,
       );
     },
-    AppState.downloadPreferences.disableConfetti,
+    !AppState.downloadPreferences.disableConfetti,
   );
 
   const experimentalHdCheckbox = createCheckbox(
@@ -7760,6 +7911,7 @@ export function createPreferencesBox() {
     skipFailedCheckbox,
     skipAdsCheckbox,
     includeCSVFile,
+    downloadMessagesCheckbox,
     disableConfetti,
     experimentalHdCheckbox,
     themeToggle,
@@ -7860,22 +8012,30 @@ export function clearDownloadBtnContainers() {
   );
   const activeId = match?.[2];
 
-  document.querySelectorAll(".download-btn-container").forEach((el) => {
+  document.querySelectorAll(".download-btn-container, .photo-download-btn-container").forEach((el) => {
     const hasActiveButton = activeId
       ? el.querySelector(`button.download-btn.${CSS.escape(activeId)}`)
       : null;
 
     const isInsideActiveHoverSelection = isInsideActiveHoverSelectionRoot(el);
 
-    if (hasActiveButton || isInsideActiveHoverSelection) {
+    const isFeedControl = !!el.closest('section[data-e2e="feed-video"]');
+    if (hasActiveButton || isInsideActiveHoverSelection || isFeedControl) {
       return;
     }
 
-    el.remove();
+    removeIdleDownloadControl(el);
   });
 }
 
+function removeIdleDownloadControl(container) {
+  if (container.querySelector('[data-download-active="true"]')) return;
+  container.remove();
+}
+
 function isInsideActiveHoverSelectionRoot(container) {
+  const exploreItem = container.closest('[data-e2e="explore-item"]');
+  if (exploreItem?.matches(":hover")) return true;
   const activeRoots = [
     activeProfileGridItem,
     activeSideGridItem,
@@ -7893,6 +8053,18 @@ function isInsideActiveHoverSelectionRoot(container) {
   );
 }
 
+export function getReadyVideoDownloadMedia(videoId, candidates = []) {
+  for (const media of candidates) {
+    if (!media || media.isImage || String(media.videoId || media.id) !== String(videoId)) continue;
+    const sources = (media.videoSources || []).filter(source =>
+      !source.experimentalOnly && source.audioStatus === "muxed" &&
+      /^https?:\/\//i.test(source.url || ""),
+    );
+    if (sources.length) return { ...media, url: sources[0].url, videoSources: sources };
+  }
+  return null;
+}
+
 function createDownloadButton({
   wrapperId,
   author,
@@ -7902,6 +8074,7 @@ function createDownloadButton({
   isSmallView,
   isImage,
   photoIndex,
+  getPhotoIndex,
   from,
 }) {
   if (!parentEl) {
@@ -7927,6 +8100,10 @@ function createDownloadButton({
     AppState.allDirectLinks?.find(
       (media) => String(media?.videoId) === String(videoId),
     ) || { isImage, qualityLabel: "?", qualityTier: "unknown" };
+  const getReadyMedia = () => getReadyVideoDownloadMedia(videoId, [
+    getOverlayMedia(),
+    buildVideoLinkMeta(AppState.allItemsEverSeen[videoId]),
+  ]);
   const buildDefaultMarkup = () => {
     const media = getOverlayMedia();
     return `<span class="download-btn-icon" aria-hidden="true"></span><span class="download-btn-label">${getDownloadActionLabel(media)}</span>`;
@@ -7949,16 +8126,83 @@ function createDownloadButton({
   btn.dataset.wrapperId = wrapperId;
   btn.title = getStandardDownloadTitle(getOverlayMedia());
   btn.setAttribute("aria-label", `Standard ${mediaTypeLabel} download`);
+  const refreshReadiness = () => {
+    if (btn.dataset.downloadActive === "true") return true;
+    if (isImage) return true;
+    const ready = getReadyMedia();
+    const unavailable = preparationAttempted && !preparing;
+    btn.dataset.sourceState = ready ? "ready" : unavailable ? "unavailable" : "loading";
+    btn.disabled = !ready;
+    btn.classList.toggle("is-source-loading", !ready && !unavailable);
+    btn.setAttribute("aria-busy", String(!ready && !unavailable));
+    btn.title = ready ? getStandardDownloadTitle(ready) : "Preparing a downloadable source with audio. Playback is not a downloadable file.";
+    if (ready) replaceElementHtml(btn, buildDefaultMarkup());
+    else {
+      const label = document.createElement("span");
+      label.className = "download-btn-label";
+      label.textContent = unavailable ? "Not ready" : "Loading";
+      btn.replaceChildren(label);
+    }
+    return !!ready;
+  };
+  let preparing = false;
+  let preparationAttempted = false;
+  const prepareSource = async () => {
+    if (isImage || preparing || preparationAttempted || refreshReadiness()) return;
+    preparing = true;
+    preparationAttempted = true;
+    try {
+      const localItem = findFiberItemById(parentEl, videoId, 40)?.item;
+      if (getReadyVideoDownloadMedia(videoId, [buildVideoLinkMeta(localItem)])) {
+        handleFoundItems([localItem]);
+        return;
+      }
+      const username = /^[\w.]+$/.test(author || "") ? author : "";
+      const item = await hydrateTikTokVideoDetail(videoId, username, { signal: AbortSignal.timeout(12000) });
+      if (item && String(item.id) === String(videoId)) handleFoundItems([item]);
+    } finally {
+      preparing = false;
+      if (btn.isConnected && !refreshReadiness()) {
+        btn.title = "Download source is not ready. TikTok may require verification. Wait for the post to load or reopen it.";
+      }
+    }
+  };
+  btn._refreshSourceReadiness = () => {
+    const ready = refreshReadiness();
+    if (!ready && !preparationAttempted) {
+      const rect = parentEl.getBoundingClientRect();
+      const player = parentEl.querySelector("video");
+      if (player && !player.paused && rect.bottom > 0 && rect.top < window.innerHeight) {
+        void prepareSource().catch(error => console.warn("[Download] source-readiness-failed", { videoId, error: error.message }));
+      }
+    }
+    return ready;
+  };
+  container.addEventListener("pointerenter", () => { void prepareSource().catch(error => console.warn("[Download] source-readiness-failed", { videoId, error: error.message })); });
   const resetButtonToDefault = () => {
     btn.disabled = false;
     replaceElementHtml(btn, buildDefaultMarkup());
     btn.title = getStandardDownloadTitle(getOverlayMedia());
+    refreshReadiness();
   };
   resetButtonToDefault();
 
   btn.addEventListener("click", async (e) => {
     e.preventDefault();
     e.stopPropagation();
+
+    if (!isImage) {
+      const ready = getReadyMedia();
+      if (!ready) {
+        refreshReadiness();
+        void prepareSource().catch(error => console.warn("[Download] source-readiness-failed", { videoId, error: error.message }));
+        return;
+      }
+      btn.dataset.sourceState = "downloading";
+      btn.classList.remove("is-source-loading");
+      void runStandardDownload(btn, ready, { reset: resetButtonToDefault });
+      return;
+    }
 
     const toMatchingMedia = (candidate) => {
       const media = buildVideoLinkMeta(candidate);
@@ -8020,12 +8264,13 @@ function createDownloadButton({
       return;
     }
 
+    const activePhotoIndex = getPhotoIndex?.() ?? photoIndex ?? 0;
     if (isImage) {
       media.isImage = true;
       media.imagePostImages = Array.isArray(media.imagePostImages)
         ? media.imagePostImages
         : [];
-      media.imagePostImages[photoIndex || 0] = src;
+      media.imagePostImages[activePhotoIndex] = src;
     } else {
       const videoSources = Array.isArray(media.videoSources)
         ? media.videoSources
@@ -8047,7 +8292,7 @@ function createDownloadButton({
     }
 
     void runStandardDownload(btn, media, {
-      imageIndex: photoIndex || 0,
+      imageIndex: activePhotoIndex,
       reset: resetButtonToDefault,
     });
   });
@@ -8058,6 +8303,7 @@ function createDownloadButton({
   syncOverlayExperimentalHdButton(container, videoId);
 
   parentEl.appendChild(container);
+  if (!isImage) btn._refreshSourceReadiness();
 
   console.log("IMAGES_DL ✅ Button injected", {
     injectedInto: parentEl,
@@ -8074,7 +8320,7 @@ function syncOverlayExperimentalHdButton(container, videoId) {
   let button = container.querySelector(".ettpd-experimental-hd-overlay-btn");
 
   if (!source) {
-    button?.remove();
+    if (button?.dataset.downloadActive !== "true") button?.remove();
     if (
       AppState.downloadPreferences.experimentalHd &&
       media &&
@@ -8117,9 +8363,559 @@ function syncOverlayExperimentalHdButton(container, videoId) {
   container.appendChild(button);
 }
 
+function syncShortDramaDownloadButton() {
+  const seriesId = getShortDramaId();
+  const existing = document.getElementById("ettpd-episode-download");
+  if (!seriesId) { existing?.remove(); return; }
+  const heading = [...document.querySelectorAll("h3")].find(element => element.textContent.trim() === "Episodes") ||
+    document.querySelector('h3[class*="HSectionTitle"]');
+  if (!heading) return;
+  if (existing?.dataset.seriesId === seriesId && heading.contains(existing)) {
+    existing.disabled = existing.dataset.loading === "true";
+    return;
+  }
+  existing?.remove();
+  const button = document.createElement("button");
+  button.id = "ettpd-episode-download";
+  button.className = "ettpd-episode-download";
+  button.type = "button";
+  button.dataset.seriesId = seriesId;
+  button.title = "Download episodes";
+  button.setAttribute("aria-label", "Download episodes");
+  button.appendChild(createIcon("download", 18));
+  button.onclick = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!notifyDownloadBusy()) void showShortDramaBatchDialog(seriesId, button);
+  };
+  heading.appendChild(button);
+}
+
+async function showShortDramaBatchDialog(seriesId, trigger) {
+  if (trigger.dataset.loading === "true" || document.getElementById(DOM_IDS.MODAL_CONTAINER)) return;
+  trigger.dataset.loading = "true";
+  trigger.disabled = true;
+  const controller = new AbortController();
+  const content = document.createElement("div");
+  content.className = "ettpd-episode-dialog";
+  const title = document.createElement("h3");
+  title.textContent = "Download episodes";
+  const status = document.createElement("p");
+  status.setAttribute("role", "status");
+  status.textContent = "Loading available episodes...";
+  const form = document.createElement("form");
+  form.hidden = true;
+  const range = document.createElement("div");
+  range.className = "ettpd-episode-range";
+  const createNumber = text => {
+    const label = document.createElement("label");
+    label.textContent = text;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "1";
+    input.step = "1";
+    input.required = true;
+    label.appendChild(input);
+    range.appendChild(label);
+    return input;
+  };
+  const first = createNumber("First episode");
+  const last = createNumber("Last episode");
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.className = "ettpd-action-btn";
+  setButtonWithIcon(submit, "Download episodes", "download");
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "ettpd-action-btn";
+  cancel.textContent = "Cancel";
+  form.append(range, submit);
+  content.append(title, status, form, cancel);
+  const close = () => {
+    controller.abort();
+    trigger.dataset.loading = "false";
+    trigger.disabled = AppState.downloading.isDownloadingAll;
+  };
+  const modal = createModal({ children: [content], onClose: close });
+  modal.style.boxSizing = "border-box";
+  const box = modal.querySelector(".ettpd-modal-box");
+  box.style.boxSizing = "border-box";
+  box.style.maxWidth = "calc(100vw - 48px)";
+  cancel.onclick = () => { close(); modal.remove(); };
+  try {
+    const requestUrl = resolveShortDramaRequest(seriesId);
+    const discovered = await collectShortDramaEpisodes({
+      seriesId, requestUrl, signal: controller.signal,
+      onProgress: ({ loaded, total }) => {
+        if (getShortDramaId() !== seriesId || !modal.isConnected) { close(); modal.remove(); return; }
+        status.textContent = `Loading episodes: ${loaded}${total ? ` of ${total}` : ""}`;
+      },
+    });
+    if (controller.signal.aborted || getShortDramaId() !== seriesId) return;
+    const available = discovered.episodes.map(item => {
+      const number = getEpisodeNumber(item);
+      const media = buildVideoLinkMeta(item, number - 1);
+      const ready = getReadyVideoDownloadMedia(item.id, [media]);
+      return ready ? { item, number, media: { ...media, episodeNumber: number } } : null;
+    }).filter(Boolean);
+    title.textContent = discovered.title;
+    if (!available.length) throw new Error("No complete downloadable episodes are currently available to this account.");
+    const highest = Math.max(discovered.total, ...available.map(entry => entry.number));
+    first.value = "1";
+    last.value = String(highest);
+    first.max = last.max = String(highest);
+    const updateSelection = () => {
+      const start = Number(first.value);
+      const end = Number(last.value);
+      const valid = Number.isInteger(start) && Number.isInteger(end) && start >= 1 && end >= start && end <= highest;
+      const selected = valid ? available.filter(entry => entry.number >= start && entry.number <= end) : [];
+      submit.disabled = !valid || !selected.length;
+      const omitted = valid ? end - start + 1 - selected.length : 0;
+      status.textContent = !valid ? "Choose a valid episode range." :
+        `${selected.length} episodes available${omitted > 0 ? `; ${omitted} unavailable, restricted, or preview-only episodes will be skipped` : ""}.`;
+      return selected;
+    };
+    first.oninput = last.oninput = updateSelection;
+    form.hidden = false;
+    updateSelection();
+    form.onsubmit = event => {
+      event.preventDefault();
+      const selected = updateSelection();
+      if (submit.disabled || getShortDramaId() !== seriesId || AppState.downloading.isDownloadingAll) return;
+      for (const entry of selected) AppState.allItemsEverSeen[entry.item.id] = entry.item;
+      AppState.ui.isDownloaderClosed = false;
+      displayFoundUrls({ forced: true });
+      close();
+      modal.remove();
+      void downloadAllLinks(document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON), {
+        links: selected.map(entry => entry.media), batchType: "episodes",
+      });
+    };
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      status.textContent = error.message;
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "ettpd-action-btn";
+      setButtonWithIcon(retry, "Retry episode lookup", "refresh");
+      retry.onclick = () => {
+        close();
+        modal.remove();
+        if (getShortDramaId() === seriesId) void showShortDramaBatchDialog(seriesId, trigger);
+      };
+      content.appendChild(retry);
+    }
+  }
+}
+
+let accountControlsSyncing = false;
+
+function findAccountTab(kind, tabs) {
+  const known = tabs[kind]?.closest('[role="tab"]');
+  if (known) return known;
+  const videos = tabs.videos?.closest('[role="tab"]') || document.querySelector('[data-e2e="videos-tab"]');
+  const root = videos?.closest('[role="tablist"]') || videos?.parentElement;
+  const aliases = { videos: ["Videos"], reposts: ["Reposts"], liked: ["Liked", "Likes"], favorites: ["Favorites"] };
+  return [...(root?.querySelectorAll('[role="tab"]') || [])].find(tab => aliases[kind]?.includes(tab.textContent.trim()));
+}
+
+function getAccountListNotice(tab) {
+  if (tab?.getAttribute("aria-selected") !== "true") return null;
+  for (const element of document.querySelectorAll('[class*="DivErrorContainer"], [class*="DivEmptyContainer"]')) {
+    const box = element.getBoundingClientRect();
+    if (!box.width || !box.height) continue;
+    const text = element.textContent?.trim() || "";
+    if (/private|currently hidden/i.test(text)) return { code: "LIST_PRIVATE", message: "This list is private. There are no accessible posts to download." };
+    if (/no (?:liked |reposted |saved )?(?:videos|posts)|hasn.t posted|haven.t posted|nothing here|no content|upload your first/i.test(text)) {
+      return { code: "LIST_EMPTY", message: "This list has no posts to download." };
+    }
+  }
+  return null;
+}
+
+function waitForAccountListChange(condition, signal) {
+  return new Promise(resolve => {
+    if (signal.aborted) return resolve(false);
+    if (condition()) return resolve(true);
+    const finish = result => { observer.disconnect(); clearTimeout(timer); signal.removeEventListener("abort", aborted); resolve(result); };
+    const observer = new MutationObserver(() => { if (condition()) finish(true); });
+    const aborted = () => finish(false);
+    const timer = setTimeout(() => finish(false), 12000);
+    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-selected", "class"] });
+    signal.addEventListener("abort", aborted, { once: true });
+  });
+}
+
+async function inspectAccountList(kind, signal) {
+  const tab = findAccountTab(kind, await getTabSpans(0));
+  if (!tab || tab.getAttribute("aria-disabled") === "true") return { code: "LIST_UNAVAILABLE", message: "This list is not available in TikTok." };
+  const cardType = { liked: "user-liked-item", favorites: "favorites-item", reposts: "user-repost-item" }[kind] || "user-post-item";
+  const signature = () => [...document.querySelectorAll(`div[data-e2e="${cardType}"]`)]
+    .filter(card => { const box = card.getBoundingClientRect(); return box.width > 0 && box.height > 0; })
+    .map(card => card.querySelector('a[href*="/video/"],a[href*="/photo/"]')?.getAttribute("href") || "").filter(Boolean).join(",");
+  const alreadySelected = tab.getAttribute("aria-selected") === "true";
+  const before = signature();
+  if (!alreadySelected) tab.click();
+  const ready = await waitForAccountListChange(() => tab.getAttribute("aria-selected") === "true" &&
+    (getAccountListNotice(tab) || signature() && (alreadySelected || signature() !== before)), signal);
+  if (!ready) return { code: "LIST_UNAVAILABLE", message: "TikTok has not made this list available. Open its tab and complete any sign-in or verification, then try again." };
+  return getAccountListNotice(tab);
+}
+
+function createNativeAccountPageLoader(source) {
+  let selected = false;
+  const cardType = { liked: "user-liked-item", favorites: "favorites-item", reposts: "user-repost-item" }[source.kind] || "user-post-item";
+  const cardSelector = `div[data-e2e="${cardType}"]`;
+  const cards = () => [...document.querySelectorAll(cardSelector)].filter(card => {
+    const box = card.getBoundingClientRect();
+    return box.width > 0 && box.height > 0;
+  });
+  const idOf = card => card.querySelector('a[href*="/video/"],a[href*="/photo/"]')?.getAttribute("href")?.match(/\/(?:video|photo)\/(\d+)/)?.[1];
+  const signature = () => cards().map(idOf).filter(Boolean).join(",");
+  return async (cursor, count, signal) => {
+    signal.throwIfAborted();
+    if (getAccountUsername() !== source.username) throw new Error("The account page changed. Saved batches are retained.");
+    const tab = findAccountTab(source.kind, await getTabSpans(0));
+    if (!tab || tab.getAttribute("aria-disabled") === "true") throw new Error("This account list is not available in TikTok.");
+    if (!selected) {
+      const alreadySelected = tab.getAttribute("aria-selected") === "true";
+      const before = signature();
+      if (!alreadySelected) tab.click();
+      const ready = alreadySelected || await waitForAccountListChange(() => tab.getAttribute("aria-selected") === "true" && (signature() !== before || getAccountListNotice(tab)), signal);
+      if (!ready) throw new Error("TikTok has not opened that list. Check its access or verification, then resume.");
+      selected = true;
+    }
+    if (tab.getAttribute("aria-selected") !== "true") throw new Error("The selected account tab changed. Saved batches are retained.");
+    const notice = getAccountListNotice(tab);
+    if (notice?.code === "LIST_PRIVATE") throw Object.assign(new Error(notice.message), { code: notice.code });
+    if (notice?.code === "LIST_EMPTY") return { items: [], cursor, hasMore: false };
+    const checkpoint = getProgressiveListCheckpoint(source.scope);
+    const done = new Set([...(checkpoint?.completed || []), ...(checkpoint?.skipped || [])]);
+    const read = () => {
+      const result = [];
+      const seen = new Set();
+      for (const card of cards()) {
+        const id = idOf(card);
+        if (!id || done.has(id) || seen.has(id)) continue;
+        seen.add(id);
+        const item = AppState.allItemsEverSeen[id] || findFiberItemById(card, id, 40)?.item;
+        if (item && String(item.id) === id) result.push(item);
+        if (result.length >= Math.min(30, count)) break;
+      }
+      return result;
+    };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      signal.throwIfAborted();
+      const items = read();
+      if (items.length) return { items, cursor: `native:${items.at(-1).id}`, hasMore: true };
+      const before = signature();
+      cards().at(-1)?.scrollIntoView({ block: "end" });
+      if (!await waitForAccountListChange(() => signature() !== before || getAccountListNotice(tab), signal)) break;
+      const nextNotice = getAccountListNotice(tab);
+      if (nextNotice?.code === "LIST_PRIVATE") throw Object.assign(new Error(nextNotice.message), { code: nextNotice.code });
+      if (nextNotice?.code === "LIST_EMPTY") return { items: [], cursor, hasMore: false };
+    }
+    throw new Error("TikTok did not load more posts. Your saved batches are retained; resume later or check whether the list has ended.");
+  };
+}
+
+function notifyDownloadBusy() {
+  if (!AppState.downloading.isActive && !AppState.downloading.isDownloadingAll && !AppState.downloading.accountBatch) return false;
+  showToast("Download already in progress", "Wait for the current download to finish, or click Stop before starting another.");
+  return true;
+}
+
+function getCurrentProfileIdentity(username) {
+  const title = document.querySelector?.('[data-e2e="user-title"]');
+  if (!title) return null;
+  let fiber = getReactFiberNode(title);
+  for (let depth = 0; fiber && depth < 24; depth += 1, fiber = fiber.return) {
+    const props = fiber.memoizedProps || fiber.pendingProps;
+    const profile = props?.detailInfo?.user;
+    if (profile?.secUid && profile.uniqueId?.toLowerCase() === username.toLowerCase()) return profile;
+  }
+  return null;
+}
+
+async function showAccountBatchDialog(descriptor) {
+  if (notifyDownloadBusy() || document.getElementById(DOM_IDS.MODAL_CONTAINER)) return;
+  const originUrl = window.location.href;
+  const content = document.createElement("div");
+  content.className = "ettpd-episode-dialog";
+  const title = document.createElement("h3");
+  title.textContent = `Download ${descriptor.title}`;
+  const status = document.createElement("p");
+  status.setAttribute("role", "status");
+  status.textContent = "Preparing this list...";
+  const form = document.createElement("form");
+  form.hidden = true;
+  const label = document.createElement("label");
+  label.textContent = "Max posts per batch";
+  const size = document.createElement("input");
+  size.type = "number"; size.min = "1"; size.max = "100"; size.step = "1"; size.value = String(DEFAULT_BATCH_SIZE); size.required = true;
+  label.className = "ettpd-account-batch-size";
+  label.appendChild(size);
+  const resumeLabel = document.createElement("label");
+  resumeLabel.className = "ettpd-checkbox-container";
+  const resume = document.createElement("input");
+  resume.type = "checkbox";
+  const resumeText = document.createElement("span");
+  resumeText.textContent = "Resume saved progress";
+  resumeLabel.append(resume, resumeText);
+  const submit = document.createElement("button");
+  submit.type = "submit"; submit.className = "ettpd-action-btn";
+  setButtonWithIcon(submit, "Start batches", "download");
+  form.append(label, resumeLabel, submit);
+  const cancel = document.createElement("button");
+  cancel.type = "button"; cancel.className = "ettpd-action-btn"; cancel.textContent = "Cancel";
+  content.append(title, status, form, cancel);
+  const controller = new AbortController();
+  const modal = createModal({ children: [content], onClose: () => controller.abort() });
+  modal.style.boxSizing = "border-box";
+  const box = modal.querySelector(".ettpd-modal-box");
+  box.style.boxSizing = "border-box"; box.style.maxWidth = "calc(100vw - 48px)";
+  cancel.onclick = () => { controller.abort(); modal.remove(); };
+  try {
+    if (["videos", "liked", "reposts", "favorites"].includes(descriptor.kind)) {
+      const notice = await inspectAccountList(descriptor.kind, controller.signal);
+      if (controller.signal.aborted) return;
+      if (notice) {
+        status.textContent = notice.message;
+        cancel.textContent = "Close";
+        return;
+      }
+    }
+    if (descriptor.username) {
+      const username = descriptor.username.toLowerCase();
+      const cachedPost = Object.values(AppState.allItemsEverSeen || {}).find(item =>
+        item?.author?.secUid && item.author.uniqueId?.toLowerCase() === username);
+      if (cachedPost) rememberAccountIdentity(cachedPost.author);
+      try {
+        const scope = JSON.parse(document.getElementById("__UNIVERSAL_DATA_FOR_REHYDRATION__")?.textContent || "{}").__DEFAULT_SCOPE__;
+        const runtimeScope = window.__$UNIVERSAL_DATA$__?.__DEFAULT_SCOPE__;
+        const profiles = [scope?.["webapp.user-detail"]?.userInfo?.user, scope?.["webapp.app-context"]?.user, runtimeScope?.["webapp.user-detail"]?.userInfo?.user, getCurrentProfileIdentity(username)];
+        for (const profile of profiles) {
+          if (profile?.uniqueId?.toLowerCase() === username) rememberAccountIdentity(profile);
+        }
+      } catch {}
+    }
+    let source;
+    try { source = resolveAccountList(descriptor); }
+    catch (error) {
+      if (!descriptor.username) throw error;
+      const url = new URL("/api/user/detail/", location.origin);
+      url.search = new URLSearchParams({ aid: "1988", app_name: "tiktok_web", uniqueId: descriptor.username }).toString();
+      const response = await fetch(url, { credentials: "include", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) });
+      if (!response.ok) throw new Error(`TikTok could not load this account's details (HTTP ${response.status}). Refresh the profile and try again.`);
+      let payload;
+      try { payload = await response.json(); }
+      catch { throw new Error("TikTok returned no usable account details. Refresh this profile and complete any sign-in or verification, then try again."); }
+      const profile = payload?.userInfo?.user;
+      if (profile?.uniqueId?.toLowerCase() !== descriptor.username.toLowerCase()) throw error;
+      source = resolveAccountList({ ...descriptor, profile });
+    }
+    if (controller.signal.aborted) return;
+    if (window.location.href !== originUrl) { status.textContent = "The account page changed. Close this dialog and select the list again."; return; }
+    source.title = descriptor.title;
+    const saved = getProgressiveListCheckpoint(source.scope);
+    resumeLabel.hidden = !saved;
+    resume.checked = !!saved && !saved.finished;
+    if (saved) size.value = String(saved.batchSize);
+    size.disabled = resume.checked;
+    resume.onchange = () => { size.disabled = resume.checked; if (resume.checked) size.value = String(saved.batchSize); };
+    status.textContent = saved
+      ? `${saved.completed.length} posts confirmed saved. Starting over may download them again. Each batch is saved before more posts are loaded.`
+      : "Each batch is saved before more posts are loaded. Private or unavailable lists require access in TikTok.";
+    form.hidden = false;
+    form.onsubmit = event => {
+      event.preventDefault();
+      const batchSize = Number(size.value);
+      if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 100) { status.textContent = "Choose a batch size from 1 to 100."; return; }
+      if (window.location.href !== originUrl) { status.textContent = "The account page changed. Close this dialog and select the list again."; return; }
+      if (notifyDownloadBusy()) { status.textContent = "Stop the current download before starting another list."; return; }
+      if (["videos", "liked", "reposts", "favorites"].includes(source.kind)) source.nativePage = createNativeAccountPageLoader(source);
+      controller.abort(); modal.remove();
+      AppState.ui.isDownloaderClosed = false;
+      displayFoundUrls({ forced: true });
+      void downloadAccountListBatches(source, { batchSize, resume: resume.checked }).then(result => {
+        if (result.finished && !result.completed.length) showToast("Nothing to download", "No accessible downloadable posts were found in this list.");
+        else showToast(result.finished ? "List finished" : "List paused", `${result.completed.length} posts confirmed saved. Use this list's download button to resume.`);
+      }).catch(error => {
+        if (error.name !== "AbortError") showToast(error.code === "LIST_PRIVATE" ? "List unavailable" : "List paused", error.message);
+      });
+    };
+  } catch (error) {
+    if (!controller.signal.aborted) status.textContent = error.message;
+  }
+}
+
+function makeAccountDownloadControl(descriptor, className = "ettpd-account-download") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.title = `Download ${descriptor.title} in batches`;
+  button.setAttribute("aria-label", button.title);
+  button.appendChild(createIcon("download", 16));
+  button.onclick = event => { event.preventDefault(); event.stopPropagation(); void showAccountBatchDialog(descriptor); };
+  return button;
+}
+
+async function syncAccountDownloadControls() {
+  const username = getAccountUsername();
+  if (!username || accountControlsSyncing) return;
+  accountControlsSyncing = true;
+  try {
+    const tabs = await getTabSpans(0);
+    if (getAccountUsername() !== username) return;
+    const titles = { videos: "Videos", reposts: "Reposts", liked: "Likes", favorites: "Favorites" };
+    for (const [kind, title] of Object.entries(titles)) {
+      const tab = findAccountTab(kind, tabs);
+      if (!tab || tab.getAttribute("aria-disabled") === "true") continue;
+      const existing = document.getElementById(`ettpd-account-${kind}-download`);
+      if (existing?.dataset.accountUsername === username && (tab.contains(existing) || existing.previousElementSibling === tab)) continue;
+      existing?.remove();
+      const button = makeAccountDownloadControl({ kind, username, title });
+      button.id = `ettpd-account-${kind}-download`;
+      button.dataset.kind = kind;
+      button.dataset.accountUsername = username;
+      if (tab.tagName === "BUTTON") tab.parentElement.insertBefore(button, tab.nextSibling);
+      else tab.appendChild(button);
+    }
+    document.querySelectorAll('a[href*="/playlist/"],a[href*="/collection/"]').forEach(anchor => {
+      if (anchor.closest(`#${DOM_IDS.DOWNLOADER_WRAPPER},#${DOM_IDS.MODAL_CONTAINER}`)) return;
+      const match = anchor.getAttribute("href")?.match(/\/(playlist|collection)\/([^/?#]+)-(\d+)/);
+      if (!match) return;
+      const existing = anchor.querySelector(".ettpd-account-card-download");
+      const key = `${match[1]}:${match[3]}`;
+      if (existing?.dataset.listKey === key) return;
+      existing?.remove();
+      let title; try { title = decodeURIComponent(match[2]); } catch { return; }
+      const button = makeAccountDownloadControl({ kind: match[1], id: match[3], title }, "ettpd-account-download ettpd-account-card-download");
+      button.dataset.listKey = key;
+      anchor.classList.add("ettpd-account-list-card");
+      anchor.appendChild(button);
+    });
+  } finally { accountControlsSyncing = false; }
+}
+
+function syncCollectionDownloadButton() {
+  const collection = getCollectionContext();
+  const existing = document.getElementById("ettpd-collection-download");
+  if (!collection) { existing?.remove(); return; }
+  const heading = document.querySelector('h1[class*="H1ShareTitle"]') || document.querySelector("h1");
+  if (!heading?.parentElement) return;
+  if (existing?.dataset.collectionId === collection.id && heading.parentElement.contains(existing)) {
+    existing.disabled = existing.dataset.loading === "true";
+    return;
+  }
+  existing?.remove();
+  const button = document.createElement("button");
+  button.id = "ettpd-collection-download";
+  button.type = "button";
+  button.className = "ettpd-collection-download";
+  button.dataset.collectionId = collection.id;
+  button.title = `Download posts from ${collection.name}`;
+  setButtonWithIcon(button, "Download collection", "download");
+  button.onclick = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    void showAccountBatchDialog({ kind: "collection", id: collection.id, title: collection.name });
+  };
+  heading.parentElement.appendChild(button);
+}
+
+async function showCollectionDownloadDialog(collection, trigger) {
+  if (trigger.dataset.loading === "true" || document.getElementById(DOM_IDS.MODAL_CONTAINER)) return;
+  trigger.dataset.loading = "true";
+  trigger.disabled = true;
+  const controller = new AbortController();
+  const content = document.createElement("div");
+  content.className = "ettpd-episode-dialog";
+  const title = document.createElement("h3");
+  title.textContent = collection.name;
+  const status = document.createElement("p");
+  status.setAttribute("role", "status");
+  status.textContent = "Loading collection posts...";
+  const start = document.createElement("button");
+  start.type = "button";
+  start.className = "ettpd-action-btn";
+  start.hidden = true;
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "ettpd-action-btn";
+  cancel.textContent = "Cancel";
+  content.append(title, status, start, cancel);
+  const close = () => {
+    controller.abort();
+    trigger.dataset.loading = "false";
+    trigger.disabled = AppState.downloading.isDownloadingAll;
+  };
+  const modal = createModal({ children: [content], onClose: close });
+  modal.style.boxSizing = "border-box";
+  const box = modal.querySelector(".ettpd-modal-box");
+  box.style.boxSizing = "border-box";
+  box.style.maxWidth = "calc(100vw - 48px)";
+  cancel.onclick = () => { close(); modal.remove(); };
+  try {
+    const items = await collectCollectionItems({
+      collectionId: collection.id,
+      requestUrl: resolveCollectionRequest(collection.id),
+      signal: controller.signal,
+      onProgress: ({ loaded }) => {
+        if (getCollectionContext()?.id !== collection.id || !modal.isConnected) { close(); modal.remove(); return; }
+        status.textContent = `Loading collection: ${loaded} posts found`;
+      },
+    });
+    if (controller.signal.aborted || getCollectionContext()?.id !== collection.id) return;
+    const available = items.map((item, index) => {
+      const media = buildVideoLinkMeta(item, index);
+      if (!media || AppState.downloadPreferences.skipAds && item.isAd) return null;
+      const ready = media.isImage
+        ? media.imagePostImages?.length && media.imagePostImages.every(url => /^https?:\/\//i.test(url))
+        : getReadyVideoDownloadMedia(item.id, [media]);
+      return ready ? { item, media } : null;
+    }).filter(Boolean);
+    if (!available.length) throw new Error("This collection has no downloadable posts available to this account.");
+    const omitted = items.length - available.length;
+    status.textContent = `${available.length} posts ready${omitted ? `; ${omitted} unavailable posts or ads omitted` : ""}.`;
+    setButtonWithIcon(start, `Download ${available.length} posts`, "download");
+    start.hidden = false;
+    start.onclick = () => {
+      if (getCollectionContext()?.id !== collection.id || AppState.downloading.isDownloadingAll) return;
+      for (const entry of available) AppState.allItemsEverSeen[entry.item.id] = entry.item;
+      AppState.ui.isDownloaderClosed = false;
+      displayFoundUrls({ forced: true });
+      close();
+      modal.remove();
+      void downloadAllLinks(document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON), {
+        links: available.map(entry => entry.media), batchType: "collection",
+      });
+    };
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    status.textContent = error.message;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "ettpd-action-btn";
+    setButtonWithIcon(retry, "Retry collection lookup", "refresh");
+    retry.onclick = () => {
+      close(); modal.remove();
+      if (getCollectionContext()?.id === collection.id) void showCollectionDownloadDialog(collection, trigger);
+    };
+    content.appendChild(retry);
+  }
+}
+
 function refreshDownloadButtonQualityBadges() {
+  void syncAccountDownloadControls().catch(error => console.warn("[Download] account-controls-unavailable", error));
+  syncCollectionDownloadButton();
+  syncShortDramaDownloadButton();
   document.querySelectorAll("button.download-btn").forEach((button) => {
     if (button.classList.contains("ettpd-experimental-hd-overlay-btn")) return;
+    if (["loading", "unavailable"].includes(button.dataset.sourceState)) {
+      button._refreshSourceReadiness?.();
+      return;
+    }
     if (button.disabled) return;
     const videoId = Array.from(button.classList).find((className) =>
       /^\d{5,}$/.test(className),
@@ -8190,6 +8986,7 @@ export function createMediaDownloadButtonForWrapper(wrapperEl, postId) {
 export function createExploreDownloadButton(exploreItem, videoId) {
   const wrapper = exploreItem.querySelector(".xgplayer-container");
   if (!wrapper) return;
+  if (getComputedStyle(exploreItem).position === "static") exploreItem.style.position = "relative";
 
   const author =
     getVideoUsernameFromAllDirectLinks(videoId) ||
@@ -8216,7 +9013,7 @@ export function createExploreDownloadButton(exploreItem, videoId) {
     author,
     videoId,
     getVideoSrc,
-    parentEl: wrapper,
+    parentEl: exploreItem,
     isSmallView: expectSmallViewer(),
     from: "createExploreDownloadButton",
   });
@@ -8228,6 +9025,7 @@ export function getImageDivPlayerContainer(parentEl) {
     if (
       parentEl.nodeName === "DIV" &&
       (parentEl.className.includes("DivPlayerContainer") ||
+        parentEl.className.includes("DivPhotoPlayerContainer") ||
         parentEl.className.includes("DivVideoWrapper"))
     ) {
       return parentEl;
@@ -8339,6 +9137,10 @@ export function getImageDivPlayerContainerDownward(rootEl) {
 
 function injectExploreDownloadButtons() {
   document.querySelectorAll('div[data-e2e="explore-item"]').forEach((item) => {
+    if (!item.matches(":hover")) {
+      removeAllInjectedDownloadButtons(item);
+      return;
+    }
     const href = item.querySelector("a[href*='/video/']")?.getAttribute("href");
     const m = href?.match(/\/video\/(\d+)/);
     if (m && !item.querySelector("button.download-btn")) {
@@ -8438,16 +9240,15 @@ function removeInjectedDownloadButton(item, postId) {
   item
     ?.querySelectorAll(`button.download-btn.${CSS.escape(postId)}`)
     .forEach((button) => {
-      button.closest(".download-btn-container")?.remove();
+      const container = button.closest(".download-btn-container");
+      if (container) removeIdleDownloadControl(container);
     });
 }
 
 function removeAllInjectedDownloadButtons(item) {
   item
     ?.querySelectorAll(".download-btn-container, .photo-download-btn-container")
-    .forEach((container) => {
-      container.remove();
-    });
+    .forEach(removeIdleDownloadControl);
 }
 
 function getProfileGridPostId(item) {
@@ -9472,7 +10273,7 @@ export function handleSwiper(swiper) {
   const linkHref = window.location.href;
   const isPhotoLink = linkHref.includes("/photo/");
   const photoIndex = Number(
-    document
+    swiper
       .querySelector(".swiper-slide-active")
       ?.getAttribute("data-swiper-slide-index") || "0",
   );
@@ -9482,8 +10283,22 @@ export function handleSwiper(swiper) {
   console.log("IMAGES_DL handleSwiper section isPhoto/video...", {
     section,
   });
-  const videoId = extractVideoIdFromURL(linkHref);
-  const authorId = extractAuthorFromURL(linkHref);
+  let videoId = isPhotoLink ? extractVideoIdFromURL(linkHref) : null;
+  let authorId = isPhotoLink ? extractAuthorFromURL(linkHref) : null;
+  if (!isPhotoLink && isFeedVideo) {
+    const article = swiper.closest("article");
+    let fiber = getReactFiberNode(article);
+    for (let depth = 0; fiber && depth < 12; depth += 1, fiber = fiber.return) {
+      const id = String(fiber.memoizedProps?.id || fiber.pendingProps?.id || "");
+      if (/^\d+$/.test(id)) { videoId = id; break; }
+    }
+    const item = videoId && (AppState.allItemsEverSeen[videoId] || findFiberItemById(article, videoId, 40)?.item);
+    authorId = item?.author?.uniqueId || extractAuthorFromURL(article?.querySelector('a[href^="/@"]')?.getAttribute("href") || "");
+    if (item && !AppState.allItemsEverSeen[videoId]) {
+      AppState.allItemsEverSeen[videoId] = item;
+      displayFoundUrls({ forced: true });
+    }
+  }
   console.log("IMAGES_DL handleSwiper section author/videoId...", {
     videoId,
     authorId,
@@ -9507,10 +10322,11 @@ export function handleSwiper(swiper) {
       const img = swiper.querySelector(".swiper-slide-active img");
       return img?.src || "";
     },
-    parentEl: isPhotoLink ? getImageDivPlayerContainer(section) : section,
+    parentEl: getImageDivPlayerContainer(swiper) || section,
     isSmallView: false,
     isImage: true,
     photoIndex,
+    getPhotoIndex: () => Number(swiper.querySelector(".swiper-slide-active")?.getAttribute("data-swiper-slide-index") || "0"),
     from: "handleSwiper",
   });
 }
@@ -9593,9 +10409,7 @@ export function clearDownloadContainers() {
     );
   }
 
-  document
-    .querySelectorAll(".photo-download-btn-container, .download-btn-container")
-    .forEach((el) => el.remove());
+  clearDownloadBtnContainers();
 }
 
 // Helpers

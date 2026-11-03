@@ -1,6 +1,6 @@
 {
   "name": "easy-tiktok-video-downloader",
-  "version": "5.3.5",
+  "version": "5.4.0",
   "description": "Save TikTok videos in the best available quality. Bulk-download profiles, likes, favorites, playlists and more. Unofficial.",
   "manifest_version": 3,
   "author": "Arsene I. Muhire",
@@ -15,6 +15,8 @@
     "clean": "rm -rf dist",
     "cc": "webpack --mode production",
     "verify:versions": "node scripts/verify-version-sync.js",
+    "verify:packages": "node scripts/verify-packages.js",
+    "verify:recovery": "node --test scripts/verify-download-recovery.mjs",
     "setup:hooks": "git config core.hooksPath .githooks"
   },
   "sideEffects": false,

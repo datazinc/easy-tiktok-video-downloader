@@ -1,5 +1,8 @@
 // networkInterceptor.js
 import { handleFoundItems } from "../downloader/handlers.js";
+import { rememberShortDramaRequest } from "../utils/shortDrama.js";
+import { rememberCollectionRequest } from "../utils/collection.js";
+import { rememberAccountListResponse, isProgressiveListRequest } from "../utils/accountLists.js";
 import {
   getPlaylistIdFromRequestUrl,
   rememberCurrentPlaylistItems,
@@ -28,6 +31,10 @@ export class NetworkInterceptor {
 
   handleResponse(data, sourceUrl = "") {
     try {
+      rememberAccountListResponse(data, sourceUrl);
+      if (isProgressiveListRequest(sourceUrl)) return;
+      rememberShortDramaRequest(sourceUrl);
+      rememberCollectionRequest(sourceUrl);
       const rememberedRequestUrl = rememberPlaylistRequestUrl(sourceUrl) || "";
       const playlistId = getPlaylistIdFromRequestUrl(
         rememberedRequestUrl || sourceUrl,
@@ -59,6 +66,8 @@ export class NetworkInterceptor {
     const self = this;
 
     XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+      rememberShortDramaRequest(url);
+      rememberCollectionRequest(url);
       this._ni_method = method;
       this._ni_url = url;
       return self._origXHROpen.call(this, method, url, ...rest);
@@ -97,10 +106,18 @@ export class NetworkInterceptor {
     window.fetch = async function (input, init) {
       const isReq = input instanceof self._OrigRequest;
       const url = isReq ? input.url : input;
+      rememberShortDramaRequest(url);
+      rememberCollectionRequest(url);
       const method = (init && init.method) || (isReq && input.method) || "GET";
 
       try {
         const response = await self._origFetch(input, init);
+
+        const contentType = response.headers.get("content-type") || "";
+        const responseUrl = response.url || url;
+        let isApi = false;
+        try { isApi = new URL(responseUrl, window.location.origin).pathname.startsWith("/api/"); } catch {}
+        if (isProgressiveListRequest(responseUrl) || !contentType.includes("json") && !isApi) return response;
 
         // fire-and-forget JSON parsing
         response

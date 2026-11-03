@@ -1,4 +1,15 @@
 /* popup.css */
+.pay-it-forward-link {
+  display: inline;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--popup-link-color);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 :root {
   --popup-bg-primary: radial-gradient(
     circle at 20% 20%,

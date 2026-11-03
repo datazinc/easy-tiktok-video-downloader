@@ -1,5 +1,12 @@
 // Utils.js
 import AppState from "../state/state.js";
+import { DownloadRecovery } from "../storage/downloadRecovery.js";
+import { ProgressiveBatch } from "../storage/progressiveBatch.js";
+import { hasSupportCooldown } from "./payItForward.js";
+import { fetchAccountListPage, setNativeProgressiveList } from "./accountLists.js";
+import { getShortDramaId, findShortDramaRequest } from "./shortDrama.js";
+import { getCollectionContext, resolveCollectionRequest, collectCollectionItems } from "./collection.js";
+import { isExtensionEnabledSync } from "./extensionState.js";
 import { createHtmlFragment, replaceElementHtml } from "./html.js";
 import {
   BlobSource,
@@ -31,12 +38,14 @@ import {
   hasVideoId,
   hasVideoIdInCache,
   loadProgressObject,
+  getDownloadStatuses,
 } from "../storage/progress.js";
 import {
   updateDownloaderList,
   hideDownloader,
   showMorpheusRateUsPage,
   updateDownloadButtonLabelSimple,
+  updateBatchDownloadProgress,
   updateDownloadButtonLabel,
   showStatsSpan,
   createDownloaderWrapper,
@@ -1235,11 +1244,27 @@ function isTikTokPlaybackGateway(url) {
 const adaptiveAudioUrlsByToken = new Map();
 const videoDetailHydrationPromises = new Map();
 
-export function hydrateTikTokVideoDetail(videoId, authorId = "") {
+export function hydrateTikTokVideoDetail(videoId, authorId = "", options = {}) {
   const normalizedId = String(videoId || "").trim();
   if (!/^\d+$/.test(normalizedId)) return Promise.resolve(null);
-  if (videoDetailHydrationPromises.has(normalizedId)) {
+  if (!options.refresh && videoDetailHydrationPromises.has(normalizedId)) {
     return videoDetailHydrationPromises.get(normalizedId);
+  }
+
+  const collection = getCollectionContext(window.location.pathname);
+  if (collection) {
+    const promise = collectCollectionItems({
+      collectionId: collection.id,
+      requestUrl: resolveCollectionRequest(collection.id),
+      signal: options.signal,
+      targetVideoId: normalizedId,
+    }).then(items => items.find(item => String(item.id) === normalizedId) || null)
+      .catch(error => {
+        console.warn("[Download] collection-metadata-unavailable", { videoId: normalizedId, error: error.message });
+        return null;
+      });
+    videoDetailHydrationPromises.set(normalizedId, promise);
+    return promise;
   }
 
   const normalizedAuthor = String(authorId || "")
@@ -1247,13 +1272,32 @@ export function hydrateTikTokVideoDetail(videoId, authorId = "") {
     .trim();
   const path = normalizedAuthor
     ? `/@${encodeURIComponent(normalizedAuthor)}/video/${normalizedId}`
-    : `/video/${normalizedId}`;
-  const promise = fetch(new URL(path, window.location.origin), {
+    : `/@_/video/${normalizedId}`;
+  const dramaId = getShortDramaId(window.location.pathname);
+  const observedRequest = dramaId
+    ? findShortDramaRequest(dramaId, performance.getEntriesByType?.("resource") || [], window.location.origin)
+    : null;
+  const episodeRequest = observedRequest ? new URL(observedRequest) : null;
+  const episodeNumber = Number(options.episodeNumber);
+  if (episodeRequest && Number.isInteger(episodeNumber) && episodeNumber > 0) {
+    const count = Math.max(1, Math.min(100, Number(episodeRequest.searchParams.get("count")) || 24));
+    episodeRequest.searchParams.set("cursor", String(Math.floor((episodeNumber - 1) / count) * count));
+  }
+  const promise = fetch(episodeRequest || new URL(path, window.location.origin), {
     credentials: "include",
+    signal: options.signal,
   })
-    .then((response) => (response.ok ? response.text() : null))
+    .then(async (response) => {
+      if (!response.ok) return null;
+      if (episodeRequest) {
+        const payload = await response.json();
+        return payload?.itemList?.find(item => String(item?.id || "") === normalizedId) || null;
+      }
+      return response.text();
+    })
     .then((html) => {
       if (!html) return null;
+      if (episodeRequest) return String(html.id || "") === normalizedId ? html : null;
       const documentNode = new DOMParser().parseFromString(html, "text/html");
       const script = documentNode.getElementById(
         "__UNIVERSAL_DATA_FOR_REHYDRATION__",
@@ -2402,7 +2446,320 @@ function createDownloadActionError(code, message) {
 }
 
 function isStopBatchError(error) {
-  return error?.code === DOWNLOAD_ACTION_CODES.stopBatch;
+  return [DOWNLOAD_ACTION_CODES.stopBatch, DOWNLOAD_ACTION_CODES.refreshPage].includes(error?.code);
+}
+
+let activeAccountBatch = null;
+const downloadRecovery = new DownloadRecovery(() => sessionStorage, () => Date.now(), (operation, saves) => {
+  if (operation?.context?.progressiveScope) new ProgressiveBatch(sessionStorage).recordChunk(operation, saves);
+});
+
+function runRecoveryOperation(media, options, callback) {
+  return downloadRecovery.run(media, options, {
+    url: window.location.href,
+    preferences: JSON.parse(JSON.stringify(AppState.downloadPreferences)),
+    scrapperDetails: JSON.parse(JSON.stringify(AppState.scrapperDetails)),
+    progressiveScope: activeAccountBatch?.scope,
+  }, callback);
+}
+
+export function getProgressiveListCheckpoint(scope) {
+  return new ProgressiveBatch(sessionStorage).read(scope);
+}
+
+async function reconcileProgressiveChunk(store, scope) {
+  const chunk = store.readChunk(scope);
+  if (!chunk) return null;
+  if (chunk.unsafe || chunk.saves.some(save => !Number.isInteger(save.downloadId))) {
+    throw new Error("An interrupted save has an unknown outcome. Check Downloads before starting a new operation.");
+  }
+  const statuses = await getDownloadStatuses([...new Set(chunk.saves.map(save => save.downloadId))], true);
+  const byId = new Map(statuses.map(item => [item.id, item.state]));
+  if (chunk.saves.some(save => !["complete", "interrupted"].includes(byId.get(save.downloadId)))) {
+    throw new Error("A file is still saving or its status is unavailable. Wait, then resume this batch.");
+  }
+  const queue = chunk.queue.map(entry => ({
+    ...entry,
+    status: entry.status === "complete" || chunk.saves.some(save => save.key === entry.key && byId.get(save.downloadId) === "complete")
+      ? "complete" : entry.status === "skipped" ? "skipped" : "pending",
+  }));
+  const checkpoint = store.read(scope);
+  if (checkpoint) {
+    const completed = new Set(checkpoint.completed);
+    const skipped = new Set(checkpoint.skipped || []);
+    for (const id of new Set(queue.map(entry => entry.videoId))) {
+      const entries = queue.filter(entry => entry.videoId === id);
+      if (entries.every(entry => entry.status === "complete")) completed.add(id);
+      else if (entries.every(entry => ["complete", "skipped"].includes(entry.status))) skipped.add(id);
+    }
+    checkpoint.completed = [...completed];
+    checkpoint.skipped = [...skipped];
+    store.save(checkpoint);
+  }
+  store.recordChunk({ context: { progressiveScope: scope }, queue }, []);
+  return queue;
+}
+
+export async function downloadAccountListBatches(source, { batchSize = 30, resume = false, onProgress } = {}) {
+  if (activeAccountBatch || AppState.downloading.isDownloadingAll || downloadRecovery.runningFiles) {
+    throw new Error("Finish or stop the current download before starting another list.");
+  }
+  if (["initiated", "ongoing", "downloading"].includes(AppState.scrapperDetails.scrappingStage)) {
+    throw new Error("Stop the current automatic scrolling job before starting another list.");
+  }
+  const store = new ProgressiveBatch(sessionStorage);
+  const controller = new AbortController();
+  const job = { scope: source.scope, url: window.location.href, paused: false, stopped: false, abort: () => controller.abort() };
+  activeAccountBatch = job;
+  AppState.downloading.accountBatch = job;
+  const previousTab = AppState.scrapperDetails.selectedTab;
+  const previousCollection = AppState.scrapperDetails.selectedCollectionName;
+  AppState.scrapperDetails.selectedTab = source.kind;
+  if (source.kind === "collection") AppState.scrapperDetails.selectedCollectionName = source.title || "collection";
+  let restored = null;
+  try {
+    if (resume) restored = await reconcileProgressiveChunk(store, source.scope);
+    return await store.run({
+      scope: source.scope, batchSize, resume, signal: controller.signal,
+      beforePage: async () => {
+        while (job.paused && !job.stopped) await sleep(250);
+        if (job.url !== window.location.href || !isExtensionEnabledSync()) controller.abort();
+      },
+      fetchPage: async (cursor, count, signal) => {
+        if ((source.nativeMode || String(cursor).startsWith("native:")) && source.nativePage) {
+          source.nativeMode = true;
+          setNativeProgressiveList(source);
+          return source.nativePage(cursor, count, signal);
+        }
+        try { return await fetchAccountListPage(source, cursor, count, signal); }
+        catch (error) {
+          if (!source.nativePage || signal.aborted) throw error;
+          source.nativeMode = true;
+          setNativeProgressiveList(source);
+          console.warn("[Download] progressive-native-pagination", { kind: source.kind });
+          return source.nativePage(cursor, count, signal);
+        }
+      },
+      onProgress: status => {
+        onProgress?.(status);
+        if (status.phase === "load") {
+          AppState.downloading.isDownloadingAll = true;
+          AppState.downloading.pausedAll = job.paused;
+          updateBatchDownloadProgress({ batchTotal: null, batchIndex: null, settled: 0, batchNumber: status.batches + 1, phase: job.paused ? "paused" : "load", progress: null, unit: "posts", imageIndex: null, imageTotal: null, savedPosts: status.saved });
+        }
+      },
+      downloadBatch: async (items, checkpoint) => {
+        while (job.paused && !job.stopped) await sleep(250);
+        controller.signal.throwIfAborted();
+        const omitted = [];
+        const links = items.map((item, index) => {
+          const media = buildVideoLinkMeta(item, index);
+          const hasSource = media?.isImage
+            ? media.imagePostImages?.length && media.imagePostImages.every(url => /^https?:\/\//i.test(url))
+            : media?.videoSources?.some(candidate => !candidate.experimentalOnly && candidate.audioStatus === "muxed" && /^https?:\/\//i.test(candidate.url));
+          if (!media || !hasSource || AppState.downloadPreferences.skipAds && item.isAd) {
+            omitted.push(String(item.id || item.videoId));
+            return null;
+          }
+          return media;
+        }).filter(Boolean);
+        if (!links.length) return { completed: [], skipped: omitted };
+        const mainBtn = document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
+        return runRecoveryOperation(links, { kind: source.kind }, async () => {
+          downloadRecovery.operation.refreshCount = checkpoint.refreshCount || 0;
+          if (restored) {
+            for (const entry of downloadRecovery.operation.queue) {
+              const previous = restored.find(candidate => candidate.key === entry.key);
+              if (previous && ["complete", "skipped"].includes(previous.status)) entry.status = previous.status;
+            }
+            restored = null;
+          }
+          const result = await downloadAllLinksAttempt(mainBtn, {
+            links, batchType: source.kind,
+            progressKey: `progressive:${source.scope}:${checkpoint.batches}`,
+          });
+          updateBatchDownloadProgress({ phase: "save", progress: null });
+          const queue = await downloadRecovery.confirmSaves(ids => getDownloadStatuses(ids, true));
+          const completed = [];
+          const skipped = [...omitted];
+          for (const item of items) {
+            const id = String(item.id || item.videoId);
+            const files = queue.filter(entry => entry.videoId === id);
+            if (files.length && files.every(entry => entry.status === "complete")) completed.push(id);
+            else if (files.length && files.every(entry => ["complete", "skipped"].includes(entry.status))) skipped.push(id);
+          }
+          AppState.leaderboard.newlyConfirmedMedia = [];
+          return { completed, skipped, stopped: !!result?.stopped || job.stopped };
+        });
+      },
+    });
+  } finally {
+    activeAccountBatch = null;
+    setNativeProgressiveList(null);
+    AppState.downloading.accountBatch = null;
+    AppState.downloading.isActive = false;
+    AppState.downloading.isDownloadingAll = false;
+    AppState.downloading.pausedAll = false;
+    AppState.downloading.batchProgress = null;
+    AppState.scrapperDetails.selectedTab = previousTab;
+    AppState.scrapperDetails.selectedCollectionName = previousCollection;
+    updateDownloadButtonLabelSimple();
+  }
+}
+
+export function restoreDownloadRecovery() {
+  const checkpoint = downloadRecovery.read(window.location.href);
+  if (!checkpoint) return false;
+  try {
+    downloadRecovery.adopt(checkpoint);
+  } catch (error) {
+    console.warn("[Download] refresh-resume-storage-unavailable", { error: error.message });
+    return false;
+  }
+  const resume = () => { void resumeDownloadCheckpoint(checkpoint); };
+  if (checkpoint.phase === "ready" && !checkpoint.paused) {
+    setTimeout(resume, 0);
+    return true;
+  }
+  const content = document.createElement("div");
+  const title = document.createElement("h3");
+  title.textContent = "Resume saved downloads?";
+  const description = document.createElement("p");
+  const remaining = checkpoint.queue.filter(entry => !["complete", "skipped"].includes(entry.status)).length;
+  description.textContent = `${remaining} files remain in the saved queue. Completed files will be checked before resuming. This operation will not refresh again.`;
+  const resumeBtn = document.createElement("button");
+  resumeBtn.className = "ettpd-modal-button primary";
+  resumeBtn.textContent = "Resume downloads";
+  const stopBtn = document.createElement("button");
+  stopBtn.className = "ettpd-modal-button danger";
+  stopBtn.textContent = "Stop Batch";
+  content.append(title, description, resumeBtn, stopBtn);
+  const modal = createModal({ children: [content], onClose: () => downloadRecovery.finish() });
+  resumeBtn.onclick = () => { modal.remove(); checkpoint.paused = false; resume(); };
+  stopBtn.onclick = () => { modal.remove(); downloadRecovery.finish(); };
+  return true;
+}
+
+async function resumeDownloadCheckpoint(checkpoint) {
+  let completed = 0;
+  let processed = 0;
+  const recordedPosts = new Set();
+  try {
+    while (true) {
+      try {
+        downloadRecovery.operation.queue = await downloadRecovery.confirmSaves(getDownloadStatuses);
+        break;
+      } catch (error) {
+        const retry = await showAlertModal(escapeHtml(error.message), "Check again", () => {});
+        if (!retry) return;
+      }
+    }
+    downloadRecovery.persistPaused();
+    Object.assign(AppState.downloadPreferences, checkpoint.context.preferences, { autoScrollMode: "off" });
+    Object.assign(AppState.scrapperDetails, checkpoint.context.scrapperDetails, {
+      isAutoBatchDownloading: false,
+      scrappingStage: "completed",
+      paused: false,
+    });
+    AppState.ui.isDownloaderClosed = false;
+    displayFoundUrls({ forced: true });
+    AppState.downloading.isDownloadingAll = true;
+    AppState.downloading.batchType = ["playlist", "episodes", "collection"].includes(checkpoint.kind) ? checkpoint.kind : "all";
+    AppState.downloading.pausedAll = !!checkpoint.paused;
+    const remaining = downloadRecovery.operation.queue.filter(entry => !["complete", "skipped"].includes(entry.status)).length;
+    updateBatchDownloadProgress({ batchTotal: remaining, batchIndex: 1, settled: 0, unit: checkpoint.kind === "episodes" ? "episodes" : "files", phase: "prepare", progress: null });
+    const mainBtn = document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
+    console.warn("[Download] refresh-resume-started", { operationId: checkpoint.id, refreshCount: 1 });
+    for (const entry of downloadRecovery.operation.queue) {
+      if (["complete", "skipped"].includes(entry.status)) continue;
+      let resolved = false;
+      let forceHydration = false;
+      while (!resolved && AppState.downloading.isDownloadingAll) {
+        updateBatchDownloadProgress({ batchIndex: processed + 1, settled: processed, phase: AppState.downloading.pausedAll ? "paused" : "prepare", progress: null });
+        while (AppState.downloading.pausedAll && AppState.downloading.isDownloadingAll) await sleep(250);
+        if (!AppState.downloading.isDownloadingAll || !isExtensionEnabledSync()) break;
+        let media;
+        try {
+          const cached = forceHydration ? null : AppState.allItemsEverSeen[entry.videoId];
+          const item = cached || await hydrateTikTokVideoDetail(entry.videoId, entry.authorId, {
+            refresh: true,
+            signal: AbortSignal.timeout(12000),
+            episodeNumber: checkpoint.kind === "episodes" ? entry.index + 1 : undefined,
+          });
+          if (!AppState.downloading.isDownloadingAll) break;
+          media = item && String(item.id) === entry.videoId ? buildVideoLinkMeta(item, entry.index) : null;
+          const hasSource = entry.isImage
+            ? /^https?:\/\//i.test(media?.imagePostImages?.[entry.imageIndex] || "")
+            : media?.videoSources?.some(source => !source.experimentalOnly && source.audioStatus === "muxed" && /^https?:\/\//i.test(source.url));
+          if (!media || media.isImage !== entry.isImage || !hasSource) {
+            const error = new Error("TikTok has not provided a downloadable source. Complete any verification in TikTok, then retry, skip, or stop.");
+            error.code = "ERR_RESUME_METADATA";
+            throw error;
+          }
+          AppState.allItemsEverSeen[entry.videoId] = item;
+          updateDownloadButtonLabel(mainBtn, `Resuming: ${completed} files saved`);
+          const saved = await downloadSingleMedia(media, {
+            imageIndex: entry.imageIndex || 0,
+            experimentalHd: entry.experimentalHd,
+            recoveryFilename: entry.filename,
+            recoveryResume: true,
+          });
+          if (saved) {
+            completed += 1;
+            if (!recordedPosts.has(entry.videoId)) {
+              recordedPosts.add(entry.videoId);
+              AppState.leaderboard.newlyConfirmedMedia.push(media);
+            }
+          }
+          resolved = true;
+        } catch (error) {
+          if (isStopBatchError(error)) {
+            stopActiveBatchDownload();
+            break;
+          }
+          if ([DOWNLOAD_ACTION_CODES.skipFile, DOWNLOAD_ACTION_CODES.manualSave].includes(error?.code)) {
+            entry.status = "skipped";
+            resolved = true;
+          } else {
+            AppState.downloading.pausedAll = true;
+            const action = await showDownloadFailureModal({
+              filename: entry.filename || `${entry.videoId}.${entry.isImage ? "jpg" : "mp4"}`,
+              url: null,
+              message: error.message,
+            });
+            AppState.downloading.pausedAll = false;
+            if (action === "retry-file") {
+              forceHydration = true;
+            } else if (action === "skip-file") {
+              entry.status = "skipped";
+              resolved = true;
+            } else {
+              stopActiveBatchDownload();
+              break;
+            }
+          }
+          downloadRecovery.persistPaused();
+        }
+      }
+      if (!AppState.downloading.isDownloadingAll) break;
+      processed += 1;
+    }
+    updateDownloadButtonLabel(mainBtn, AppState.downloading.isDownloadingAll
+      ? `Recovery finished: ${completed} files saved` : "Recovery stopped");
+    if (completed) updateAllTimeDownloadsAndLeaderBoard(AppState.displayedState.itemsHash);
+  } catch (error) {
+    console.warn("[Download] refresh-resume-paused", { operationId: checkpoint.id, error: error.message });
+    await showAlertModal(escapeHtml(error.message), "OK", () => {});
+  } finally {
+    AppState.downloading.isActive = false;
+    AppState.downloading.isDownloadingAll = false;
+    AppState.downloading.pausedAll = false;
+    AppState.downloading.batchType = null;
+    AppState.downloading.batchProgress = null;
+    updateDownloadButtonLabelSimple();
+    downloadRecovery.finish();
+    displayFoundUrls({ forced: true });
+  }
 }
 
 function escapeHtml(value) {
@@ -2425,12 +2782,14 @@ function escapeHtml(value) {
 }
 
 export function stopActiveBatchDownload() {
+  if (activeAccountBatch) { activeAccountBatch.stopped = true; activeAccountBatch.abort(); }
   AppState.downloadPreferences.autoScrollMode = "off";
   AppState.downloading.isActive = false;
   AppState.downloading.isDownloadingAll = false;
   AppState.downloading.pausedAll = false;
   AppState.downloading.batchType = null;
   AppState.downloading.activeBatchUrls = [];
+  AppState.downloading.batchProgress = null;
 
   if (
     AppState.scrapperDetails.isAutoBatchDownloading ||
@@ -2461,6 +2820,10 @@ export function stopActiveBatchDownload() {
 }
 
 export async function downloadAllPostImagesHandler(e, media) {
+  return runRecoveryOperation([media], { kind: "images" }, () => downloadAllPostImagesAttempt(e, media));
+}
+
+async function downloadAllPostImagesAttempt(e, media) {
   if (e) e.stopPropagation();
 
   const downloadAllBtn = e?.currentTarget;
@@ -2479,10 +2842,12 @@ export async function downloadAllPostImagesHandler(e, media) {
 
     AppState.downloading.isActive = true;
     AppState.downloading.isDownloadingAll = true;
+    updateBatchDownloadProgress({ batchTotal: media.imagePostImages.length, batchIndex: 1, settled: 0, unit: "photos", phase: "prepare", progress: null });
   }
 
   try {
     for (let i = 0; i < media.imagePostImages.length; i++) {
+      if (downloadAllBtn) updateBatchDownloadProgress({ batchIndex: i + 1, settled: i, phase: "prepare", progress: null });
       console.log(
         "DEBUG_DL_ALLA Inside loop images dl ",
         i,
@@ -2541,6 +2906,8 @@ export async function downloadAllPostImagesHandler(e, media) {
     if (downloadAllBtn) {
       AppState.downloading.isActive = false;
       AppState.downloading.isDownloadingAll = false;
+      AppState.downloading.batchProgress = null;
+      updateDownloadButtonLabelSimple();
       downloadAllBtn.textContent = "";
       const statusIcon = createIcon(stopRequested ? "pause" : "check", 16);
       statusIcon.style.marginRight = "4px";
@@ -2748,12 +3115,111 @@ async function downloadExperimentalGatewaySource(source, filename, onProgress) {
   }
 }
 
-export async function downloadSingleMedia(
+const fallbackVideoHydrations = new Map();
+
+async function recoverFailedVideoDownload(media, failedSource, attemptedUrls, filename, onProgress, error) {
+  if (media.isImage || !["ERR_BLOB_FETCH", "ERR_FETCH", "ERR_HTTP", "ERR_EMPTY_BLOB"].includes(error?.code)) {
+    return false;
+  }
+  const videoId = String(media.videoId || media.id || "");
+  if (!/^\d+$/.test(videoId)) return false;
+  const triedUrls = new Set(attemptedUrls);
+  const trySources = async (recovered, item, recoveryStage) => {
+    const candidates = (recovered?.videoSources || []).filter((source) =>
+      /^https?:\/\//i.test(source.url || "") &&
+      !source.experimentalOnly && source.audioStatus === "muxed" &&
+      !triedUrls.has(source.url),
+    ).slice(0, 3);
+    for (const source of candidates) {
+      triedUrls.add(source.url);
+      try {
+        await downloadURLToDisk(source.url, filename, {
+          allowFailureModal: false,
+          maxRetries: 1,
+          onProgress,
+        });
+      } catch (recoveryError) {
+        console.warn("[Download] fallback-fix-source-failed", {
+          videoId,
+          recoveryStage,
+          code: recoveryError?.code || null,
+        });
+        continue;
+      }
+      if (item) AppState.allItemsEverSeen[videoId] = item;
+      Object.assign(failedSource, source);
+      console.warn("[Download] fallback-fix-applied", {
+        videoId,
+        recoveryStage,
+        originalCode: error.code,
+        quality: source.qualityLabel,
+      });
+      return true;
+    }
+    return false;
+  };
+  const cachedItem = AppState.allItemsEverSeen[videoId];
+  const cachedMedia = AppState.allDirectLinks.find(
+    (candidate) => String(candidate.videoId) === videoId,
+  );
+  if (await trySources(cachedMedia, null, "cached")) return true;
+  if (cachedItem && await trySources(buildVideoLinkMeta(cachedItem, media.index), cachedItem, "cached")) return true;
+  const authorId = /^[\w.]+$/.test(media.authorId || "") ? media.authorId : "";
+  let hydration = fallbackVideoHydrations.get(videoId);
+  if (!hydration) {
+    hydration = hydrateTikTokVideoDetail(videoId, authorId, {
+      refresh: true,
+      signal: AbortSignal.timeout(12000),
+      episodeNumber: media.episodeNumber,
+    }).finally(() => fallbackVideoHydrations.delete(videoId));
+    fallbackVideoHydrations.set(videoId, hydration);
+  }
+  const item = await hydration;
+  if (String(item?.id || "") !== videoId) {
+    console.warn("[Download] fallback-fix-metadata-unavailable", { videoId });
+    return false;
+  }
+  const recovered = buildVideoLinkMeta(item, media.index);
+  if (await trySources(recovered, item, "hydrated")) return true;
+  console.warn("[Download] fallback-fix-unavailable", { videoId });
+  return false;
+}
+
+export async function downloadSingleMedia(media, options = {}) {
+  if (activeAccountBatch && activeAccountBatch.url !== window.location.href) {
+    stopActiveBatchDownload();
+    throw createDownloadActionError(DOWNLOAD_ACTION_CODES.stopBatch, "Account page changed; batch stopped.");
+  }
+  return runRecoveryOperation([media], {
+    single: true,
+    imageIndex: options.imageIndex,
+    experimentalHd: !!options.experimentalHd,
+  }, () => downloadRecovery.file(media, options, () => {
+    const progressContext = {
+      imageIndex: media.isImage ? options.imageIndex || 0 : null,
+      imageTotal: media.isImage ? media.imagePostImages?.length || 1 : null,
+    };
+    if (AppState.downloading.isDownloadingAll) {
+      updateBatchDownloadProgress({ ...progressContext, phase: "prepare", progress: null, loaded: null, total: null });
+    }
+    return downloadSingleMediaAttempt(media, {
+      ...options,
+      onProgress: (status) => {
+        options.onProgress?.(status);
+        if (AppState.downloading.isDownloadingAll) updateBatchDownloadProgress({ ...progressContext, ...status });
+      },
+    });
+  }));
+}
+
+async function downloadSingleMediaAttempt(
   media,
   {
     imageIndex = 0,
     experimentalHd = false,
     onProgress = null,
+    recoveryFilename = null,
+    recoveryResume = false,
   } = { imageIndex: 0 },
 ) {
   console.log("DEBUG_DL_ALLA ondownload received ", {
@@ -2762,7 +3228,7 @@ export async function downloadSingleMedia(
 
   // Check if we should skip this download (if skipDownloaded is enabled)
   // This ensures we don't download videos that already exist, even when called directly
-  const shouldSkipDownloaded = AppState.scrapperDetails.skipDownloaded;
+  const shouldSkipDownloaded = AppState.scrapperDetails.skipDownloaded && !recoveryResume;
   if (shouldSkipDownloaded) {
     try {
       const videoId = media.id || media.videoId;
@@ -2827,7 +3293,7 @@ export async function downloadSingleMedia(
     }
   }
 
-  let filename = getDownloadFilePath(media, {
+  let filename = recoveryFilename || getDownloadFilePath(media, {
     imageIndex,
     options: { quality: media.qualityLabel },
   });
@@ -2875,7 +3341,7 @@ export async function downloadSingleMedia(
     for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
       const source = sources[sourceIndex];
       const isLastSource = sourceIndex === sources.length - 1;
-      filename = getDownloadFilePath(media, {
+      filename = recoveryFilename || getDownloadFilePath(media, {
         imageIndex,
         options: {
           quality: media.isImage ? "SD" : source.qualityLabel,
@@ -2901,6 +3367,11 @@ export async function downloadSingleMedia(
             allowFailureModal: isLastSource,
             maxRetries: isLastSource ? 3 : 2,
             onProgress,
+            recoverAfterFailure: !media.isImage && isLastSource
+              ? (error) => recoverFailedVideoDownload(
+                  media, source, seenUrls, filename, onProgress, error,
+                )
+              : null,
           });
         }
 
@@ -3040,6 +3511,10 @@ async function prepareBatchMediaForDownload(media) {
 
 // Batch download function for scrapper
 export async function downloadBatch(items, batchNumber) {
+  return runRecoveryOperation(items, { kind: "scrapper" }, () => downloadBatchAttempt(items, batchNumber));
+}
+
+async function downloadBatchAttempt(items, batchNumber) {
   if (AppState.debug.active)
     console.log(
       `[Batch ${batchNumber}] Starting batch download of ${items.length} items`,
@@ -3048,6 +3523,7 @@ export async function downloadBatch(items, batchNumber) {
   AppState.downloading.isActive = true;
   AppState.downloading.isDownloadingAll = true;
   AppState.scrapperDetails.currentBatch = batchNumber;
+  updateBatchDownloadProgress({ batchTotal: items.length, batchIndex: 1, settled: 0, unit: "posts", phase: "prepare", progress: null });
 
   let newVideoDownloadedCount = 0;
   let hasImage = false;
@@ -3055,6 +3531,7 @@ export async function downloadBatch(items, batchNumber) {
 
   try {
     for (let i = 0; i < items.length; i++) {
+      updateBatchDownloadProgress({ batchIndex: i + 1, settled: i, phase: AppState.scrapperDetails.paused ? "paused" : "prepare", progress: null });
       if (!AppState.downloading.isDownloadingAll) {
         stoppedByUser = true;
         break;
@@ -3072,6 +3549,7 @@ export async function downloadBatch(items, batchNumber) {
 
       // Skip if saved in this session
       if (AppState.downloadedURLs.includes(media.url)) {
+        downloadRecovery.skip(media);
         console.log(
           `[Batch ${batchNumber}] Item ${i + 1} saved (session):`,
           media.videoId,
@@ -3145,6 +3623,8 @@ export async function downloadBatch(items, batchNumber) {
   } finally {
     AppState.downloading.isActive = false;
     AppState.downloading.isDownloadingAll = false;
+    AppState.downloading.batchProgress = null;
+    updateDownloadButtonLabelSimple();
   }
 }
 
@@ -3359,6 +3839,7 @@ function waitForBlobDownloadResponse(id, timeoutMs = 25000) {
 }
 window.__dl = downloadURLToDisk;
 export async function downloadURLToDisk(url, filename, options = {}) {
+  downloadRecovery.filename(filename);
   const maxRetries = Math.max(1, Number(options.maxRetries) || 3);
   let attempt = options.retryCount || 1;
   let activeUrl = url;
@@ -3404,6 +3885,7 @@ export async function downloadURLToDisk(url, filename, options = {}) {
 
     try {
       setActive(true);
+      options.onProgress?.({ phase: attempt > 1 ? "retry" : "fetch", progress: null, attempt, maxRetries });
       let resp;
       try {
         resp = await fetch(currentUrl, {
@@ -3494,6 +3976,7 @@ export async function downloadURLToDisk(url, filename, options = {}) {
         options.onProgress?.({ phase: "save", progress: 0 });
         // ask background to save to disk
         // When native download is enabled, force saveAs: false to prevent save dialog
+        downloadRecovery.saveStarted(requestId);
         postBlobDownloadRequest({
           id: requestId,
           blobUrl,
@@ -3502,6 +3985,7 @@ export async function downloadURLToDisk(url, filename, options = {}) {
         });
 
         const res = await waitForBlobDownloadResponse(requestId, 25000);
+        downloadRecovery.saveResponded(requestId, res);
 
         // always revoke, regardless of result
         try {
@@ -3615,6 +4099,18 @@ export async function downloadURLToDisk(url, filename, options = {}) {
         throw err;
       }
 
+      if (typeof options.recoverAfterFailure === "function") {
+        try {
+          options.onProgress?.({ phase: "fallback", progress: null });
+          if (await options.recoverAfterFailure(err)) return true;
+        } catch (recoveryError) {
+          console.warn("[Download] fallback-fix-failed", {
+            code: recoveryError?.code || null,
+            error: recoveryError?.message || String(recoveryError),
+          });
+        }
+      }
+
       // final failure path -> optional fallback
       if (AppState?.downloadPreferences?.skipFailedDownloads) {
         console.error(
@@ -3649,7 +4145,13 @@ export async function downloadURLToDisk(url, filename, options = {}) {
         url: currentUrl,
       });
 
+      if (nextAction === "retry-file") {
+        attempt = 1;
+        continue;
+      }
+
       if (nextAction === "refresh-page") {
+        stopActiveBatchDownload();
         try {
           window.location.reload();
         } catch {}
@@ -3855,12 +4357,18 @@ export function sendBasicBlobDownloadRequest(payload) {
 
 // Batch download
 export async function downloadAllLinks(mainBtn, options = {}) {
+  const links = options.links?.length ? options.links : AppState.allDirectLinks || [];
+  return runRecoveryOperation(links, { kind: options.batchType || "all" },
+    () => downloadAllLinksAttempt(mainBtn, options));
+}
+
+async function downloadAllLinksAttempt(mainBtn, options = {}) {
   if (AppState.debug.active)
     console.log("ettvdebugger: Starting batch download");
 
   // Check if this is a user-triggered download (not from scrapper auto-batch)
   const isUserTriggered = !AppState.scrapperDetails.isAutoBatchDownloading;
-  const batchType = options.batchType === "playlist" ? "playlist" : "all";
+  const batchType = ["playlist", "episodes", "collection"].includes(options.batchType) ? options.batchType : "all";
   const providedLinks = Array.isArray(options.links) ? options.links : [];
   const links = providedLinks.length
     ? providedLinks
@@ -3868,17 +4376,10 @@ export async function downloadAllLinks(mainBtn, options = {}) {
   const batchUrls = links
     .map((media) => (typeof media?.url === "string" ? media.url.trim() : ""))
     .filter(Boolean);
-  const getCompletedLinkCount = () => {
-    if (!batchUrls.length) {
-      return 0;
-    }
-
-    const downloadedUrlSet = new Set(AppState.downloadedURLs);
-    return batchUrls.reduce(
-      (count, url) => count + (downloadedUrlSet.has(url) ? 1 : 0),
-      0,
-    );
-  };
+  const completedLinks = new Set(links
+    .filter(media => AppState.downloadedURLs.includes(media.url))
+    .map(media => media.videoId || media.url));
+  const getCompletedLinkCount = () => completedLinks.size;
 
   AppState.downloading.isActive = true;
   AppState.downloading.isDownloadingAll = true;
@@ -3886,6 +4387,8 @@ export async function downloadAllLinks(mainBtn, options = {}) {
   AppState.downloading.batchType = batchType;
   AppState.downloading.activeBatchUrls = batchUrls;
   AppState.downloadPreferences.autoScrollMode = "off"; // Turn off scroll for now.
+  updateBatchDownloadProgress({ batchTotal: links.length, batchIndex: 1, settled: 0, unit: "posts", phase: "prepare", progress: null });
+  updateBatchDownloadProgress({ batchTotal: links.length, batchIndex: 1, settled: 0, unit: batchType === "episodes" ? "episodes" : "posts", phase: "prepare", progress: null });
 
   let newVideoDownloadedCount = 0;
   let hasImage = false;
@@ -3894,6 +4397,7 @@ export async function downloadAllLinks(mainBtn, options = {}) {
   try {
     console.log("DEBUG_DL_ALLA before loop ", links.length);
     for (let i = 0; i < links.length; i++) {
+      updateBatchDownloadProgress({ batchIndex: i + 1, settled: i, phase: AppState.downloading.pausedAll || AppState.scrapperDetails.paused ? "paused" : "prepare", progress: null });
       if (!AppState.downloading.isDownloadingAll) {
         stoppedByUser = true;
         updateDownloadButtonLabel(mainBtn, "Batch stopped");
@@ -3919,6 +4423,7 @@ export async function downloadAllLinks(mainBtn, options = {}) {
 
       // Skip if saved in this session
       if (AppState.downloadedURLs.includes(media.url)) {
+        downloadRecovery.skip(media);
         console.log(
           "DEBUG_DL_ALLA inside loop url saved for",
           media.videoId,
@@ -3943,6 +4448,7 @@ export async function downloadAllLinks(mainBtn, options = {}) {
         if (!didDownload) continue;
 
         AppState.downloadedURLs.push(media.url);
+        completedLinks.add(media.videoId || media.url);
 
         // Load confirmed downloaded urls
         AppState.leaderboard.newlyConfirmedMedia.push(media);
@@ -3986,6 +4492,8 @@ export async function downloadAllLinks(mainBtn, options = {}) {
     AppState.downloading.isActive = false;
     AppState.downloading.isDownloadingAll = false;
     AppState.downloading.pausedAll = false;
+    AppState.downloading.batchProgress = null;
+    updateDownloadButtonLabelSimple();
   }
 
   console.log("DEBUG_DL_ALLA exited loop 2 ", links.length);
@@ -3995,7 +4503,7 @@ export async function downloadAllLinks(mainBtn, options = {}) {
   if (stoppedByUser) {
     updateDownloadButtonLabel(
       mainBtn,
-      completedLinkCount
+      batchType === "collection" ? `Stopped collection after ${completedLinkCount} posts` : batchType === "episodes" ? `Stopped after ${completedLinkCount} episodes` : completedLinkCount
         ? batchType === "playlist"
           ? `Stopped playlist after ${completedLinkCount} download${
               completedLinkCount > 1 ? "s" : ""
@@ -4010,7 +4518,7 @@ export async function downloadAllLinks(mainBtn, options = {}) {
   } else if (!newVideoDownloadedCount && completedLinkCount > 0) {
     updateDownloadButtonLabel(
       mainBtn,
-      batchType === "playlist"
+      batchType === "collection" ? `Collection already downloaded (${completedLinkCount})` : batchType === "episodes" ? `Episodes already downloaded (${completedLinkCount})` : batchType === "playlist"
         ? `Playlist already downloaded (${completedLinkCount})`
         : `All ${completedLinkCount} Post${
             completedLinkCount > 1 ? "s" : ""
@@ -4019,14 +4527,14 @@ export async function downloadAllLinks(mainBtn, options = {}) {
   } else {
     updateDownloadButtonLabel(
       mainBtn,
-      batchType === "playlist"
+      batchType === "collection" ? `Downloaded collection (${completedLinkCount} posts)` : batchType === "episodes" ? `Downloaded ${completedLinkCount} episodes` : batchType === "playlist"
         ? `Downloaded playlist (${completedLinkCount})`
         : `Downloaded ${completedLinkCount} Posts!`,
     );
     if (AppState.downloadPreferences.includeCSV) {
       saveCSVFile(links);
     }
-    updateAllTimeDownloadsAndLeaderBoard(AppState.displayedState.itemsHash);
+    updateAllTimeDownloadsAndLeaderBoard(options.progressKey || AppState.displayedState.itemsHash);
     if (
       AppState.scrapperDetails.scrappingStage != "downloading" &&
       newVideoDownloadedCount &&
@@ -4047,10 +4555,16 @@ export async function downloadAllLinks(mainBtn, options = {}) {
   AppState.downloading.pausedAll = false;
   AppState.downloading.batchType = null;
   AppState.downloading.activeBatchUrls = [];
-  const showRateDonateOn = !stoppedByUser && shouldShowRateDonatePopup();
+  const showRateDonateOn = !stoppedByUser &&
+    rateDonatePopupTimer === null && shouldShowRateDonatePopup();
   if (showRateDonateOn) {
-    setTimeout(() => {
-      showMorpheusRateUsPage();
+    rateDonatePopupTimer = setTimeout(() => {
+      rateDonatePopupTimer = null;
+      if (
+        !AppState.downloading.isActive &&
+        !AppState.downloading.isDownloadingAll &&
+        shouldShowRateDonatePopup()
+      ) showMorpheusRateUsPage();
     }, 10_000);
   }
   showStatsSpan();
@@ -4065,6 +4579,7 @@ export async function downloadAllLinks(mainBtn, options = {}) {
     if (!showRateDonateOn)
       showCelebration("downloads", showRandomScraperDone());
   }
+  return { stopped: stoppedByUser };
 }
 
 export function getSavedTemplates() {
@@ -4717,25 +5232,81 @@ function getConfetti() {
   return _etvdConfetti;
 }
 
+const CELEBRATION_COOLDOWN_MS = 30_000;
+let lastMessageAt = -Infinity;
+let lastMessage = null;
+let lastConfettiAt = -Infinity;
+let rateDonatePopupTimer = null;
+let lastAutomaticPopupAt = 0;
+
+export function canShowAutomaticPopup() {
+  if (
+    !isExtensionEnabledSync() ||
+    document.hidden ||
+    AppState.ui.isRatePopupOpen ||
+    AppState.downloading.isActive ||
+    AppState.downloading.isDownloadingAll ||
+    document.querySelector(".ettpd-modal-overlay")
+  ) return false;
+  let lastShown = lastAutomaticPopupAt;
+  try {
+    lastShown = Math.max(
+      lastShown,
+      Number(localStorage.getItem(STORAGE_KEYS.LAST_AUTOMATIC_POPUP_AT)) || 0,
+    );
+  } catch {}
+  return !lastShown || Date.now() - lastShown >= 86_400_000;
+}
+
+export function claimAutomaticPopup() {
+  if (!canShowAutomaticPopup()) return false;
+  lastAutomaticPopupAt = Date.now();
+  try {
+    localStorage.setItem(
+      STORAGE_KEYS.LAST_AUTOMATIC_POPUP_AT,
+      String(lastAutomaticPopupAt),
+    );
+  } catch {}
+  return true;
+}
+
 export function makeOverlay(message) {
-  if (!message) return null;
+  const now = Date.now();
+  if (
+    !message ||
+    !AppState.downloadPreferences.showDownloadMessages ||
+    document.hidden ||
+    document.querySelector(".ettpd-modal-overlay, .ettpd-celebration-overlay") ||
+    now - lastMessageAt < CELEBRATION_COOLDOWN_MS ||
+    (message === lastMessage && now - lastMessageAt < 300_000)
+  ) return null;
+  lastMessageAt = now;
+  lastMessage = message;
   const overlay = document.createElement("div");
   overlay.className = "ettpd-celebration-overlay";
   overlay.textContent = message;
   document.body.appendChild(overlay);
+  setTimeout(() => overlay.remove(), 4000);
   return overlay;
 }
 
 // ---- your API ----
 export function showCelebration(type = "tier", message, count = 10) {
-  if (AppState.downloadPreferences.disableConfetti) return;
-  const conf = getConfetti();
-  if (!conf) return; // library not loaded
+  const reducedMotion = window.matchMedia?.(
+    "(prefers-reduced-motion: reduce)",
+  )?.matches;
+  const now = Date.now();
+  const conf = AppState.downloadPreferences.disableConfetti || reducedMotion ||
+    document.hidden || document.querySelector(".ettpd-modal-overlay") ||
+    now - lastConfettiAt < CELEBRATION_COOLDOWN_MS
+    ? null
+    : getConfetti();
+  if (conf) lastConfettiAt = now;
 
-  // Respect reduced motion (optional)
-  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-    const o = makeOverlay(message || "🎉");
-    setTimeout(() => o?.remove(), 2500);
+  if (!conf) {
+    makeOverlay(
+      message || (type === "tier" ? "🎉 You’ve unlocked a new tier!" : null),
+    );
     return;
   }
 
@@ -4804,7 +5375,6 @@ export function showCelebration(type = "tier", message, count = 10) {
     setTimeout(shoot, 0);
     setTimeout(shoot, 100);
     setTimeout(shoot, 200);
-    if (overlay) setTimeout(() => overlay.remove(), 10000);
   } else if (type === "mindblown") {
     const duration = 4000;
     const animationEnd = Date.now() + duration;
@@ -4869,15 +5439,15 @@ export function showRandomScraperDone() {
 }
 
 function shouldShowRateDonatePopup() {
+  if (hasSupportCooldown(AppState.rateDonate.lastDonatedAt, AppState.rateDonate.lastSupportedAt)) return false;
+  if (activeAccountBatch) return false;
+  if (!canShowAutomaticPopup()) return false;
   if (AppState.ui.isRatePopupOpen) return false;
   // If nothing was downloaded this week. The downloader must be broken, no, don't even try suggesting they rate us.
   if (!AppState.leaderboard.newlyConfirmedMedia.length) return false;
   const now = Date.now();
   const { lastRatedAt, lastDonatedAt, lastShownAt, shownCount } =
     AppState.rateDonate;
-
-  // 1. Never shown before → show immediately
-  if (!lastShownAt) return true;
 
   // 2. Skip if rated in the last 90 days
   const ratedCooldownMs = 90 * 24 * 60 * 60 * 1000;
@@ -4890,6 +5460,8 @@ function shouldShowRateDonatePopup() {
   if (lastDonatedAt && now - lastDonatedAt < donatedCooldownMs) {
     return false;
   }
+
+  if (!lastShownAt) return true;
 
   // 4. Determine base cooldown by how many times it's been shown (dismissed)
   const cooldownDays = (() => {
@@ -5014,7 +5586,7 @@ export async function getTabSpans(timeoutMs = 5000, intervalMs = 100) {
 
   // 1) Try immediate
   let first = immediateScan();
-  if (hasAny(first)) return first;
+  if (hasAny(first) || timeoutMs <= 0) return first;
 
   // 2) Two frames wait
   await new Promise((r) =>
@@ -5397,7 +5969,8 @@ export function showAlertModal(message, actionText = "OK", onAction = null) {
   });
 }
 
-function showDownloadFailureModal({ filename, url }) {
+function showDownloadFailureModal({ filename, url, message = null }) {
+  updateBatchDownloadProgress({ phase: "waiting", progress: null });
   const fileLabel = escapeHtml(filename.split("/").pop() || "Unknown");
   const discordUrl = "https://discord.gg/KpT7xdUUbM";
   const isBlobUrl = typeof url === "string" && /^blob:/i.test(url);
@@ -5413,8 +5986,10 @@ function showDownloadFailureModal({ filename, url }) {
       content,
       `⚠️ <b>Download failed.</b><br><br>` +
         `We couldn't save <b>${fileLabel}</b> automatically.<br><br>` +
-        `This often happens with <b>private</b> or <b>Only Me</b> posts, or when TikTok makes breaking changes.<br><br>` +
-        `Try a refresh first. If that does not fix it, report the issue on Discord using the button below.<br><br>` +
+        `${escapeHtml(message || "The video download source is unavailable, or the browser could not save the file.")}<br><br>` +
+        `${downloadRecovery.operation?.refreshCount === 1
+          ? "This operation has already refreshed once. It will not refresh again. Retry after any required TikTok verification, skip this file, or stop."
+          : "Retry the download, or refresh and resume the remaining queue when available."}<br><br>` +
         `Choose what to do next:`,
     );
 
@@ -5423,6 +5998,7 @@ function showDownloadFailureModal({ filename, url }) {
 
     let overlay = null;
     let settled = false;
+    let checkingRefresh = false;
     const finish = (result) => {
       if (settled) return;
       settled = true;
@@ -5440,8 +6016,37 @@ function showDownloadFailureModal({ filename, url }) {
 
     const refreshBtn = document.createElement("button");
     refreshBtn.className = "ettpd-modal-button primary";
-    refreshBtn.textContent = "Refresh Page";
-    refreshBtn.onclick = () => finish("refresh-page");
+    refreshBtn.textContent = "Refresh and resume";
+    const refreshStatus = document.createElement("p");
+    refreshStatus.setAttribute("role", "status");
+    refreshBtn.onclick = async () => {
+      if (checkingRefresh || settled) return;
+      checkingRefresh = true;
+      refreshBtn.disabled = true;
+      refreshStatus.textContent = "Checking saved files...";
+      try {
+        await downloadRecovery.prepareRefresh(
+          getDownloadStatuses,
+          AppState.downloading.pausedAll || AppState.scrapperDetails.paused,
+          () => settled,
+        );
+        console.warn("[Download] refresh-resume-checkpoint-saved", {
+          operationId: downloadRecovery.operation.id,
+          refreshCount: downloadRecovery.operation.refreshCount,
+        });
+        finish("refresh-page");
+      } catch (error) {
+        refreshStatus.textContent = error.message;
+        refreshBtn.disabled = false;
+      } finally {
+        checkingRefresh = false;
+      }
+    };
+
+    const retryBtn = document.createElement("button");
+    retryBtn.className = "ettpd-modal-button primary";
+    retryBtn.textContent = "Retry Download";
+    retryBtn.onclick = () => finish("retry-file");
 
     const discordBtn = document.createElement("a");
     discordBtn.className = "ettpd-modal-button discord";
@@ -5463,13 +6068,14 @@ function showDownloadFailureModal({ filename, url }) {
     if (canOfferManualSave) {
       actionsContainer.appendChild(manualSaveBtn);
     }
-    actionsContainer.appendChild(refreshBtn);
+    actionsContainer.appendChild(retryBtn);
+    if (downloadRecovery.canRefresh()) actionsContainer.appendChild(refreshBtn);
     actionsContainer.appendChild(discordBtn);
     actionsContainer.appendChild(skipBtn);
     actionsContainer.appendChild(stopBtn);
 
     overlay = createModal({
-      children: [content, actionsContainer],
+      children: [content, actionsContainer, refreshStatus],
       onClose: () => finish(closeResult),
     });
   });
@@ -5507,16 +6113,106 @@ export function detectBrowserType() {
   return "unknown";
 }
 
-/**
- * Show browser compatibility alert modal with "Never show again" option
- * Only shows for non-Chrome browsers and if not previously dismissed
- */
+export function showDownloadMessagesNotice() {
+  if (AppState.ui.hasSeenDownloadMessagesNotice) return false;
+
+  const markSeen = () => {
+    AppState.ui.hasSeenDownloadMessagesNotice = true;
+    localStorage.setItem(STORAGE_KEYS.DOWNLOAD_MESSAGES_NOTICE_SEEN, "true");
+  };
+  const isExistingUser =
+    AppState.leaderboard.allTimeDownloadsCount > 0 ||
+    AppState.leaderboard.weekDownloadsData?.count > 0 ||
+    AppState.recommendationsLeaderboard.allTimeRecommendationsCount > 0 ||
+    AppState.currentTierProgress.downloads > 0 ||
+    AppState.currentTierProgress.recommendations > 0 ||
+    AppState.scrapperDetails.downloadedInBatches > 0;
+
+  if (!isExistingUser) {
+    markSeen();
+    return false;
+  }
+  if (!claimAutomaticPopup()) return false;
+
+  const content = document.createElement("div");
+  content.style.padding = "20px";
+  content.style.boxSizing = "border-box";
+  content.style.width = "100%";
+  content.style.maxWidth = "500px";
+
+  const title = document.createElement("h3");
+  title.textContent = "Download jokes are now optional";
+  title.style.margin = "0 0 16px";
+  title.style.fontSize = "1.2em";
+  const description = document.createElement("p");
+  description.textContent = 'The random jokes after a download are now off by default. Turn "Funny download messages" back on anytime in Settings. Confetti has its own switch.';
+  description.style.lineHeight = "1.6";
+  const example = document.createElement("p");
+  example.textContent = 'For example: "Saved. Your Downloads folder has accepted another side quest."';
+  example.style.fontSize = "0.9em";
+  example.style.lineHeight = "1.5";
+  content.append(title, description, example);
+
+  const createPreference = (labelText, checked) => {
+    const label = document.createElement("label");
+    label.className = "ettpd-checkbox-container";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = checked;
+    const text = document.createElement("span");
+    text.textContent = labelText;
+    label.append(checkbox, text);
+    content.appendChild(label);
+    return checkbox;
+  };
+  const messagesCheckbox = createPreference(
+    "Funny download messages",
+    AppState.downloadPreferences.showDownloadMessages,
+  );
+  const confettiCheckbox = createPreference(
+    "Confetti",
+    !AppState.downloadPreferences.disableConfetti,
+  );
+
+  const saveButton = document.createElement("button");
+  saveButton.className = "ettpd-action-btn";
+  saveButton.textContent = "Save preferences";
+  saveButton.style.marginTop = "20px";
+  saveButton.addEventListener("click", () => {
+    AppState.downloadPreferences.showDownloadMessages = messagesCheckbox.checked;
+    AppState.downloadPreferences.disableConfetti = !confettiCheckbox.checked;
+    localStorage.setItem(
+      STORAGE_KEYS.SHOW_DOWNLOAD_MESSAGES,
+      String(messagesCheckbox.checked),
+    );
+    localStorage.setItem(
+      STORAGE_KEYS.DISABLE_CELEBRATION_CONFETTI,
+      String(!confettiCheckbox.checked),
+    );
+    markSeen();
+    modal.remove();
+    displayFoundUrls({ forced: true });
+  });
+  content.appendChild(saveButton);
+
+  const modal = createModal({ children: [content], onClose: markSeen });
+  modal.style.boxSizing = "border-box";
+  const modalBox = modal.querySelector(".ettpd-modal-box");
+  modalBox.style.boxSizing = "border-box";
+  modalBox.style.maxWidth = "calc(100vw - 64px)";
+  markSeen();
+  return true;
+}
+
 export function showBrowserCompatibilityAlert() {
+  const browserType = detectBrowserType();
+  const dismissalKey = browserType === "brave"
+    ? `${STORAGE_KEYS.BROWSER_COMPAT_ALERT_DISMISSED}::brave-download-setup-v1`
+    : STORAGE_KEYS.BROWSER_COMPAT_ALERT_DISMISSED;
+
   // Check if already dismissed
   try {
-    const dismissed = localStorage.getItem(
-      STORAGE_KEYS.BROWSER_COMPAT_ALERT_DISMISSED,
-    );
+    const dismissed = localStorage.getItem(dismissalKey);
     if (dismissed === "true") {
       return; // User has dismissed this alert
     }
@@ -5524,26 +6220,29 @@ export function showBrowserCompatibilityAlert() {
     console.warn("Failed to check browser compat alert dismissal:", e);
   }
 
-  // Detect browser type
-  const browserType = detectBrowserType();
-
   // Only show for non-Chrome browsers
   if (browserType === "chrome") {
     return;
   }
+  if (!claimAutomaticPopup()) return;
 
   // Build message based on browser type
   let title = "Browser Compatibility";
   let message = "";
 
   if (browserType === "brave") {
+    title = "Set up Brave downloads";
     message = `
       <div style="margin-bottom: 16px;">
         <p style="margin-bottom: 12px; line-height: 1.6;">
-          Optimized for Chrome. Due to a Brave browser limitation, you may be prompted to manually save every video.
+          To save videos without a Save As dialog for every file:
         </p>
-        <p style="line-height: 1.6;">
-          For a faster, automated experience, we recommend using Chrome while we work on a solution.
+        <ol style="padding-left: 20px; line-height: 1.6;">
+          <li>Open Brave's download settings.</li>
+          <li>Turn off <strong>Ask where to save each file before downloading</strong>.</li>
+        </ol>
+        <p style="margin-top: 12px; line-height: 1.6;">
+          Files will save to the Location shown there. This setting applies to all downloads in this Brave profile.
         </p>
       </div>
     `;
@@ -5564,6 +6263,8 @@ export function showBrowserCompatibilityAlert() {
   const contentDiv = document.createElement("div");
   contentDiv.style.padding = "20px";
   contentDiv.style.maxWidth = "500px";
+  contentDiv.style.boxSizing = "border-box";
+  contentDiv.style.width = "min(500px, calc(100vw - 80px))";
 
   // Title
   const titleEl = document.createElement("h3");
@@ -5577,6 +6278,18 @@ export function showBrowserCompatibilityAlert() {
   const messageEl = document.createElement("div");
   replaceElementHtml(messageEl, message);
   contentDiv.appendChild(messageEl);
+
+  if (browserType === "brave") {
+    const settingsAddress = document.createElement("input");
+    settingsAddress.type = "text";
+    settingsAddress.readOnly = true;
+    settingsAddress.value = "brave://settings/downloads";
+    settingsAddress.setAttribute("aria-label", "Brave download settings address");
+    settingsAddress.style.width = "100%";
+    settingsAddress.style.boxSizing = "border-box";
+    settingsAddress.addEventListener("click", () => settingsAddress.select());
+    contentDiv.appendChild(settingsAddress);
+  }
 
   // Checkbox container
   const checkboxContainer = document.createElement("div");
@@ -5606,20 +6319,58 @@ export function showBrowserCompatibilityAlert() {
   buttonContainer.style.display = "flex";
   buttonContainer.style.justifyContent = "flex-end";
   buttonContainer.style.gap = "10px";
+  buttonContainer.style.flexWrap = "wrap";
+
+  if (browserType === "brave") {
+    const settingsBtn = document.createElement("button");
+    settingsBtn.className = "ettpd-action-btn";
+    settingsBtn.textContent = "Open download settings";
+    settingsBtn.style.padding = "8px 16px";
+    const settingsStatus = document.createElement("p");
+    settingsStatus.setAttribute("role", "status");
+    contentDiv.appendChild(settingsStatus);
+
+    settingsBtn.addEventListener("click", () => {
+      const requestId = uuid();
+      settingsBtn.disabled = true;
+      settingsStatus.textContent = "";
+      const finish = (success) => {
+        clearTimeout(timeoutId);
+        window.removeEventListener("message", onResponse);
+        settingsBtn.disabled = false;
+        settingsStatus.textContent = success
+          ? "Download settings opened in a new tab."
+          : "Copy the address above into Brave's address bar to open download settings.";
+      };
+      const onResponse = (event) => {
+        if (
+          event.source === window &&
+          event.data?.type === "BRAVE_DOWNLOAD_SETTINGS_RESPONSE" &&
+          event.data.id === requestId
+        ) {
+          finish(event.data.success === true);
+        }
+      };
+      const timeoutId = setTimeout(() => finish(false), 5000);
+      window.addEventListener("message", onResponse);
+      window.postMessage(
+        { type: "BRAVE_DOWNLOAD_SETTINGS_REQUEST", id: requestId },
+        window.location.origin,
+      );
+    });
+    buttonContainer.appendChild(settingsBtn);
+  }
 
   const okBtn = document.createElement("button");
   okBtn.className = "ettpd-action-btn";
-  okBtn.textContent = "OK, I understand";
+  okBtn.textContent = browserType === "brave" ? "Done" : "OK, I understand";
   okBtn.style.padding = "8px 16px";
 
   okBtn.addEventListener("click", () => {
     // Save dismissal preference if checkbox is checked
     if (checkbox.checked) {
       try {
-        localStorage.setItem(
-          STORAGE_KEYS.BROWSER_COMPAT_ALERT_DISMISSED,
-          "true",
-        );
+        localStorage.setItem(dismissalKey, "true");
       } catch (e) {
         console.warn("Failed to save browser compat alert dismissal:", e);
       }
@@ -6123,6 +6874,7 @@ export function getClosestPlayingVideoId() {
 }
 
 export function shouldShowRatePopupLegacy() {
+  if (hasSupportCooldown(AppState.rateDonate.lastDonatedAt, AppState.rateDonate.lastSupportedAt)) return false;
   const { lastRatedAt, lastShownAt } = AppState.userMeta || {};
   const { leaderboard } = AppState;
 
