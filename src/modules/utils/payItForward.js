@@ -1,3 +1,5 @@
+import { bindText } from "../i18n/index.js";
+
 const SUPPORT_CLICK_KEY = "tik.tok::lastSupportedAt";
 
 export function hasSupportCooldown(lastDonatedAt = 0, lastSupportedAt = 0) {
@@ -46,21 +48,21 @@ export function showPayItForwardDialog({ dark = false } = {}) {
   });
   const title = document.createElement("h2");
   title.id = "ettpd-pay-it-forward-title";
-  title.textContent = "Pass a little kindness on";
+  bindText(title, "kindnessTitle");
   Object.assign(title.style, { fontSize: "20px", lineHeight: "1.3", margin: "0 0 16px" });
   const message = document.createElement("div");
   message.id = "ettpd-pay-it-forward-message";
   const introduction = document.createElement("p");
-  introduction.textContent = "I'm doing well, and I'm grateful this little tool is useful to you. No tip needed.";
+  bindText(introduction, "kindnessIntro");
   const invitation = document.createElement("p");
-  invitation.textContent = "If you'd like to say thanks, pass it forward: help someone out, buy a friend a coffee, or support a cause close to your heart. Small kindnesses count.";
+  bindText(invitation, "kindnessInvitation");
   for (const paragraph of [introduction, invitation]) {
     Object.assign(paragraph.style, { fontSize: "14px", lineHeight: "1.6", margin: "0 0 14px" });
     message.appendChild(paragraph);
   }
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = "Sounds lovely";
+  bindText(button, "kindnessAccept");
   Object.assign(button.style, {
     padding: "9px 14px", borderRadius: "6px", border: "1px solid #54ddcc",
     background: "#54ddcc", color: "#102124", font: "inherit", fontSize: "14px",

@@ -57,6 +57,7 @@ export class DownloadRecovery {
     const key = this.key(media, options.imageIndex || 0);
     const entry = operation?.queue.find(candidate => candidate.key === key);
     if (entry?.status === "complete" || entry?.status === "skipped") return false;
+    if (entry) entry.lastFailure = false;
     this.runningFiles += 1;
     if (operation && (!entry || this.runningFiles > 1)) operation.unsafe = true;
     this.currentKey = key;
@@ -66,6 +67,9 @@ export class DownloadRecovery {
       return result;
     } catch (error) {
       if (entry && ["ERR_SKIP_FILE", "ERR_FALLBACK_MANUAL"].includes(error?.code)) entry.status = "skipped";
+      else if (entry && error?.name !== "AbortError" && error?.code !== "ERR_STOP_BATCH") {
+        entry.lastFailure = ![...this.saves.values()].some(save => save.key === key);
+      }
       throw error;
     } finally {
       this.runningFiles -= 1;

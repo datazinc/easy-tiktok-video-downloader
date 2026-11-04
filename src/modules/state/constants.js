@@ -71,6 +71,7 @@ export const DOWNLOAD_FOLDER_DEFAULT_PLACEHOLDER =
 export const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS = [
   {
     label: "🟢 Recommended (@folder, all core info)",
+    messageKey: "presetRecommended",
     template:
       "@/@{authorUsername|:profile:}/{tabName}/{ad}-{authorUsername|no-author}-{createTime|-}-{sequenceNumber}-{desc:100|-}-{videoId:-4|no-id}-{quality|SD}.mp4",
     example:
@@ -80,34 +81,40 @@ export const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS = [
   },
   {
     label: "📁 Video Flat by Author",
+    messageKey: "presetAuthor",
     template: "videos/{authorUsername|unknown}/{videoId|no-id}.mp4",
     example: "videos/coolguy/739462775.mp4",
   },
   {
     label: "🖼️ Image Series (force numbered)",
+    messageKey: "presetImages",
     template:
       "images/{authorUsername|unknown}/{videoId|no-id}-{sequenceNumber|required}.jpeg",
     example: "images/coolguy/739462775-1.jpeg",
   },
   {
     label: "🧠 Descriptive (limit desc)",
+    messageKey: "presetDescription",
     template:
       "desc_clips/{authorUsername|unknown}/{desc:255|no-desc}-{videoId|no-id}.mp4",
     example: "desc_clips/coolguy/My-best-clip-ever-739462775.mp4",
   },
   {
     label: "📢 Hashtags Folder (Weird ahh)",
+    messageKey: "presetHashtags",
     template: "hashtags/{hashtags|no-tags}/{videoId|no-id}.mp4",
     example: "hashtags/#fun#relax/739462775.mp4",
   },
   {
     label: "🎶 Music by Artist",
+    messageKey: "presetMusic",
     template:
       "music/{musicAuthor|unknown}/{authorUsername|no-author}-{videoId|no-id}.mp4",
     example: "music/DJFlow/coolguy-739462775.mp4",
   },
   {
     label: "🎛️ Creative Combo",
+    messageKey: "presetMix",
     template:
       "mix/{musicTitle|untitled}/{authorUsername|unknown}-{desc:20|no-desc}-{sequenceNumber}-{videoId|no-id}.mp4",
     example: "mix/Chill-Vibes/coolguy-Fun-tiktok-clip-1-739462775.mp4",
@@ -115,6 +122,7 @@ export const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS = [
   {
     isDefault: true,
     label: "📦 Legacy Flat Format",
+    messageKey: "presetLegacy",
     template:
       "{ad}-@{authorUsername|user}-{tabName}-{createTime|-}-{desc|-}-{videoId|no-id}-{sequenceNumber}.mp4",
     example:

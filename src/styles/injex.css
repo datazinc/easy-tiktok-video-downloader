@@ -1113,6 +1113,16 @@ label[for="ettpd-current-profile"] {
 .ettpd-account-batch-size { display: block; margin: 16px 0; font-size: 13px; }
 .ettpd-account-batch-size input { display: block; box-sizing: border-box; max-width: 100%; width: 120px; margin-top: 6px; padding: 8px; border: 1px solid currentColor; border-radius: 4px; background: transparent; color: inherit; }
 .ettpd-episode-dialog [hidden] { display: none !important; }
+.ettpd-account-download-dialog .ettpd-account-download-form > .ettpd-action-btn,
+.ettpd-account-download-dialog > .ettpd-action-btn.secondary { box-sizing: border-box; width: 100%; margin: 8px 0 0; }
+.ettpd-account-download-form details { margin: 12px 0; }
+.ettpd-account-download-form summary { cursor: pointer; }
+.ettpd-resume-summary { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 8px 16px; padding: 12px 0; border-block: 1px solid var(--ettpd-border-color); }
+.ettpd-resume-summary dt, .ettpd-resume-summary dd { margin: 0; overflow-wrap: anywhere; }
+.ettpd-resume-summary dd { text-align: end; font-variant-numeric: tabular-nums; }
+.ettpd-resume-summary .ettpd-summary-unknown { grid-column: 1 / -1; text-align: start; }
+.ettpd-limit-hint { font-size: 12px; }
+.ettpd-language-button { flex: 0 0 auto; }
 
 .ettpd-collection-download {
   display: inline-flex;
@@ -1452,6 +1462,7 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-modal-overlay {
+  box-sizing: border-box;
   position: fixed;
   top: 0;
   left: 0;
@@ -1478,11 +1489,42 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-modal-box-container {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 12px;
   position: relative;
+}
+
+dialog.ettpd-language-dialog {
+  margin: 0;
+  inset: 0;
+  border: 0;
+  max-width: none;
+  max-height: none;
+  font-size: 14px;
+}
+
+dialog.ettpd-language-dialog:not([open]) {
+  display: none;
+}
+
+dialog.ettpd-language-dialog::backdrop {
+  background: transparent;
+}
+
+.ettpd-language-dialog .ettpd-modal-title {
+  margin-top: 0;
+  letter-spacing: 0;
+}
+
+.ettpd-language-dialog .ettpd-select {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
 }
 .layout {
   /* Make it scrollable if content overflows */
@@ -1514,6 +1556,8 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-modal-box {
+  box-sizing: border-box;
+  min-width: 0;
   position: relative;
   background: linear-gradient(
     160deg,
@@ -1525,9 +1569,11 @@ label[for="ettpd-current-profile"] {
   box-shadow: 0 24px 68px var(--ettpd-shadow);
   text-align: center;
   width: 440px;
-  max-width: 85vw;
+  max-width: 100%;
   max-height: 80vh;
   overflow-y: auto;
+  overflow-wrap: anywhere;
+  white-space: normal;
   font-family:
     "Inter",
     "SF Pro Text",
@@ -1555,6 +1601,13 @@ label[for="ettpd-current-profile"] {
       transparent 30%
     );
   pointer-events: none;
+}
+
+.ettpd-modal-box button {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ettpd-modal-title {
@@ -3411,6 +3464,7 @@ label[for="ettpd-current-profile"] {
 }
 
 .ettpd-action-btn.secondary {
+  box-shadow: none;
   background: var(--ettpd-bg-tertiary);
   color: var(--ettpd-text-primary);
   border-color: var(--ettpd-border-color);

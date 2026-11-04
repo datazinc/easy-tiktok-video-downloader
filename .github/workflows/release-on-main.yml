@@ -36,6 +36,9 @@ jobs:
       - name: Verify download regressions
         run: npm run verify:recovery
 
+      - name: Verify localization and resume summaries
+        run: npm run verify:localization
+
       - name: Compute release metadata
         id: metadata
         run: |

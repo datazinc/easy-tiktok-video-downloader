@@ -1,3 +1,4 @@
+import { t, bindText } from "../i18n/index.js";
 import {
   handleFoundItems,
   isVisitedItemBetterOrNew,
@@ -137,10 +138,8 @@ function checkScrapperPathChange() {
 
     // Show notification to user
     showToast(
-      "Scrapping Abandoned",
-      `You navigated away from the original target (${
-        details.originalUsername || details.originalPath
-      }). Auto-scrolling and automatic downloads have been stopped. You can manually download items if needed.`,
+      t("stop"),
+      t("navigationStopped", { target: details.originalUsername || details.originalPath }),
     );
 
     // Refresh scrapper controls to show the new state
@@ -754,33 +753,30 @@ function showScrapperCompletionModal() {
 
   const badge = document.createElement("div");
   badge.className = "ettpd-completion-badge";
-  badge.textContent = "Auto-scroll";
+  bindText(badge, "autoScroll");
 
   const title = document.createElement("h3");
   title.className = "ettpd-completion-title";
-  title.textContent = "Scraping finished";
+  bindText(title, "scanFinished");
 
   const message = document.createElement("p");
   message.className = "ettpd-completion-message";
-  message.textContent =
-    "We downloaded everything we could find. Want us to keep exploring in case TikTok loads more posts?";
+  bindText(message, "scanContinueHint");
 
   const tip = document.createElement("div");
   tip.className = "ettpd-completion-tip";
   const tipLead = document.createElement("strong");
-  tipLead.textContent = "Pro tip:";
+  bindText(tipLead, "info");
   tip.appendChild(tipLead);
-  tip.appendChild(
-    document.createTextNode(
-      " Scroll a bit manually to nudge TikTok to load extra items, then hit continue to sweep them up.",
-    ),
-  );
+  const tipText = document.createElement("span");
+  bindText(tipText, "scanProfileRequired");
+  tip.appendChild(tipText);
 
   const actions = document.createElement("div");
   actions.className = "ettpd-modal-actions";
 
   const continueBtn = document.createElement("button");
-  continueBtn.textContent = "Continue & rescan";
+  bindText(continueBtn, "continue");
   continueBtn.className = "ettpd-modal-button primary";
 
   const resumeAndClose = () => {
@@ -812,7 +808,7 @@ function showScrapperCompletionModal() {
 
   // Add CSV download button
   const csvBtn = document.createElement("button");
-  setButtonWithIcon(csvBtn, "Download CSV", "download");
+  setButtonWithIcon(csvBtn, t("downloadCsv"), "download");
   csvBtn.className = "ettpd-modal-button secondary";
 
   csvBtn.onclick = () => {
@@ -824,8 +820,8 @@ function showScrapperCompletionModal() {
 
     if (downloadedItems.length === 0) {
       showToast(
-        "No items to export",
-        "No downloaded items found to export to CSV.",
+        t("exportEmpty"),
+        t("exportEmpty"),
       );
       return;
     }
@@ -835,14 +831,14 @@ function showScrapperCompletionModal() {
 
     // Show success message
     showToast(
-      "CSV Export Started",
-      `Exporting ${downloadedItems.length} downloaded items to CSV file.`,
+      t("downloadCsv"),
+      t("itemsCount", { count: downloadedItems.length }),
     );
   };
 
   // Add "End Scrapping" button
   const endBtn = document.createElement("button");
-  endBtn.textContent = "End Scrapping";
+  bindText(endBtn, "stop");
   endBtn.className = "ettpd-modal-button secondary";
 
   const endAndClose = () => {
@@ -981,7 +977,7 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
           );
 
           showToast(
-            "Tab not found",
+            t("notAvailable"),
             missingTabName +
               ". Please ensure the tab is visible on the page and try again.",
           );
@@ -1031,10 +1027,10 @@ export function startAutoSwipeLoop(minInterval = 4000, maxInterval = 8000) {
     // Update countdown every second
     AppState.ui.autoSwipeConfigurations.countdownInterval = setInterval(() => {
       if (AppState.downloadPreferences.autoScrollMode != "always") return;
-      timerText.textContent = `Next Auto Scroll in ${Math.max(
+      bindText(timerText, "nextIn", { count: Math.max(
         0,
         AppState.ui.autoSwipeConfigurations.remainingTime--,
-      )}s`;
+      ) });
       if (AppState.ui.autoSwipeConfigurations.remainingTime < 0)
         clearInterval(AppState.ui.autoSwipeConfigurations.countdownInterval);
     }, 1000);
