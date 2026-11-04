@@ -16,6 +16,8 @@ const helpers = ui.slice(ui.indexOf("function setLocalizedButton("), ui.indexOf(
 const dialog = ui.slice(ui.indexOf("function notifyDownloadBusy("), ui.indexOf("function makeAccountDownloadControl("));
 const templates = strip(ui.slice(ui.indexOf("export function createFilenameTemplateModal("), ui.indexOf("export function createPreferencesBox(")));
 const preferences = strip(ui.slice(ui.indexOf("export function createPreferencesBox("), ui.indexOf("export function createSettingsToggle(")));
+const stateSource = read("src/modules/state/state.js");
+const resetState = strip(stateSource.slice(stateSource.indexOf("export function resetAppStateToDefaults()"), stateSource.indexOf("export default AppState")));
 const episodes = ui.slice(ui.indexOf("async function showShortDramaBatchDialog("), ui.indexOf("let accountControlsSyncing"));
 const statistics = strip(ui.slice(ui.indexOf("export function showStatsPopUp("), ui.indexOf("export function createModal(")));
 const numericStats = ui.slice(ui.indexOf("function formatCompactNumberWithTooltip("), ui.indexOf("export function showStatsSpan("));
@@ -54,16 +56,19 @@ try {
   };
   const setup = `(async () => {
     const style = document.createElement('style'); style.textContent = ${JSON.stringify(read("src/styles/injex.css"))}; document.head.append(style);
-    const persisted = new Map(); const localStorage = { getItem:key=>persisted.get(key)||null, setItem:(key,value)=>persisted.set(key,value) };
+    const persisted = new Map(); const localStorage = { getItem:key=>persisted.get(key)||null, setItem:(key,value)=>persisted.set(key,value), removeItem:key=>persisted.delete(key) };
     globalThis.chrome = {runtime:{id:'fixture'},storage:{local:{get:(key,callback)=>callback({[key]:persisted.get(key)}),set:(data,callback)=>{for(const [key,value] of Object.entries(data))persisted.set(key,value);callback();}},onChanged:{addListener(){}}}};
     ${translations}
     ${strip(read("src/modules/storage/resumeSummary.js"))}
-    let theme = 'dark'; const AppState = {downloading:{},ui:{},downloadPreferences:{autoScrollMode:'off',experimentalHd:true},downloadedURLs:[],leaderboard:{allTimeDownloadsCount:1234,weekDownloadsData:{count:56}},recommendationsLeaderboard:{allTimeRecommendationsCount:4321,weekRecommendationsData:{count:78}},scrapperDetails:{}}, DOM_IDS = {MODAL_CONTAINER:'modal-overlay-container'}, DEFAULT_BATCH_SIZE = 30;
+    let theme = 'dark'; const AppState = {downloading:{},ui:{},downloadPreferences:{autoScrollMode:'off',experimentalHd:true},downloadedURLs:[],leaderboard:{allTimeDownloadsCount:1234,weekDownloadsData:{count:56}},recommendationsLeaderboard:{allTimeRecommendationsCount:4321,weekRecommendationsData:{count:78}},scrapperDetails:{}}, DOM_IDS = {MODAL_CONTAINER:'modal-overlay-container',DOWNLOADER_WRAPPER:'ttk-downloader-wrapper',SHOW_DOWNLOADER:'ettpd-show'}, DEFAULT_BATCH_SIZE = 30;
     const STORAGE_KEYS = new Proxy({}, {get:(_,key)=>key}), DOWNLOAD_FOLDER_DEFAULT='Easy TikTok Video Downloader';
-    const presets=[{label:'Original preset',messageKey:'presetRecommended',template:'@/@{authorUsername}/{videoId}.mp4',example:'@creator/123.mp4',isRecommended:true}];
+    const presets=[{label:'Original preset',messageKey:'presetRecommended',template:'@/@{authorUsername}/{videoId}.mp4',example:'@creator/123.mp4',isRecommended:true,isDefault:true}];
+    const FILE_STORAGE_LOCATION_TEMPLATE_PRESETS=presets;
     AppState.downloadPreferences.fullPathTemplate=presets[0];
-    const getSavedTemplates=()=>[],getPresetTemplates=()=>presets,getRecommendedPresetTemplate=()=>presets[0],saveTemplates=()=>{},saveSelectedTemplate=()=>{},resetAppStateToDefaults=()=>{},listScrollingCompleted=()=>false,canClickNextButton=()=>false,getCurrentPageUsername=()=> 'creator',loadProgress=async()=>[];
+    const getSavedTemplates=()=>[],getPresetTemplates=()=>presets,getRecommendedPresetTemplate=()=>presets[0],saveTemplates=()=>{},saveSelectedTemplate=()=>{},listScrollingCompleted=()=>false,canClickNextButton=()=>false,getCurrentPageUsername=()=> 'creator',loadProgress=async()=>[];
+    ${resetState}
     const getDownloadFilePath=sample=>'@creator/'+sample.videoId+'.mp4';
+    const pollInitialData=()=>{};
     const detectBrowserType=()=> 'brave',getExtensionReviewTarget=()=>({url:'https://example.org',storeLabel:'Store'}),isExtensionEnabledSync=()=>true;
     const showCelebration=()=>{},getAllTimeLeaderBoardList=()=>[{username:'creator',count:1234}],getWeeklyLeaderBoardList=()=>[{username:'creator',count:56}],getAllTimeRecommendationsLeaderBoardList=()=>[],getWeeklyRecommendationsLeaderBoardList=()=>[],getUserDownloadsCurrentTier=()=>({emoji:'',name:t('level',{count:3})}),getUserRecommendationsCurrentTier=getUserDownloadsCurrentTier;
     const getShortDramaId=()=> '123',resolveShortDramaRequest=()=>'',collectShortDramaEpisodes=async()=>({title:'Series',total:3,episodes:[1,2,3].map(number=>({id:String(number),number}))}),getEpisodeNumber=item=>item.number,buildVideoLinkMeta=item=>({videoId:item.id}),getReadyVideoDownloadMedia=(_,items)=>items[0];
@@ -134,6 +139,19 @@ try {
       const bounds=box.getBoundingClientRect();
       return {expected,actual:surface(box),expectedButton,actualButton:surface(close),focused:document.activeElement===select,inlineStyles:picker.querySelectorAll('[style]').length,overflow:box.scrollWidth>box.clientWidth+1,within:bounds.left>=0&&bounds.right<=innerWidth&&bounds.top>=0&&bounds.bottom<=innerHeight,headingSize:parseFloat(getComputedStyle(picker.querySelector('h3')).fontSize)};
     };
+    window.checkFactoryReset=async()=>{
+      document.querySelector('.ettpd-modal-close')?.click();document.querySelector('dialog')?.close();document.body.replaceChildren();await setLanguage('en');
+      AppState.ui.isPreferenceBoxOpen=true;AppState.ui.isDownloaderClosed=true;AppState.downloadPreferences.experimentalHd=false;
+      AppState.debug={active:false};
+      const wrapper=document.createElement('div');wrapper.id=DOM_IDS.DOWNLOADER_WRAPPER;
+      const shortcut=document.createElement('button');shortcut.id=DOM_IDS.SHOW_DOWNLOADER;
+      const preferences=createPreferencesBox();wrapper.append(preferences);document.body.append(wrapper,shortcut);
+      const checkbox=preferences.querySelector('input[name=experimentalHd]');
+      if(checkbox.checked)throw new Error('Reset fixture must start with HD off');
+      await preferences.querySelector('.ettpd-options-buttons button').onclick({stopPropagation(){}});
+      const freshPreferences=createPreferencesBox();
+      return {hd:AppState.downloadPreferences.experimentalHd,closed:AppState.ui.isDownloaderClosed,settingsOpen:AppState.ui.isPreferenceBoxOpen,oldWrapperRemoved:!wrapper.isConnected,shortcutRemoved:!shortcut.isConnected,freshCheckbox:freshPreferences.querySelector('input[name=experimentalHd]').checked};
+    };
     window.checkReadinessRetry=async()=>{
       document.querySelector('.ettpd-modal-close')?.click();document.querySelector('dialog')?.close();document.body.replaceChildren();await setLanguage('en');
       let now=10000,local=null,requests=0,saved=null;
@@ -189,6 +207,9 @@ try {
       fs.writeFileSync(path.join(screenshots, `${screen}-${locale}-${width}.png`), Buffer.from(image.data, "base64"));
     }
   }
+  const reset = await evaluate("checkFactoryReset()");
+  assert.deepEqual(reset, { hd: true, closed: false, settingsOpen: false, oldWrapperRemoved: true, shortcutRemoved: true, freshCheckbox: true });
+  console.log("Real DOM: factory reset restores HD on, downloader open, and rebuilt controls.");
   const readiness = await evaluate("checkReadinessRetry()");
   assert.equal(readiness.loading, "loading");
   assert.deepEqual(readiness.failed, { state: "loading", disabled: true });

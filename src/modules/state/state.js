@@ -243,7 +243,7 @@ const AppState = {
       STORAGE_KEYS.SHOW_DOWNLOAD_MESSAGES,
     ),
     useNativeDownload: getBooleanOrNull(STORAGE_KEYS.USE_NATIVE_DOWNLOAD, null),
-    experimentalHd: getBooleanFromStorage(STORAGE_KEYS.EXPERIMENTAL_HD),
+    experimentalHd: getBooleanOrNull(STORAGE_KEYS.EXPERIMENTAL_HD, true),
     // null = auto (use native for Brave), true = always native, false = always chrome.downloads
   },
   rateDonate: safeParseRateDonateDates(
@@ -331,6 +331,7 @@ export function resetAppStateToDefaults() {
     downloaderPositionType: null,
     live_ETTPD_CUSTOM_POS: null,
     isPreferenceBoxOpen: false,
+    isScrapperBoxOpen: false,
     isDownloaderClosed: false,
     isRatePopupOpen: false,
     isDragging: false,
@@ -354,7 +355,7 @@ export function resetAppStateToDefaults() {
     showFolderPicker: false,
     showDownloadMessages: false,
     disableConfetti: false,
-    experimentalHd: false,
+    experimentalHd: true,
   };
   // Set default
   localStorage.setItem(

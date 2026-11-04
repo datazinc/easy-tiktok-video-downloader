@@ -110,7 +110,7 @@ export function isVisitedItemBetterOrNew(it) {
 // ———————————————————————————————————————
 export function handleFoundItems(newItems) {
   try {
-    if (!Array.isArray(newItems) || newItems.length === 0) return;
+    if (!Array.isArray(newItems)) return;
 
     let changed = false;
 

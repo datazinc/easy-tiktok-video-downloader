@@ -68,6 +68,7 @@ import {
 import {
   startAutoSwipeLoop,
   startAutoBatchDownloads,
+  pollInitialData,
 } from "../polling/polling.js";
 import {
   isExtensionEnabledSync,
@@ -7157,12 +7158,14 @@ export function createPreferencesBox() {
     e.stopPropagation();
     resetAppStateToDefaults();
     await showFeedback(t("settingsReset"));
-    setTimeout(() => {
-      AppState.ui.isPreferenceBoxOpen = false;
-      AppState.ui.isScrapperBoxOpen = false;
-
-      displayFoundUrls({ forced: true });
-    }, 1000);
+    AppState.ui.isPreferenceBoxOpen = false;
+    AppState.ui.isScrapperBoxOpen = false;
+    document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER)?.remove();
+    const showButton = document.getElementById(DOM_IDS.SHOW_DOWNLOADER);
+    showButton?._cleanupDraggable?.();
+    showButton?.remove();
+    pollInitialData();
+    displayFoundUrls({ forced: true });
   };
 
   // 🧹 Clear List button
@@ -7549,7 +7552,7 @@ export function createPreferencesBox() {
     replaceElementHtml(feedbackContainer, '<span data-i18n="applying"></span>');
     preferencesBox.appendChild(feedbackContainer);
     // Then show the actual message after displayFoundUrls finishes
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       setTimeout(() => {
         replaceElementHtml(
           feedbackContainer,
@@ -7559,6 +7562,7 @@ export function createPreferencesBox() {
         setTimeout(() => {
           feedbackContainer.remove();
           displayFoundUrls({ forced: true });
+          resolve();
         }, 1500);
       }, 1500); // slight delay to allow DOM update to complete
     });

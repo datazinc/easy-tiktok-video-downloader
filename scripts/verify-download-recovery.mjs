@@ -32,7 +32,81 @@ const bindText = (element, key, values = {}, attribute = null) => {
 };
 
 const constantsSource = await readFile(new URL("../src/modules/state/constants.js", import.meta.url), "utf8");
-const { FILE_STORAGE_LOCATION_TEMPLATE_PRESETS, DOWNLOAD_FOLDER_DEFAULT } = await import(`data:text/javascript;base64,${Buffer.from(constantsSource).toString("base64")}`);
+const { FILE_STORAGE_LOCATION_TEMPLATE_PRESETS, DOWNLOAD_FOLDER_DEFAULT, STORAGE_KEYS } = await import(`data:text/javascript;base64,${Buffer.from(constantsSource).toString("base64")}`);
+
+test("first-run and factory-reset defaults enable HD and open the downloader while preserving explicit choices", async () => {
+  const source = (await readFile(new URL("../src/modules/state/state.js", import.meta.url), "utf8"))
+    .replace(/^import[\s\S]*?from "\.\/constants.js";\n/m, "")
+    .replaceAll("export function ", "function ").replace("export default AppState;", "");
+  const storage = new Map();
+  const load = () => {
+    const context = vm.createContext({
+      STORAGE_KEYS, FILE_STORAGE_LOCATION_TEMPLATE_PRESETS, window: {},
+      localStorage: {
+        getItem: key => storage.get(key) ?? null,
+        setItem: (key, value) => storage.set(key, String(value)),
+        removeItem: key => storage.delete(key),
+      },
+      console: { log() {}, warn() {} },
+    });
+    vm.runInContext(source, context);
+    return { context, state: vm.runInContext("AppState", context) };
+  };
+  const fresh = load();
+  assert.equal(fresh.state.downloadPreferences.experimentalHd, true);
+  assert.equal(fresh.state.ui.isDownloaderClosed, false);
+  storage.set(STORAGE_KEYS.EXPERIMENTAL_HD, "false");
+  storage.set(STORAGE_KEYS.IS_DOWNLOADER_CLOSED, "true");
+  const existing = load();
+  assert.equal(existing.state.downloadPreferences.experimentalHd, false);
+  assert.equal(existing.state.ui.isDownloaderClosed, true);
+  vm.runInContext("resetAppStateToDefaults()", existing.context);
+  assert.equal(existing.state.downloadPreferences.experimentalHd, true);
+  assert.equal(existing.state.ui.isDownloaderClosed, false);
+  assert.equal(existing.state.ui.isScrapperBoxOpen, false);
+  assert.equal(storage.has(STORAGE_KEYS.IS_DOWNLOADER_CLOSED), false);
+  assert.equal(storage.has(STORAGE_KEYS.EXPERIMENTAL_HD), false);
+  const reloaded = load();
+  assert.equal(reloaded.state.downloadPreferences.experimentalHd, true);
+  assert.equal(reloaded.state.ui.isDownloaderClosed, false);
+});
+
+test("factory reset feedback resolves and replaces stale downloader and closed-shortcut controls", async () => {
+  const preferences = uiSource.slice(uiSource.indexOf("export function createPreferencesBox()"), uiSource.indexOf("export function createSettingsToggle("));
+  const handler = preferences.slice(preferences.indexOf("resetBtn.onclick = async"), preferences.indexOf("  // 🧹 Clear List button"));
+  const feedback = preferences.slice(preferences.indexOf("  function showFeedback(text)"), preferences.indexOf("  // Checkbox generator"));
+  const timers = [];
+  let renders = 0;
+  let removed = 0;
+  let cleaned = 0;
+  let discoveries = 0;
+  const state = { ui: { isDownloaderClosed: true, isPreferenceBoxOpen: true, isScrapperBoxOpen: true }, downloadPreferences: { experimentalHd: false } };
+  const context = vm.createContext({
+    AppState: state, resetBtn: {}, t,
+    resetAppStateToDefaults: () => { state.ui.isDownloaderClosed = false; state.downloadPreferences.experimentalHd = true; },
+    preferencesBox: { appendChild() {} }, feedbackContainer: { remove() {} },
+    replaceElementHtml() {}, escapeHtml: value => value,
+    setTimeout: callback => { timers.push(callback); },
+    displayFoundUrls: () => { renders += 1; },
+    pollInitialData: () => { discoveries += 1; },
+    DOM_IDS: { DOWNLOADER_WRAPPER: "wrapper", SHOW_DOWNLOADER: "shortcut" },
+    document: { getElementById: () => ({ remove: () => { removed += 1; }, _cleanupDraggable: () => { cleaned += 1; } }) },
+  });
+  vm.runInContext(feedback + handler, context);
+  const reset = vm.runInContext("resetBtn.onclick({stopPropagation(){}})", context);
+  assert.equal(removed, 0);
+  timers.shift()();
+  timers.shift()();
+  await reset;
+  assert.equal(removed, 2);
+  assert.equal(cleaned, 1);
+  assert.equal(discoveries, 1);
+  assert.equal(renders, 2);
+  assert.equal(state.ui.isDownloaderClosed, false);
+  assert.equal(state.ui.isPreferenceBoxOpen, false);
+  assert.equal(state.ui.isScrapperBoxOpen, false);
+  assert.equal(state.downloadPreferences.experimentalHd, true);
+});
 
 function filenameFixture(preset = FILE_STORAGE_LOCATION_TEMPLATE_PRESETS[0]) {
   const state = {
@@ -2246,6 +2320,117 @@ test("Favorites uses matching signed-in identity after SPA navigation and handle
       assert.doesNotMatch(content.children[1].textContent, /Unexpected end|Response|json/);
     }
   }
+});
+
+test("empty feed discovery recovers already-loaded detail metadata and forces the empty list to render", async () => {
+  const source = await readFile(new URL("../src/modules/downloader/handlers.js", import.meta.url), "utf8");
+  const item = { id: "123", video: { playAddr: "https://cdn/video" } };
+  const state = { allItemsEverSeen: {}, debug: { active: false } };
+  const renders = [];
+  const context = vm.createContext({
+    AppState: state, normId: item => String(item?.id || ""),
+    isVisitedItemBetterOrNew: item => !state.allItemsEverSeen[item.id],
+    isBetterCopy: (item, previous) => !previous,
+    getUniversalDataScope: () => ({ "webapp.video-detail": { itemInfo: { itemStruct: item } } }),
+    rememberAccountIdentity() {}, displayFoundUrls: options => renders.push(options),
+  });
+  const code = source.slice(source.indexOf("export function handleFoundItems("), source.indexOf('document.addEventListener("DOMContentLoaded"'))
+    .replace("export function ", "function ");
+  vm.runInContext(code, context);
+  vm.runInContext("handleFoundItems([])", context);
+  assert.equal(state.allItemsEverSeen["123"], item);
+  assert.equal(renders.at(-1).forced, true);
+  state.allItemsEverSeen = {};
+  vm.runInContext("handleFoundItems([])", context);
+  assert.equal(state.allItemsEverSeen["123"], item, "Reset must not require another network response");
+  assert.equal(renders.at(-1).forced, true);
+});
+
+test("DOM polling lets the ingestion owner detect richer metadata and force a render", async () => {
+  const handlers = await readFile(new URL("../src/modules/downloader/handlers.js", import.meta.url), "utf8");
+  const polling = await readFile(new URL("../src/modules/polling/polling.js", import.meta.url), "utf8");
+  const previous = { id: "123", video: { width: 720 } };
+  const improved = { id: "123", video: { width: 1080 } };
+  const state = { allItemsEverSeen: { "123": previous }, debug: { active: false } };
+  const renders = [];
+  const isBetter = (item, cached) => !cached || item.video.width > cached.video.width;
+  const context = vm.createContext({
+    AppState: state, isExtensionEnabled: () => true, window: {}, document: { getElementById: () => null },
+    getCurrentPlayingArticle: () => ({}), getClosestPlayingVideoId: () => "123", findFiberItemById: () => null,
+    getRenderedPostsMetadata: () => [improved], normId: item => String(item?.id || ""),
+    isVisitedItemBetterOrNew: item => isBetter(item, state.allItemsEverSeen[item.id]), isBetterCopy: isBetter,
+    getUniversalDataScope: () => ({}), rememberAccountIdentity() {}, displayFoundUrls: options => renders.push(options),
+    console: { log() {}, warn() {}, error: error => { throw error; } },
+  });
+  const ingestion = handlers.slice(handlers.indexOf("export function handleFoundItems("), handlers.indexOf('document.addEventListener("DOMContentLoaded"'));
+  const poll = polling.slice(polling.indexOf("export function pollInitialData()"), polling.indexOf("async function pollPlaylistData()"));
+  vm.runInContext((ingestion + poll).replaceAll("export function ", "function "), context);
+  vm.runInContext("pollInitialData()", context);
+  assert.equal(state.allItemsEverSeen["123"], improved);
+  assert.ok(renders.some(options => options.forced), "Identical post IDs with richer data must still force rendering");
+});
+
+test("the currently playing root prefers visible active media over offscreen blob players", () => {
+  const source = utils.slice(utils.indexOf("export function getCurrentPlayingArticle()"), utils.indexOf("export function getUsernameFromPlayingArticle()"))
+    .replace("export function ", "function ");
+  const mainRoot = {}, previewRoot = {}, oldRoot = {};
+  const video = (root, paused, top, width, height, article = true) => ({
+    paused, ended: false, parentElement: root,
+    getBoundingClientRect: () => ({ top, bottom: top + height, left: 0, right: width, width, height }),
+    closest: selector => selector.startsWith("article") ? article ? root : null : root,
+  });
+  const offscreen = video(oldRoot, false, -1000, 400, 600);
+  const preview = video(previewRoot, false, 0, 100, 100);
+  const main = video(mainRoot, false, 0, 400, 600, false);
+  const context = vm.createContext({
+    window: { innerWidth: 1200, innerHeight: 800 }, AppState: { debug: { active: false } },
+    document: { querySelectorAll: () => [offscreen, preview, main], querySelector: () => null },
+  });
+  vm.runInContext(source, context);
+  assert.equal(vm.runInContext("getCurrentPlayingArticle()", context), mainRoot);
+  main.paused = true;
+  assert.equal(vm.runInContext("getCurrentPlayingArticle()", context), previewRoot);
+  preview.paused = true;
+  assert.equal(vm.runInContext("getCurrentPlayingArticle()", context), mainRoot);
+});
+
+test("detail-page discovery uses the exact route post ID rather than nearby sidebar IDs", () => {
+  const code = utils.slice(utils.indexOf("export function getClosestPlayingVideoId()"), utils.indexOf("export function shouldShowRatePopupLegacy()"))
+    .replace("export function ", "function ");
+  const context = vm.createContext({
+    window: { location: { pathname: "/@user/video/123456789" } },
+    getCurrentPlayingArticle: () => ({}), getNearById: () => "unrelated-sidebar",
+  });
+  vm.runInContext(code, context);
+  assert.equal(vm.runInContext("getClosestPlayingVideoId()", context), "123456789");
+  context.window.location.pathname = "/@user/photo/987654321";
+  assert.equal(vm.runInContext("getClosestPlayingVideoId()", context), "987654321");
+});
+
+test("player readiness requests immediate discovery while coalescing UI frames", async () => {
+  const source = await readFile(new URL("../src/modules/polling/polling.js", import.meta.url), "utf8");
+  const code = source.slice(source.indexOf("function scheduleUITasks("), source.indexOf("/**\n * Detects any new video data"));
+  const frames = [];
+  const task = { name: "initial-data", lastRun: 100 };
+  let enabled = true;
+  const context = vm.createContext({
+    uiFrameHandle: null, uiTasks: [task], isExtensionEnabled: () => enabled,
+    window: { innerWidth: 1200, innerHeight: 800, requestAnimationFrame: callback => { frames.push(callback); return frames.length; } },
+    videoEvent: { target: { tagName: "VIDEO", getBoundingClientRect: () => ({ top: 0, bottom: 300, left: 0, right: 200, width: 200, height: 300 }) } },
+    document: { addEventListener() {} }, runScheduledUITasks() {},
+  });
+  vm.runInContext(code, context);
+  vm.runInContext("scheduleMediaDataDiscovery(videoEvent);scheduleMediaDataDiscovery(videoEvent)", context);
+  assert.equal(task.lastRun, -Infinity);
+  assert.equal(frames.length, 1);
+  task.lastRun = 200;
+  enabled = false;
+  vm.runInContext("scheduleMediaDataDiscovery(videoEvent)", context);
+  assert.equal(task.lastRun, 200);
+  enabled = true;
+  context.videoEvent.target.getBoundingClientRect = () => ({ top: -400, bottom: -100, left: 0, right: 200, width: 200, height: 300 });
+  vm.runInContext("scheduleMediaDataDiscovery(videoEvent)", context);
+  assert.equal(task.lastRun, 200, "Offscreen preloading must not invalidate discovery timing");
 });
 
 test("feed ingestion remembers post authors even when media copies do not improve", async () => {
