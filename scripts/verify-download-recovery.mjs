@@ -55,7 +55,7 @@ test("first-run and factory-reset defaults enable HD and open the downloader whi
   const fresh = load();
   assert.equal(fresh.state.downloadPreferences.experimentalHd, true);
   assert.equal(fresh.state.ui.isDownloaderClosed, false);
-  assert.equal(fresh.state.ui.downloaderPositionType, "bottom-left");
+  assert.equal(fresh.state.ui.downloaderPositionType, "bottom-right");
   storage.set(STORAGE_KEYS.EXPERIMENTAL_HD, "false");
   storage.set(STORAGE_KEYS.IS_DOWNLOADER_CLOSED, "true");
   storage.set(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE, "top-right");
@@ -77,7 +77,7 @@ test("first-run and factory-reset defaults enable HD and open the downloader whi
   const reloaded = load();
   assert.equal(reloaded.state.downloadPreferences.experimentalHd, true);
   assert.equal(reloaded.state.ui.isDownloaderClosed, false);
-  assert.equal(reloaded.state.ui.downloaderPositionType, "bottom-left");
+  assert.equal(reloaded.state.ui.downloaderPositionType, "bottom-right");
 });
 
 test("Open button clicks do not save a location; real drags persist and stale saves are cancelled", () => {
@@ -148,7 +148,7 @@ test("panel positions change only during a real drag and all document handlers a
   assert.equal(windowListeners.size, 0);
 });
 
-test("saved positions reject malformed coordinates and reset Open to bottom-left", () => {
+test("saved positions reject malformed coordinates and reset Open to bottom-right", () => {
   const setup = progressFixture();
   const storage = new Map([[STORAGE_KEYS.SHOW_BUTTON_POSITION, '{"left":400,"top":300}']]);
   Object.assign(setup.context, { STORAGE_KEYS, button: setup.button, DOM_IDS: { SHOW_DOWNLOADER: "button" }, localStorage: { removeItem: key => storage.delete(key) }, document: { getElementById: () => setup.button } });
@@ -162,9 +162,9 @@ test("saved positions reject malformed coordinates and reset Open to bottom-left
   }
   vm.runInContext("resetShowButtonPosition()", setup.context);
   assert.equal(storage.has(STORAGE_KEYS.SHOW_BUTTON_POSITION), false);
-  assert.equal(setup.button.style.left, "20px");
+  assert.equal(setup.button.style.left, "auto");
   assert.equal(setup.button.style.bottom, "50px");
-  assert.equal(setup.button.style.right, "auto");
+  assert.equal(setup.button.style.right, "20px");
   assert.equal(setup.button.style.top, "auto");
 });
 
@@ -2965,6 +2965,72 @@ test("support click background action stores a local timestamp for every extensi
   assert.equal(stored["tik.tok::lastSupportedAt"], 1800000000000);
   assert.equal(result.success, true);
   assert.equal(result.timestamp, 1800000000000);
+});
+
+test("Morpheus confetti survives recent download celebrations but respects accessibility and preferences", () => {
+  const intervals = [];
+  let now = 100000, created = 0, shots = 0;
+  const preferences = { disableConfetti: false };
+  const document = { hidden: false, querySelector: () => null };
+  const motion = { matches: false };
+  const context = vm.createContext({
+    AppState: { downloadPreferences: preferences }, document,
+    window: { matchMedia: () => motion }, Date: { now: () => now }, Math,
+    CELEBRATION_COOLDOWN_MS: 30000, lastConfettiAt: -Infinity,
+    getConfetti: () => { created += 1; return () => { shots += 1; }; },
+    makeOverlay() {}, t: value => value,
+    setTimeout: callback => callback(), setInterval: callback => { intervals.push(callback); return intervals.length; }, clearInterval() {},
+  });
+  const source = utils.slice(utils.indexOf('export function showCelebration('), utils.indexOf('window.rerender ='));
+  vm.runInContext(source.replace('export function ', 'function '), context);
+  vm.runInContext('showCelebration("downloads")', context);
+  assert.equal(created, 1);
+  now += 1000;
+  vm.runInContext('showCelebration("downloads")', context);
+  assert.equal(created, 1, "Ordinary celebrations retain their cooldown");
+  vm.runInContext('showCelebration("mindblown")', context);
+  assert.equal(created, 2, "The separately throttled Morpheus prompt gets its own celebration");
+  intervals[0]();
+  assert.ok(shots > 6, "Morpheus emits actual particles");
+  preferences.disableConfetti = true;
+  vm.runInContext('showCelebration("mindblown")', context);
+  preferences.disableConfetti = false;
+  motion.matches = true;
+  vm.runInContext('showCelebration("mindblown")', context);
+  motion.matches = false;
+  document.hidden = true;
+  vm.runInContext('showCelebration("mindblown")', context);
+  document.hidden = false;
+  document.querySelector = () => ({});
+  vm.runInContext('showCelebration("mindblown")', context);
+  assert.equal(created, 2, "User, reduced-motion, hidden-page and existing-modal gates still apply");
+});
+
+test("Morpheus starts confetti first and opens halfway through the effect after its final eligibility check", () => {
+  const events = [], timers = [];
+  let eligible = true;
+  const context = vm.createContext({
+    AppState: { ui: {}, rateDonate: { shownCount: 0 } },
+    shouldShowRateDonatePopup: () => eligible, claimAutomaticPopup: () => true,
+    getExtensionReviewTarget: () => ({ url: "unused" }), hideDownloader() {},
+    showCelebration: type => events.push(type), createModalMorpheus: () => events.push("modal"),
+    setTimeout: (callback, delay) => timers.push({ callback, delay }), localStorage: { setItem() {} }, STORAGE_KEYS: {}, Date,
+  });
+  const source = uiSource.slice(uiSource.indexOf("export function showMorpheusRateUsPage()"), uiSource.indexOf("export function createModalMorpheus("));
+  vm.runInContext(source.replace("export function ", "function "), context);
+  vm.runInContext("showMorpheusRateUsPage()", context);
+  assert.deepEqual(events, ["mindblown"], "Confetti precedes the popup");
+  const timer = timers.shift();
+  const effect = utils.slice(utils.indexOf('} else if (type === "mindblown")'));
+  const duration = Number(effect.match(/const duration = (\d+);/)[1]);
+  assert.equal(timer.delay, duration / 2, "Popup appears halfway through the confetti emission");
+  timer.callback();
+  assert.deepEqual(events, ["mindblown", "modal"]);
+  events.length = 0;
+  vm.runInContext("showMorpheusRateUsPage()", context);
+  eligible = false;
+  timers.shift().callback();
+  assert.deepEqual(events, ["mindblown"], "Cancellation prevents the modal without restarting the prelude");
 });
 
 test("Morpheus retains its original invitation, line breaks, emphasis and pill labels", () => {

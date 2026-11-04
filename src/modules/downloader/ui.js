@@ -647,7 +647,7 @@ export function createDownloaderWrapper() {
   cornerToggle.setAttribute("aria-haspopup", "listbox");
   cornerToggle.setAttribute("aria-expanded", "false");
 
-  let cornerIcon = createIcon("corner-bottom-left", 14);
+  let cornerIcon = createIcon("corner-bottom-right", 14);
   cornerIcon.setAttribute("class", "ettpd-corner-select-icon");
   cornerToggle.appendChild(cornerIcon);
   cornerSelectorWrapper.appendChild(cornerToggle);
@@ -793,7 +793,7 @@ export function createDownloaderWrapper() {
   // Restore pinned position if exists
   const saved =
     localStorage.getItem(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE) ||
-    "bottom-left";
+    "bottom-right";
 
   // Set initial select value and icon
   if (saved && saved !== "custom") {
@@ -808,7 +808,7 @@ export function createDownloaderWrapper() {
       wrapper.style.top = `${pos.top}px`;
       wrapper.style.bottom = "auto";
       wrapper.style.right = "auto";
-    } else applyCornerPosition(wrapper, "bottom-left");
+    } else applyCornerPosition(wrapper, "bottom-right");
     console.log("not applyCornerPosition-->", pos);
   } else if (saved) {
     applyCornerPosition(wrapper, saved);
@@ -6012,10 +6012,10 @@ export function resetShowButtonPosition() {
   // If button exists, reset its position
   const showBtn = document.getElementById(DOM_IDS.SHOW_DOWNLOADER);
   if (showBtn) {
-    showBtn.style.left = "20px";
+    showBtn.style.left = "auto";
     showBtn.style.top = "auto";
     showBtn.style.bottom = "50px";
-    showBtn.style.right = "auto";
+    showBtn.style.right = "20px";
   }
 }
 
@@ -6635,7 +6635,7 @@ export function showMorpheusRateUsPage() {
       STORAGE_KEYS.RATE_DONATE_DATA,
       JSON.stringify(AppState.rateDonate),
     );
-  }, 3500);
+  }, 2000);
   return true;
 }
 

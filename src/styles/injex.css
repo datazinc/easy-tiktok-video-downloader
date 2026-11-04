@@ -73,8 +73,8 @@
 }
 
 .ettpd-experimental-hd-banner {
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
   gap: 8px;
   margin: 6px 8px 2px;
   padding: 8px;
@@ -121,6 +121,9 @@
 
 .ettpd-experimental-hd-banner-actions {
   display: flex;
+  grid-column: 2;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
 }
@@ -132,6 +135,7 @@
 }
 
 .ettpd-experimental-hd-banner-try {
+  max-width: 100%;
   min-height: 26px;
   padding: 4px 7px;
   border-radius: 4px;
@@ -139,9 +143,12 @@
   background: #087f79;
   font-size: 11px;
   font-weight: 700;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ettpd-experimental-hd-banner-dismiss {
+  flex: 0 0 24px;
   width: 24px;
   height: 24px;
   padding: 0;
@@ -856,8 +863,8 @@
 #ettpd-show {
   padding: 8px 12px;
   bottom: 50px;
-  left: 20px;
-  right: auto;
+  left: auto;
+  right: 20px;
   z-index: 99998;
   border-radius: 20px;
   cursor: grab;
@@ -2982,13 +2989,25 @@ dialog.ettpd-language-dialog::backdrop {
   height: 100vh;
   background: radial-gradient(
     ellipse at center,
-    rgba(0, 0, 0, 0.9),
-    rgba(0, 0, 0, 1)
+    rgba(0, 0, 0, 0.45),
+    rgba(0, 0, 0, 0.65)
   );
   display: flex;
   justify-content: center;
   align-items: center;
   overflow: hidden;
+  animation: ettpd-morpheus-fade-in 320ms ease-out both;
+}
+
+@keyframes ettpd-morpheus-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #ettpd-morpheus-overlay.morpheus-theme {
+    animation: none;
+  }
 }
 
 /* Modal Box */

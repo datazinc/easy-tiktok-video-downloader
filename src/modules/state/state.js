@@ -197,7 +197,7 @@ const AppState = {
         ? "custom"
         : ["top-left", "top-right", "bottom-left", "bottom-right"].includes(getStringOrNull(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE))
           ? getStringOrNull(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE)
-          : "bottom-left",
+          : "bottom-right",
     live_ETTPD_CUSTOM_POS: getStringOrNull(
       STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION,
     ),
@@ -332,7 +332,7 @@ export function resetAppStateToDefaults() {
     isHydrating: false,
   };
   AppState.ui = {
-    downloaderPositionType: "bottom-left",
+    downloaderPositionType: "bottom-right",
     live_ETTPD_CUSTOM_POS: null,
     isPreferenceBoxOpen: false,
     isScrapperBoxOpen: false,
