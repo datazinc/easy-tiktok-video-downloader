@@ -22,6 +22,7 @@ const episodes = ui.slice(ui.indexOf("async function showShortDramaBatchDialog("
 const statistics = strip(ui.slice(ui.indexOf("export function showStatsPopUp("), ui.indexOf("export function createModal(")));
 const numericStats = ui.slice(ui.indexOf("function formatCompactNumberWithTooltip("), ui.indexOf("export function showStatsSpan("));
 const hdProgress = ui.slice(ui.indexOf("function updateExperimentalHdProgress("), ui.indexOf("async function runExperimentalHdDownload("));
+const openButton = strip(ui.slice(ui.indexOf("function makeShowButtonDraggable("), ui.indexOf("export function showRateUsPopUpLegacy()")));
 const readinessControls = strip(ui.slice(ui.indexOf("export function getReadyVideoDownloadMedia("), ui.indexOf("function syncOverlayExperimentalHdButton(")));
 const scraperView = ui.slice(ui.indexOf("function renderActiveScrappingView("), ui.indexOf("async function renderCompletedView("));
 const scraperHelp = ui.slice(ui.indexOf("function explainerModal("), ui.indexOf("function showScrapperStateUI("));
@@ -77,7 +78,7 @@ try {
     const getResolvedThemeMode=()=>theme,resolveAccountList=()=>({kind:'collection',scope:'collection:123'}),getProgressiveListCheckpoint=()=>({scope:'collection:123',completed:['1','2','3'],skipped:['4'],pending:['5','6','7','8'],batchSize:30,maxPosts:10,finished:false}),sessionStorage={};
     class ProgressiveBatch {readChunk(){return {queue:[{videoId:'5',key:'5:v',lastFailure:true,status:'pending'},{videoId:'6',key:'6:v',status:'saved'}],saves:[{key:'6:v',downloadId:10}]};}}
     const showToast=()=>{},displayFoundUrls=()=>{},replaceElementHtml=(element,html)=>{const svg=element.namespaceURI==='http://www.w3.org/2000/svg';const parsed=new DOMParser().parseFromString(svg?'<svg xmlns="http://www.w3.org/2000/svg">'+html+'</svg>':html,svg?'image/svg+xml':'text/html');element.replaceChildren(...(svg?parsed.documentElement:parsed.body).childNodes);localizeMarkup(element);};
-    ${icons}\n${modal}\n${helpers}\n${dialog}\n${templates}\n${preferences}\n${episodes}\n${numericStats}\n${statistics}\n${hdProgress}\n${scraperView}\n${scraperHelp}\n${recoveryDialog}\n${browserSetup}\n${strip(read("src/modules/utils/payItForward.js"))}
+    ${icons}\n${modal}\n${helpers}\n${dialog}\n${templates}\n${preferences}\n${episodes}\n${numericStats}\n${statistics}\n${hdProgress}\n${openButton}\n${scraperView}\n${scraperHelp}\n${recoveryDialog}\n${browserSetup}\n${strip(read("src/modules/utils/payItForward.js"))}
     initializeI18n(); onLanguageChange(()=>{for(const button of document.querySelectorAll('[data-i18n-button]'))setButtonWithIcon(button,t(button.dataset.i18nButton,button._i18nValues||{}),button.dataset.i18nIcon||null);});
     window.renderLocale=async(locale,font,dark)=>{document.body.replaceChildren();theme=dark?'dark':'classic';document.body.style.cssText='margin:0;background:'+(dark?'#111':'#fff')+';font-size:'+font+'px';await setLanguage(locale);document.body.append(createLanguageControl());await showAccountBatchDialog({kind:'collection',id:'123',title:'Summer of Sports'});const box=document.querySelector('.ettpd-modal-box');const actions=[...box.querySelectorAll('button')].filter(button=>button.getBoundingClientRect().height>0);actions.at(-1).scrollIntoView({block:'nearest'});const bounds=box.getBoundingClientRect();return {locale:getLocale(),overflow:box.scrollWidth>box.clientWidth+1,summary:[...box.querySelectorAll('dl dd')].map(element=>element.textContent),actions:actions.map(button=>({text:button.textContent,within:button.getBoundingClientRect().left>=bounds.left&&button.getBoundingClientRect().right<=bounds.right}))};};
     window.switchEnglish=async()=>{await setLanguage('en');return {locale:getLocale(),button:document.querySelector('.ettpd-modal-box button[type=submit]').textContent};};
@@ -138,6 +139,23 @@ try {
       window.pickerClosed=new Promise(resolve=>picker.addEventListener('close',()=>resolve({removed:!picker.isConnected,focused:document.activeElement===trigger}),{once:true}));
       const bounds=box.getBoundingClientRect();
       return {expected,actual:surface(box),expectedButton,actualButton:surface(close),focused:document.activeElement===select,inlineStyles:picker.querySelectorAll('[style]').length,overflow:box.scrollWidth>box.clientWidth+1,within:bounds.left>=0&&bounds.right<=innerWidth&&bounds.top>=0&&bounds.bottom<=innerHeight,headingSize:parseFloat(getComputedStyle(picker.querySelector('h3')).fontSize)};
+    };
+    window.checkOpenButtonPosition=async()=>{
+      document.querySelector('.ettpd-modal-close')?.click();document.querySelector('dialog')?.close();document.body.replaceChildren();await setLanguage('en');
+      style.textContent=${JSON.stringify(read("src/styles/injex.css"))};AppState.ui.hasSeenShowButtonHint=true;
+      localStorage.removeItem(STORAGE_KEYS.SHOW_BUTTON_POSITION);
+      const location=()=>{const rect=document.getElementById(DOM_IDS.SHOW_DOWNLOADER).getBoundingClientRect();return {left:rect.left,bottom:innerHeight-rect.bottom,right:rect.right,top:rect.top};};
+      hideDownloader();const first=location();const button=document.getElementById(DOM_IDS.SHOW_DOWNLOADER);
+      button.dispatchEvent(new MouseEvent('mousedown',{clientX:first.left+10,clientY:first.top+10,bubbles:true}));
+      document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+      const clickSaved=localStorage.getItem(STORAGE_KEYS.SHOW_BUTTON_POSITION);
+      button._cleanupDraggable();button.remove();hideDownloader();const reopened=location();
+      localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_POSITION,JSON.stringify({left:innerWidth+100,top:innerHeight+100}));
+      const second=document.getElementById(DOM_IDS.SHOW_DOWNLOADER);second._cleanupDraggable();second.remove();hideDownloader();
+      await new Promise(resolve=>setTimeout(resolve,0));const clamped=location();
+      resetShowButtonPosition();const reset=location();
+      document.getElementById(DOM_IDS.SHOW_DOWNLOADER)._cleanupDraggable();document.body.replaceChildren();
+      return {first,reopened,clickSaved,clamped,reset,width:innerWidth,height:innerHeight};
     };
     window.checkFactoryReset=async()=>{
       document.querySelector('.ettpd-modal-close')?.click();document.querySelector('dialog')?.close();document.body.replaceChildren();await setLanguage('en');
@@ -207,6 +225,15 @@ try {
       fs.writeFileSync(path.join(screenshots, `${screen}-${locale}-${width}.png`), Buffer.from(image.data, "base64"));
     }
   }
+  const locations = await evaluate("checkOpenButtonPosition()");
+  assert.equal(locations.first.left, 20);
+  assert.equal(locations.first.bottom, 50);
+  assert.deepEqual(locations.reopened, locations.first);
+  assert.equal(locations.clickSaved, null);
+  assert.ok(locations.clamped.left >= 0 && locations.clamped.right <= locations.width && locations.clamped.top >= 0);
+  assert.equal(locations.reset.left, 20);
+  assert.equal(locations.reset.bottom, 50);
+  console.log("Real DOM: Open stays bottom-left across close/reopen; custom positions clamp and reset correctly.");
   const reset = await evaluate("checkFactoryReset()");
   assert.deepEqual(reset, { hd: true, closed: false, settingsOpen: false, oldWrapperRemoved: true, shortcutRemoved: true, freshCheckbox: true });
   console.log("Real DOM: factory reset restores HD on, downloader open, and rebuilt controls.");

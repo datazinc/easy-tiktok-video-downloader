@@ -55,20 +55,117 @@ test("first-run and factory-reset defaults enable HD and open the downloader whi
   const fresh = load();
   assert.equal(fresh.state.downloadPreferences.experimentalHd, true);
   assert.equal(fresh.state.ui.isDownloaderClosed, false);
+  assert.equal(fresh.state.ui.downloaderPositionType, "bottom-left");
   storage.set(STORAGE_KEYS.EXPERIMENTAL_HD, "false");
   storage.set(STORAGE_KEYS.IS_DOWNLOADER_CLOSED, "true");
+  storage.set(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE, "top-right");
+  storage.set(STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION, JSON.stringify({ left: 200, top: 100 }));
+  storage.set(STORAGE_KEYS.SHOW_BUTTON_POSITION, JSON.stringify({ left: 400, top: 300 }));
   const existing = load();
   assert.equal(existing.state.downloadPreferences.experimentalHd, false);
   assert.equal(existing.state.ui.isDownloaderClosed, true);
+  assert.equal(existing.state.ui.downloaderPositionType, "top-right");
   vm.runInContext("resetAppStateToDefaults()", existing.context);
   assert.equal(existing.state.downloadPreferences.experimentalHd, true);
   assert.equal(existing.state.ui.isDownloaderClosed, false);
   assert.equal(existing.state.ui.isScrapperBoxOpen, false);
   assert.equal(storage.has(STORAGE_KEYS.IS_DOWNLOADER_CLOSED), false);
   assert.equal(storage.has(STORAGE_KEYS.EXPERIMENTAL_HD), false);
+  assert.equal(storage.has(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE), false);
+  assert.equal(storage.has(STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION), false);
+  assert.equal(storage.has(STORAGE_KEYS.SHOW_BUTTON_POSITION), false);
   const reloaded = load();
   assert.equal(reloaded.state.downloadPreferences.experimentalHd, true);
   assert.equal(reloaded.state.ui.isDownloaderClosed, false);
+  assert.equal(reloaded.state.ui.downloaderPositionType, "bottom-left");
+});
+
+test("Open button clicks do not save a location; real drags persist and stale saves are cancelled", () => {
+  const setup = progressFixture();
+  const button = setup.button;
+  const storage = new Map(), documentListeners = new Map(), windowListeners = new Map(), timers = new Map();
+  let nextTimer = 0;
+  button.getBoundingClientRect = () => ({ left: parseFloat(button.style.left) || 20, top: parseFloat(button.style.top) || 700, width: 140, height: 40 });
+  const document = { body: { style: {} }, addEventListener: (name, callback) => documentListeners.set(name, callback), removeEventListener: name => documentListeners.delete(name) };
+  const window = { innerWidth: 1200, innerHeight: 800, addEventListener: (name, callback) => windowListeners.set(name, callback), removeEventListener: name => windowListeners.delete(name) };
+  Object.assign(setup.context, {
+    button, window, document, STORAGE_KEYS,
+    localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+    setTimeout: callback => { const id = ++nextTimer; timers.set(id, callback); return id; }, clearTimeout: id => timers.delete(id),
+  });
+  const helper = uiSource.slice(uiSource.indexOf("function readStoredPosition("), uiSource.indexOf("function templateDisplayName("));
+  const drag = uiSource.slice(uiSource.indexOf("function makeShowButtonDraggable("), uiSource.indexOf("// Function to reset show button position"));
+  vm.runInContext(helper + drag + "makeShowButtonDraggable(button)", setup.context);
+  button.listeners.get("mousedown")({ clientX: 30, clientY: 710 });
+  documentListeners.get("mouseup")();
+  assert.equal(storage.has(STORAGE_KEYS.SHOW_BUTTON_POSITION), false);
+  button.listeners.get("mousedown")({ clientX: 30, clientY: 710 });
+  documentListeners.get("mousemove")({ clientX: 300, clientY: 300 });
+  documentListeners.get("mouseup")();
+  assert.deepEqual(JSON.parse(storage.get(STORAGE_KEYS.SHOW_BUTTON_POSITION)), { left: 290, top: 290 });
+  button.listeners.get("mousedown")({ clientX: 300, clientY: 300 });
+  documentListeners.get("mousemove")({ clientX: 600, clientY: 400 });
+  const saved = storage.get(STORAGE_KEYS.SHOW_BUTTON_POSITION);
+  button._cleanupDraggable();
+  for (const callback of [...timers.values()]) callback();
+  assert.equal(storage.get(STORAGE_KEYS.SHOW_BUTTON_POSITION), saved, "Removed button must not overwrite saved position later");
+  assert.equal(documentListeners.size, 0);
+  assert.equal(windowListeners.size, 0);
+});
+
+test("panel positions change only during a real drag and all document handlers are removed on close", () => {
+  const setup = progressFixture();
+  const storage = new Map(), documentListeners = new Map(), windowListeners = new Map();
+  const wrapper = setup.button;
+  const handle = setup.context.document.createElement("div");
+  wrapper.getBoundingClientRect = () => ({ left: parseFloat(wrapper.style.left) || 300, top: parseFloat(wrapper.style.top) || 150, width: 400, height: 200 });
+  wrapper._setCornerValue = () => {};
+  setup.state.ui = { isDragging: false, downloaderPositionType: "top-right", live_ETTPD_CUSTOM_POS: '{"left":5,"top":5}' };
+  Object.assign(setup.context, {
+    wrapper, handle, STORAGE_KEYS,
+    localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+    window: { innerWidth: 1200, innerHeight: 800, addEventListener: (name, callback) => windowListeners.set(name, callback), removeEventListener: name => windowListeners.delete(name) },
+    document: { body: { style: {} }, addEventListener: (name, callback) => documentListeners.set(name, callback), removeEventListener: name => documentListeners.delete(name) },
+    constrainWrapperToViewport: () => ({ left: parseFloat(wrapper.style.left) || 300, top: parseFloat(wrapper.style.top) || 150 }),
+    console: { log() {} },
+  });
+  const source = uiSource.slice(uiSource.indexOf("function makeElementDraggable("), uiSource.indexOf("function makeShowButtonDraggable("));
+  vm.runInContext(source + "makeElementDraggable(wrapper,handle)", setup.context);
+  documentListeners.get("mousemove")({ clientX: 500, clientY: 400 });
+  documentListeners.get("mouseup")();
+  assert.equal(storage.size, 0, "Ordinary page events must not overwrite pinned locations");
+  assert.equal(setup.state.ui.downloaderPositionType, "top-right");
+  handle.listeners.get("mousedown")({ clientX: 310, clientY: 160 });
+  documentListeners.get("mouseup")();
+  assert.equal(storage.size, 0, "Clicking the handle is not a custom drag");
+  handle.listeners.get("mousedown")({ clientX: 310, clientY: 160 });
+  documentListeners.get("mousemove")({ clientX: 510, clientY: 360 });
+  documentListeners.get("mouseup")();
+  assert.equal(storage.get(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE), "custom");
+  assert.deepEqual(JSON.parse(storage.get(STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION)), { left: 500, top: 350 });
+  wrapper._cleanupDraggable();
+  assert.equal(documentListeners.size, 0);
+  assert.equal(windowListeners.size, 0);
+});
+
+test("saved positions reject malformed coordinates and reset Open to bottom-left", () => {
+  const setup = progressFixture();
+  const storage = new Map([[STORAGE_KEYS.SHOW_BUTTON_POSITION, '{"left":400,"top":300}']]);
+  Object.assign(setup.context, { STORAGE_KEYS, button: setup.button, DOM_IDS: { SHOW_DOWNLOADER: "button" }, localStorage: { removeItem: key => storage.delete(key) }, document: { getElementById: () => setup.button } });
+  const helper = uiSource.slice(uiSource.indexOf("function readStoredPosition("), uiSource.indexOf("function templateDisplayName("));
+  const reset = uiSource.slice(uiSource.indexOf("export function resetShowButtonPosition()"), uiSource.indexOf("export function hideDownloader()"))
+    .replace("export function ", "function ");
+  vm.runInContext(helper + reset, setup.context);
+  for (const value of ['not-json', 'null', '{"left":"400","top":300}', '{"left":20}', '{"left":null,"top":0}']) {
+    setup.context.value = value;
+    assert.equal(vm.runInContext("readStoredPosition(value)", setup.context), null);
+  }
+  vm.runInContext("resetShowButtonPosition()", setup.context);
+  assert.equal(storage.has(STORAGE_KEYS.SHOW_BUTTON_POSITION), false);
+  assert.equal(setup.button.style.left, "20px");
+  assert.equal(setup.button.style.bottom, "50px");
+  assert.equal(setup.button.style.right, "auto");
+  assert.equal(setup.button.style.top, "auto");
 });
 
 test("factory reset feedback resolves and replaces stale downloader and closed-shortcut controls", async () => {
@@ -99,7 +196,7 @@ test("factory reset feedback resolves and replaces stale downloader and closed-s
   timers.shift()();
   await reset;
   assert.equal(removed, 2);
-  assert.equal(cleaned, 1);
+  assert.equal(cleaned, 2);
   assert.equal(discoveries, 1);
   assert.equal(renders, 2);
   assert.equal(state.ui.isDownloaderClosed, false);

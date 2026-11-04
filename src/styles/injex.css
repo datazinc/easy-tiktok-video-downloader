@@ -856,7 +856,8 @@
 #ettpd-show {
   padding: 8px 12px;
   bottom: 50px;
-  right: 20px;
+  left: 20px;
+  right: auto;
   z-index: 99998;
   border-radius: 20px;
   cursor: grab;

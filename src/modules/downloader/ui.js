@@ -107,6 +107,15 @@ function setLocalizedButton(button, key, icon = null, values = {}) {
   setButtonWithIcon(button, t(key, values), icon);
 }
 
+function readStoredPosition(value) {
+  try {
+    const position = JSON.parse(value || "null");
+    return position && Number.isFinite(position.left) && Number.isFinite(position.top) ? position : null;
+  } catch {
+    return null;
+  }
+}
+
 function templateDisplayName(template) {
   const preset = getPresetTemplates().find(candidate => candidate.label === template.label && (candidate.template === template.template || candidate.template === template.fullPathTemplate));
   return preset?.messageKey ? t(preset.messageKey) : template.label;
@@ -638,7 +647,7 @@ export function createDownloaderWrapper() {
   cornerToggle.setAttribute("aria-haspopup", "listbox");
   cornerToggle.setAttribute("aria-expanded", "false");
 
-  let cornerIcon = createIcon("corner-bottom-right", 14);
+  let cornerIcon = createIcon("corner-bottom-left", 14);
   cornerIcon.setAttribute("class", "ettpd-corner-select-icon");
   cornerToggle.appendChild(cornerIcon);
   cornerSelectorWrapper.appendChild(cornerToggle);
@@ -784,7 +793,7 @@ export function createDownloaderWrapper() {
   // Restore pinned position if exists
   const saved =
     localStorage.getItem(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE) ||
-    "bottom-right";
+    "bottom-left";
 
   // Set initial select value and icon
   if (saved && saved !== "custom") {
@@ -792,18 +801,14 @@ export function createDownloaderWrapper() {
   }
 
   if (saved === "custom") {
-    const pos =
-      AppState.ui.live_ETTPD_CUSTOM_POS &&
-      typeof AppState.ui.live_ETTPD_CUSTOM_POS == "string"
-        ? JSON.parse(AppState.ui.live_ETTPD_CUSTOM_POS)
-        : {};
+    const pos = readStoredPosition(AppState.ui.live_ETTPD_CUSTOM_POS);
     console.log("POS: ", pos);
-    if (pos.left != null && pos.top != null) {
+    if (pos) {
       wrapper.style.left = `${pos.left}px`;
       wrapper.style.top = `${pos.top}px`;
       wrapper.style.bottom = "auto";
       wrapper.style.right = "auto";
-    }
+    } else applyCornerPosition(wrapper, "bottom-left");
     console.log("not applyCornerPosition-->", pos);
   } else if (saved) {
     applyCornerPosition(wrapper, saved);
@@ -5715,6 +5720,10 @@ function makeElementDraggable(wrapper, handle) {
 
   let offsetX = 0,
     offsetY = 0;
+  let dragging = false;
+  let moved = false;
+  let startX = 0;
+  let startY = 0;
 
   // Start dragging
   handle.addEventListener("mousedown", (e) => {
@@ -5724,6 +5733,10 @@ function makeElementDraggable(wrapper, handle) {
     );
 
     AppState.ui.isDragging = true;
+    dragging = true;
+    moved = false;
+    startX = e.clientX;
+    startY = e.clientY;
     console.log(
       " AppState.ui.isDragging 12orubt mousedown 2",
       AppState.ui.isDragging,
@@ -5735,30 +5748,12 @@ function makeElementDraggable(wrapper, handle) {
   });
 
   //Dragging in motion
-  document.addEventListener("mousemove", (e) => {
-    if (
-      localStorage.getItem(STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION) !==
-      AppState.ui.live_ETTPD_CUSTOM_POS
-    ) {
-      // Persist location:
-      AppState.ui.downloaderPositionType = "custom";
-      localStorage.setItem(
-        STORAGE_KEYS.DOWNLOADER_POSITION_TYPE,
-        AppState.ui.downloaderPositionType,
-      );
-      localStorage.setItem(
-        STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION,
-        AppState.ui.live_ETTPD_CUSTOM_POS,
-      );
-
-      // Reset corner selector to "free" since user is now using custom positioning
-      const wrapperEl = document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER);
-      if (wrapperEl?._setCornerValue) {
-        wrapperEl._setCornerValue("");
-      }
-    }
-
-    if (!AppState.ui.isDragging) return;
+  const handleMouseMove = (e) => {
+    if (!dragging) return;
+    if (Math.abs(e.clientX - startX) <= 2 && Math.abs(e.clientY - startY) <= 2 && !moved) return;
+    moved = true;
+    AppState.ui.downloaderPositionType = "custom";
+    wrapper._setCornerValue?.("");
 
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
@@ -5771,9 +5766,9 @@ function makeElementDraggable(wrapper, handle) {
     const headerExtension = 37;
     const footerExtension = 17;
     const minLeft = 0;
-    const maxLeft = viewportWidth - wrapperRect.width;
+    const maxLeft = Math.max(0, viewportWidth - wrapperRect.width);
     const minTop = headerExtension; // Ensure header doesn't go above viewport
-    const maxTop = viewportHeight - wrapperRect.height - footerExtension; // Ensure footer doesn't go below viewport
+    const maxTop = Math.max(minTop, viewportHeight - wrapperRect.height - footerExtension); // Ensure footer doesn't go below viewport
 
     newLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
     newTop = Math.max(minTop, Math.min(maxTop, newTop));
@@ -5788,7 +5783,8 @@ function makeElementDraggable(wrapper, handle) {
       left: newLeft,
       top: newTop,
     });
-  });
+  };
+  document.addEventListener("mousemove", handleMouseMove);
 
   // Ensure wrapper stays in viewport on window resize
   const handleResize = () => {
@@ -5815,18 +5811,20 @@ function makeElementDraggable(wrapper, handle) {
   window.addEventListener("resize", handleResize);
 
   // Stop dragging
-  document.addEventListener("mouseup", () => {
+  const handleMouseUp = () => {
+    if (!dragging) return;
+    dragging = false;
     AppState.ui.isDragging = false;
     document.body.style.userSelect = "";
+    if (!moved) return;
 
     // Ensure final position is constrained
     constrainWrapperToViewport(wrapper);
 
     // Save final position if using custom position
-    const positionType = localStorage.getItem(
-      STORAGE_KEYS.DOWNLOADER_POSITION_TYPE,
-    );
+    const positionType = AppState.ui.downloaderPositionType;
     if (positionType === "custom") {
+      localStorage.setItem(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE, "custom");
       const pos = constrainWrapperToViewport(wrapper);
       if (pos) {
         AppState.ui.live_ETTPD_CUSTOM_POS = JSON.stringify(pos);
@@ -5836,11 +5834,19 @@ function makeElementDraggable(wrapper, handle) {
         );
       }
     }
-  });
+  };
+  document.addEventListener("mouseup", handleMouseUp);
 
   // Store cleanup function on wrapper for later removal if needed
   wrapper._cleanupDraggable = () => {
     window.removeEventListener("resize", handleResize);
+    document.removeEventListener("mousemove", handleMouseMove);
+    document.removeEventListener("mouseup", handleMouseUp);
+    if (dragging) {
+      AppState.ui.isDragging = false;
+      document.body.style.userSelect = "";
+    }
+    dragging = false;
   };
 }
 
@@ -5908,6 +5914,7 @@ function makeShowButtonDraggable(button) {
       hasMoved = true;
       button.dataset.wasDragging = "true";
     }
+    if (!hasMoved) return;
 
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
@@ -5918,9 +5925,9 @@ function makeShowButtonDraggable(button) {
 
     // Constrain to viewport bounds - ensure button never goes offscreen
     const minLeft = 0;
-    const maxLeft = viewportWidth - buttonRect.width;
+    const maxLeft = Math.max(0, viewportWidth - buttonRect.width);
     const minTop = 0;
-    const maxTop = viewportHeight - buttonRect.height;
+    const maxTop = Math.max(0, viewportHeight - buttonRect.height);
 
     newLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
     newTop = Math.max(minTop, Math.min(maxTop, newTop));
@@ -5934,7 +5941,8 @@ function makeShowButtonDraggable(button) {
     // Throttle localStorage saves to avoid performance issues
     if (!button._savePositionTimeout) {
       button._savePositionTimeout = setTimeout(() => {
-        const position = JSON.stringify({ left: newLeft, top: newTop });
+        const rect = button.getBoundingClientRect();
+        const position = JSON.stringify({ left: rect.left, top: rect.top });
         localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_POSITION, position);
         button._savePositionTimeout = null;
       }, 100);
@@ -5944,7 +5952,7 @@ function makeShowButtonDraggable(button) {
   // Ensure button stays in viewport on window resize
   const handleResize = () => {
     if (button && button.parentElement) {
-      constrainToViewport();
+      if (!readStoredPosition(localStorage.getItem(STORAGE_KEYS.SHOW_BUTTON_POSITION))) return;
       const pos = constrainToViewport();
       localStorage.setItem(
         STORAGE_KEYS.SHOW_BUTTON_POSITION,
@@ -5970,12 +5978,11 @@ function makeShowButtonDraggable(button) {
         clearTimeout(button._savePositionTimeout);
         button._savePositionTimeout = null;
       }
-      const buttonRect = button.getBoundingClientRect();
-      const position = JSON.stringify({
-        left: buttonRect.left,
-        top: buttonRect.top,
-      });
-      localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_POSITION, position);
+      if (hasMoved) {
+        const buttonRect = button.getBoundingClientRect();
+        const position = JSON.stringify({ left: buttonRect.left, top: buttonRect.top });
+        localStorage.setItem(STORAGE_KEYS.SHOW_BUTTON_POSITION, position);
+      }
 
       // Reset after a short delay
       setTimeout(() => {
@@ -5988,6 +5995,9 @@ function makeShowButtonDraggable(button) {
 
   // Store cleanup on button for later removal if needed
   button._cleanupDraggable = () => {
+    clearTimeout(button._savePositionTimeout);
+    button._savePositionTimeout = null;
+    if (isDragging) document.body.style.userSelect = "";
     window.removeEventListener("resize", handleResize);
     document.removeEventListener("mousemove", handleMouseMove);
     document.removeEventListener("mouseup", handleMouseUp);
@@ -6002,10 +6012,10 @@ export function resetShowButtonPosition() {
   // If button exists, reset its position
   const showBtn = document.getElementById(DOM_IDS.SHOW_DOWNLOADER);
   if (showBtn) {
-    showBtn.style.left = "auto";
+    showBtn.style.left = "20px";
     showBtn.style.top = "auto";
     showBtn.style.bottom = "50px";
-    showBtn.style.right = "20px";
+    showBtn.style.right = "auto";
   }
 }
 
@@ -6133,10 +6143,8 @@ export function hideDownloader() {
   if (savedPosition) {
     try {
       const pos = JSON.parse(savedPosition);
-      if (pos.left != null && pos.top != null) {
+      if (Number.isFinite(pos?.left) && Number.isFinite(pos?.top)) {
         // Ensure position is within viewport bounds
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
         // We'll measure the button after it's added to DOM, but set initial position
         showBtn.style.left = `${pos.left}px`;
         showBtn.style.top = `${pos.top}px`;
@@ -6147,9 +6155,9 @@ export function hideDownloader() {
         setTimeout(() => {
           const buttonRect = showBtn.getBoundingClientRect();
           const minLeft = 0;
-          const maxLeft = viewportWidth - buttonRect.width;
+          const maxLeft = Math.max(0, window.innerWidth - buttonRect.width);
           const minTop = 0;
-          const maxTop = viewportHeight - buttonRect.height;
+          const maxTop = Math.max(0, window.innerHeight - buttonRect.height);
 
           let constrainedLeft = Math.max(minLeft, Math.min(maxLeft, pos.left));
           let constrainedTop = Math.max(minTop, Math.min(maxTop, pos.top));
@@ -7160,7 +7168,9 @@ export function createPreferencesBox() {
     await showFeedback(t("settingsReset"));
     AppState.ui.isPreferenceBoxOpen = false;
     AppState.ui.isScrapperBoxOpen = false;
-    document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER)?.remove();
+    const wrapper = document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER);
+    wrapper?._cleanupDraggable?.();
+    wrapper?.remove();
     const showButton = document.getElementById(DOM_IDS.SHOW_DOWNLOADER);
     showButton?._cleanupDraggable?.();
     showButton?.remove();
