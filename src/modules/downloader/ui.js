@@ -1,11 +1,13 @@
 // ui.js
 import AppState, { resetAppStateToDefaults } from "../state/state.js";
+import { t, getLocale, bindText, clearText, initializeI18n, createLanguageControl, onLanguageChange, localizeMarkup } from "../i18n/index.js";
+import { summarizeResume } from "../storage/resumeSummary.js";
 import { showPayItForwardDialog, hasSupportCooldown } from "../utils/payItForward.js";
 import { getShortDramaId, resolveShortDramaRequest, collectShortDramaEpisodes, getEpisodeNumber } from "../utils/shortDrama.js";
 import { getCollectionContext, resolveCollectionRequest, collectCollectionItems } from "../utils/collection.js";
 import { getAccountUsername, resolveAccountList, rememberAccountIdentity } from "../utils/accountLists.js";
-import { DEFAULT_BATCH_SIZE } from "../storage/progressiveBatch.js";
-import { createHtmlFragment, replaceElementHtml } from "../utils/html.js";
+import { DEFAULT_BATCH_SIZE, ProgressiveBatch } from "../storage/progressiveBatch.js";
+import { createHtmlFragment, replaceElementHtml as replaceRawElementHtml } from "../utils/html.js";
 import {
   STORAGE_KEYS,
   DOM_IDS,
@@ -77,8 +79,55 @@ import {
 import { handleFoundItems, handleResumeDownload } from "./handlers.js";
 
 // Track current username to detect profile changes for resume downloads
+function replaceElementHtml(element, markup) {
+  clearText(element);
+  replaceRawElementHtml(element, markup);
+  localizeMarkup(element);
+}
+
 let lastTrackedUsername = null;
 const experimentalHdHydrationState = new Map();
+initializeI18n();
+onLanguageChange(() => {
+  for (const button of document.querySelectorAll("[data-i18n-button]")) {
+    if (button.dataset.downloadActive !== "true" && !button.classList.contains("ettpd-batch-progress")) setButtonWithIcon(button, t(button.dataset.i18nButton, button._i18nValues || {}), button.dataset.i18nIcon || null);
+  }
+  const batchButton = document.getElementById(DOM_IDS.DOWNLOAD_ALL_BUTTON);
+  if (batchButton && AppState.downloading.isDownloadingAll) renderBatchDownloadProgress(batchButton);
+  showStatsSpan();
+});
+
+function setLocalizedButton(button, key, icon = null, values = {}) {
+  button.dataset.i18nButton = key;
+  button.dataset.i18nIcon = icon || "";
+  button._i18nValues = values;
+  setButtonWithIcon(button, t(key, values), icon);
+}
+
+function templateDisplayName(template) {
+  const preset = getPresetTemplates().find(candidate => candidate.label === template.label && (candidate.template === template.template || candidate.template === template.fullPathTemplate));
+  return preset?.messageKey ? t(preset.messageKey) : template.label;
+}
+
+function renderResumeSummary(checkpoint) {
+  let chunk = null;
+  try { chunk = new ProgressiveBatch(sessionStorage).readChunk(checkpoint.scope); } catch {}
+  const summary = summarizeResume(checkpoint, chunk);
+  const list = document.createElement("dl");
+  list.className = "ettpd-resume-summary";
+  for (const key of ["saved", "skipped", "pending", "unconfirmed", "failed", "remaining"]) {
+    const label = document.createElement("dt"); bindText(label, key);
+    const value = document.createElement("dd");
+    if (summary[key] === null) {
+      label.className = "ettpd-summary-unknown";
+      value.className = "ettpd-summary-unknown";
+      bindText(value, "unknown");
+    }
+    else bindText(value, "number", { count: summary[key] });
+    list.append(label, value);
+  }
+  return list;
+}
 
 const CHROME_EXTENSION_REVIEW_URL =
   "https://chrome.google.com/webstore/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg";
@@ -249,7 +298,7 @@ export function showToast(title, message, duration = 4500) {
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.className = "ettpd-toast-close";
-  closeBtn.setAttribute("aria-label", "Dismiss notification");
+  bindText(closeBtn, "dismiss", {}, "aria-label");
   closeBtn.textContent = "×";
 
   const dismissToast = () => {
@@ -367,7 +416,7 @@ export function setButtonWithIcon(
   iconPosition = "before",
 ) {
   // Clear existing content
-  button.textContent = "";
+  clearText(button);
 
   if (iconName) {
     const icon = createIcon(iconName, 16);
@@ -422,8 +471,8 @@ function createHeaderPowerButton() {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "ettpd-icon-btn ettpd-power-btn";
-  button.title = "Turn extension off";
-  button.setAttribute("aria-label", "Turn extension off");
+  bindText(button, "disable", {}, "title");
+  bindText(button, "disable", {}, "aria-label");
 
   replaceElementHtml(
     button,
@@ -441,11 +490,8 @@ function createHeaderPowerButton() {
     button.classList.toggle("ettpd-power-btn-on", enabled);
     button.classList.toggle("ettpd-power-btn-off", !enabled);
     button.setAttribute("aria-pressed", enabled ? "true" : "false");
-    button.title = enabled ? "Turn extension off" : "Turn extension on";
-    button.setAttribute(
-      "aria-label",
-      enabled ? "Turn extension off" : "Turn extension on",
-    );
+    bindText(button, enabled ? "disable" : "enable", {}, "title");
+    bindText(button, enabled ? "disable" : "enable", {}, "aria-label");
   };
 
   applyState(isExtensionEnabledSync());
@@ -465,9 +511,7 @@ function createHeaderPowerButton() {
         message.className = "alert";
         replaceElementHtml(
           message,
-          "⚠️ <b>Disable Extension?</b><br><br>" +
-            "The extension will be completely disabled. No scripts will run, no polling will occur, and no downloads will be processed.<br><br>" +
-            "To re-enable, click the extension icon and select 'Turn On'.",
+          '<p data-i18n="disableWarning"></p>',
         );
 
         const actionsContainer = document.createElement("div");
@@ -480,7 +524,7 @@ function createHeaderPowerButton() {
 
         const cancelBtn = document.createElement("button");
         cancelBtn.className = "ettpd-modal-button secondary";
-        cancelBtn.textContent = "Cancel";
+        bindText(cancelBtn, "cancel");
         cancelBtn.onclick = () => {
           const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
           if (overlay) overlay.remove();
@@ -489,15 +533,15 @@ function createHeaderPowerButton() {
 
         const disableBtn = document.createElement("button");
         disableBtn.className = "ettpd-modal-button danger";
-        disableBtn.textContent = "Disable";
+        bindText(disableBtn, "disable");
         disableBtn.onclick = async () => {
           console.log("[EXT_POWER] disabling via header modal");
           await setExtensionEnabled(false);
           applyState(false);
 
           showToast(
-            "Extension disabled",
-            "Reloading the page to stop the downloader...",
+            t("disabled"),
+            t("disabling"),
           );
 
           const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
@@ -524,8 +568,8 @@ function createHeaderPowerButton() {
     await setExtensionEnabled(true);
     applyState(true);
     showToast(
-      "Extension enabled",
-      "Reload the page for changes to take effect.",
+      t("enable"),
+      t("refreshHint"),
     );
   };
 
@@ -547,7 +591,7 @@ export function createDownloaderWrapper() {
 
   const dragHandle = document.createElement("div");
   dragHandle.className = "ettpd-drag-handle";
-  dragHandle.title = "Press & hold, then drag to move";
+  bindText(dragHandle, "dragMove", {}, "title");
   replaceElementHtml(
     dragHandle,
     `<svg class="ettpd-drag-handle-icon" style="display:flex;align-items:center;justify-content:center;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -569,14 +613,14 @@ export function createDownloaderWrapper() {
   cornerSelectorWrapper.className = "ettpd-corner-select-wrapper";
 
   const cornerOptions = [
-    { value: "", icon: "corner-none", label: "Free" },
-    { value: "top-left", icon: "corner-top-left", label: "Top Left" },
-    { value: "top-right", icon: "corner-top-right", label: "Top Right" },
-    { value: "bottom-left", icon: "corner-bottom-left", label: "Bottom Left" },
+    { value: "", icon: "corner-none", label: "cornerFree" },
+    { value: "top-left", icon: "corner-top-left", label: "cornerTopLeft" },
+    { value: "top-right", icon: "corner-top-right", label: "cornerTopRight" },
+    { value: "bottom-left", icon: "corner-bottom-left", label: "cornerBottomLeft" },
     {
       value: "bottom-right",
       icon: "corner-bottom-right",
-      label: "Bottom Right",
+      label: "cornerBottomRight",
     },
   ];
 
@@ -586,8 +630,8 @@ export function createDownloaderWrapper() {
   const cornerToggle = document.createElement("button");
   cornerToggle.type = "button";
   cornerToggle.className = "ettpd-corner-toggle";
-  cornerToggle.title = "Snap to corner";
-  cornerToggle.setAttribute("aria-label", "Snap to corner");
+  bindText(cornerToggle, "snapCorner", {}, "title");
+  bindText(cornerToggle, "snapCorner", {}, "aria-label");
   cornerToggle.setAttribute("aria-haspopup", "listbox");
   cornerToggle.setAttribute("aria-expanded", "false");
 
@@ -607,7 +651,8 @@ export function createDownloaderWrapper() {
     item.className = "ettpd-corner-menu-item";
     item.dataset.value = value;
     item.setAttribute("role", "option");
-    item.title = label;
+    bindText(item, label, {}, "title");
+    bindText(item, label, {}, "aria-label");
 
     const itemIcon = createIcon(icon, 16);
     item.appendChild(itemIcon);
@@ -687,8 +732,8 @@ export function createDownloaderWrapper() {
   const leaderboardBtn = document.createElement("button");
   leaderboardBtn.type = "button";
   leaderboardBtn.className = "ettpd-icon-btn ettpd-leaderboard-btn";
-  leaderboardBtn.title = "View Leaderboard";
-  leaderboardBtn.setAttribute("aria-label", "View leaderboard");
+  bindText(leaderboardBtn, "leaderboard", {}, "title");
+  bindText(leaderboardBtn, "leaderboard", {}, "aria-label");
   replaceElementHtml(
     leaderboardBtn,
     `
@@ -704,8 +749,8 @@ export function createDownloaderWrapper() {
   const shareBtn = document.createElement("button");
   shareBtn.type = "button";
   shareBtn.className = "ettpd-icon-btn ettpd-share-btn";
-  shareBtn.title = "Share Extension!";
-  shareBtn.setAttribute("aria-label", "Share extension");
+  bindText(shareBtn, "share", {}, "title");
+  bindText(shareBtn, "share", {}, "aria-label");
   replaceElementHtml(
     shareBtn,
     `
@@ -728,6 +773,7 @@ export function createDownloaderWrapper() {
   controlBar.appendChild(dragHandle);
   controlBar.appendChild(leaderboardBtn);
   controlBar.appendChild(shareBtn);
+  controlBar.appendChild(createLanguageControl("ettpd-icon-btn", { getTheme: getResolvedThemeMode }));
   controlBar.appendChild(powerButton);
   wrapper.appendChild(controlBar);
   if (!wrapper || !wrapper.style) return;
@@ -897,7 +943,7 @@ async function createResumableDownloadsContainer(pageInfo, tabOptions) {
     // Title
     const title = document.createElement("div");
     title.className = "ettpd-resume-downloads-title";
-    title.textContent = "Resume Downloads:";
+    bindText(title, "resume");
     container.appendChild(title);
 
     // List of resumable downloads
@@ -910,11 +956,11 @@ async function createResumableDownloadsContainer(pageInfo, tabOptions) {
 
       const label = document.createElement("span");
       label.className = "ettpd-resume-download-label";
-      label.textContent = `${tab.label} (saved ${tab.count})`;
+      bindText(label, "scanRecorded", () => ({ list: tab.isCollection ? tab.label : t(tab.key), count: tab.count }));
       item.appendChild(label);
 
       const resumeBtn = document.createElement("button");
-      setButtonWithIcon(resumeBtn, "Resume", "play");
+      setLocalizedButton(resumeBtn, "resume", "play");
       resumeBtn.className = "ettpd-pref-btn primary ettpd-resume-downloads-btn";
 
       resumeBtn.onclick = async () => {
@@ -992,14 +1038,9 @@ function renderActiveScrappingView() {
   // Left section: Tab name
   const tabName = document.createElement("span");
   tabName.className = "ettpd-progress-tab-name";
-  const tabDisplay = toTitleCase(
-    AppState.scrapperDetails.selectedTab || "Scrapper",
-  );
-  tabName.textContent =
-    tabDisplay.length > 12 ? tabDisplay.slice(0, 12) + "..." : tabDisplay;
-  if (tabDisplay.length > 12) {
-    tabName.title = tabDisplay;
-  }
+  const selectedTabKey = AppState.scrapperDetails.selectedTab;
+  if (["videos", "liked", "reposts", "favorites"].includes(selectedTabKey)) bindText(tabName, selectedTabKey);
+  else bindText(tabName, "displayName", () => ({ name: AppState.scrapperDetails.selectedCollectionName || t("autoScroll") }));
 
   // Center section: Status info
   const statusInfo = document.createElement("span");
@@ -1014,7 +1055,7 @@ function renderActiveScrappingView() {
     "",
     AppState.scrapperDetails.paused ? "play" : "pause",
   );
-  pauseBtn.title = AppState.scrapperDetails.paused ? "Resume" : "Pause";
+  bindText(pauseBtn, AppState.scrapperDetails.paused ? "resume" : "pause", {}, "title");
   pauseBtn.style.cssText = `
     background: ${AppState.scrapperDetails.paused ? "#007AFF" : "#FF9500"};
     color: white;
@@ -1045,12 +1086,12 @@ function renderActiveScrappingView() {
     if (AppState.scrapperDetails.paused) {
       AppState.downloadPreferences.autoScrollMode = "off";
       setButtonWithIcon(pauseBtn, "", "play");
-      pauseBtn.title = "Resume";
+      bindText(pauseBtn, "resume", {}, "title");
       pauseBtn.style.background = "#007AFF";
     } else {
       AppState.downloadPreferences.autoScrollMode = "always";
       setButtonWithIcon(pauseBtn, "", "pause");
-      pauseBtn.title = "Pause";
+      bindText(pauseBtn, "pause", {}, "title");
       pauseBtn.style.background = "#FF9500";
     }
     localStorage.setItem(
@@ -1153,53 +1194,7 @@ function renderActiveScrappingView() {
       downloaded = Math.min(downloaded, discovered);
     }
 
-    let statusText = "";
-    if (AppState.scrapperDetails.paused) {
-      // When paused, show percentage if skipDownloaded is enabled and discovering
-      if (skipDownloaded && isDiscovering) {
-        let percentage =
-          maxCount > 0 ? Math.round((downloaded / maxCount) * 100) : 0;
-        if (percentage >= 100) {
-          percentage = 99;
-        }
-        statusText = `Paused | ${downloaded}/${maxCount} (${percentage}%) discovering...`;
-      } else {
-        statusText = `Paused | ${downloaded}/${discovered}`;
-      }
-    } else if (isDownloading && isAutoBatch) {
-      // When downloading in batches
-      let percentage =
-        maxCount > 0 ? Math.round((downloaded / maxCount) * 100) : 0;
-
-      if (skipDownloaded && isDiscovering) {
-        // Still discovering - cap percentage at 99% (never show 100% while discovering)
-        if (percentage >= 100) {
-          percentage = 99;
-        }
-        statusText = `Batch #${currentBatch} | ${downloaded}/${maxCount} (${percentage}%) discovering...`;
-      } else {
-        // Done discovering, show normal progress with percentage
-        statusText = `Batch #${currentBatch} | ${downloaded}/${discovered} (${percentage}%)`;
-      }
-    } else if (discovered > 0) {
-      // Not downloading yet, but have discovered items
-      if (skipDownloaded && isDiscovering) {
-        // Still discovering with skipDownloaded enabled - show percentage but cap at 99%
-        let percentage =
-          maxCount > 0 ? Math.round((downloaded / maxCount) * 100) : 0;
-        if (percentage >= 100) {
-          percentage = 99;
-        }
-        statusText = `${downloaded}/${maxCount} (${percentage}%) discovering...`;
-      } else {
-        // Normal display
-        statusText = `${downloaded}/${discovered}`;
-      }
-    } else {
-      statusText = "Discovering...";
-    }
-
-    statusInfo.textContent = statusText;
+    bindText(statusInfo, "scanProgress", () => ({ current: downloaded, total: skipDownloaded && isDiscovering ? maxCount : discovered, phase: t(AppState.scrapperDetails.paused ? "paused" : isDiscovering ? "loading" : isDownloading ? "download" : "ready") }));
   };
 
   updateStatusInfo();
@@ -1236,7 +1231,7 @@ function renderActiveScrappingView() {
         .innerHTML.includes('polygon points="5 3 19 12 5 21 5 3"');
     if (shouldBePaused !== isCurrentlyPaused) {
       setButtonWithIcon(pauseBtn, "", shouldBePaused ? "play" : "pause");
-      pauseBtn.title = shouldBePaused ? "Resume" : "Pause";
+      bindText(pauseBtn, shouldBePaused ? "resume" : "pause", {}, "title");
       pauseBtn.style.background = shouldBePaused ? "#007AFF" : "#FF9500";
     }
 
@@ -1308,7 +1303,7 @@ async function renderCompletedView() {
 
   const continueBtn = document.createElement("button");
   continueBtn.className = "ettpd-scrapper-continue-btn";
-  setButtonWithIcon(continueBtn, "Continue Scrapping", "play");
+  setLocalizedButton(continueBtn, "continue", "play");
   continueBtn.style.cssText = `
     background: #007AFF;
     color: white;
@@ -1349,7 +1344,7 @@ async function renderCompletedView() {
 
   const csvBtn = document.createElement("button");
   csvBtn.className = "ettpd-scrapper-continue-btn";
-  setButtonWithIcon(csvBtn, "Download CSV", "download");
+  setLocalizedButton(csvBtn, "downloadCsv", "download");
   csvBtn.style.cssText = `
     background: #f0f0f0;
     color: #333;
@@ -1379,22 +1374,22 @@ async function renderCompletedView() {
 
     if (downloadedItems.length === 0) {
       showToast(
-        "No items to export",
-        "No downloaded items found to export to CSV.",
+        t("exportEmpty"),
+        t("exportEmpty"),
       );
       return;
     }
 
     saveCSVFile(downloadedItems);
     showToast(
-      "CSV Export Started",
-      `Exporting ${downloadedItems.length} downloaded items to CSV file.`,
+      t("downloadCsv"),
+      t("itemsCount", { count: downloadedItems.length }),
     );
   };
 
   const endBtn = document.createElement("button");
   endBtn.className = "ettpd-scrapper-continue-btn";
-  endBtn.textContent = "End Scrapping";
+  bindText(endBtn, "stop");
   endBtn.style.cssText = `
     background: #ff3b30;
     color: white;
@@ -1447,15 +1442,13 @@ async function renderCompletedView() {
     // Get available tabs
     const spans = await getTabSpans(5 * 1000); // 5 seconds wait
     const tabOptions = [
-      { key: "videos", label: "Scrape Videos", icon: "video" },
-      { key: "reposts", label: "Scrape Reposts", icon: "repost" },
-      { key: "liked", label: "Scrape Likes", icon: "heart" },
-      { key: "favorites", label: "Scrape Favorites", icon: "star" },
+      { key: "videos", label: t("videos"), icon: "video" },
+      { key: "reposts", label: t("reposts"), icon: "repost" },
+      { key: "liked", label: t("liked"), icon: "heart" },
+      { key: "favorites", label: t("favorites"), icon: "star" },
       {
         key: "collection",
-        label: `Scrape: ${
-          spans.collection || pageInfo.collectionName || "Collection"
-        }`,
+        label: t("scanList", { list: spans.collection || pageInfo.collectionName || "Collection" }),
         icon: "folder",
       },
     ];
@@ -1489,7 +1482,7 @@ async function renderCompletedView() {
         margin-bottom: 10px;
         text-align: center;
       `;
-      otherTabsTitle.textContent = "Scrape Another Tab:";
+      bindText(otherTabsTitle, "downloadOtherTabs");
       separator.appendChild(otherTabsTitle);
 
       const tabsGrid = document.createElement("div");
@@ -1522,7 +1515,7 @@ async function renderCompletedView() {
         if (iconEl) {
           btn.appendChild(iconEl);
         }
-        btn.appendChild(document.createTextNode(label.replace("Scrape ", "")));
+        setLocalizedButton(btn, key, icon);
 
         btn.onmouseover = () => {
           btn.style.background = "var(--ettpd-button-primary, #007AFF)";
@@ -1595,13 +1588,13 @@ function showFilePathHintModal() {
         <span style="font-size:28px;">📂</span>
       </div>
       <div class="alert" style="text-align:left;">
-        <strong>Where do your downloads go?</strong><br><br>
-        By default, files are saved to your browser's <b>Downloads</b> folder using a flat naming format like:<br>
+        <strong data-i18n="templateLocation"></strong><br><br>
+        <p data-i18n="templateDefaultLocation"></p>
         <code style="font-size:11px;background:var(--ettpd-bg-secondary,#eee);padding:2px 6px;border-radius:4px;display:inline-block;margin:6px 0;">
           @username-Videos-2025-01-01-cool-video-12345.mp4
         </code><br><br>
-        You can organise downloads into <b>folders by username, tab, date</b> and more using file path templates.<br><br>
-        <span style="font-size:11px;color:var(--ettpd-text-secondary,#888);">You can always change this later in Settings → File Path Templates.</span>
+        <p data-i18n="templateIntro"></p>
+        <span data-i18n="settings"></span> → <span data-i18n="templateTitle"></span>
       </div>
     `,
     );
@@ -1617,7 +1610,7 @@ function showFilePathHintModal() {
 
     const continueBtn = document.createElement("button");
     continueBtn.className = "ettpd-modal-button secondary";
-    continueBtn.textContent = "Continue with Defaults";
+    bindText(continueBtn, "continue");
     continueBtn.onclick = () => {
       const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
       if (overlay) overlay.remove();
@@ -1626,7 +1619,7 @@ function showFilePathHintModal() {
 
     const configureBtn = document.createElement("button");
     configureBtn.className = "ettpd-modal-button primary";
-    setButtonWithIcon(configureBtn, "Configure File Paths", "settings");
+    setLocalizedButton(configureBtn, "templateTitle", "settings");
     configureBtn.onclick = () => {
       const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
       if (overlay) overlay.remove();
@@ -1751,7 +1744,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
     `;
     replaceElementHtml(
       warningText,
-      "<strong>⚠️ Heads up:</strong> Please navigate to a profile or collection page first. If you download from other pages, you may end up downloading random posts. Reload the page if you don't see any tabs.",
+      '<p data-i18n="scanProfileRequired"></p>',
     );
     warningContainer.appendChild(warningText);
     stepperContainer.appendChild(warningContainer);
@@ -1881,7 +1874,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
 
       const newDownloadsTitle = document.createElement("div");
       newDownloadsTitle.className = "ettpd-resume-downloads-title";
-      newDownloadsTitle.textContent = "Download Other Tabs:";
+      bindText(newDownloadsTitle, "downloadOtherTabs");
       newDownloadsTitle.style.marginBottom = "10px";
       separator.appendChild(newDownloadsTitle);
 
@@ -1945,7 +1938,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
     const allTabsAvailable = availableTabs.length === tabOptions.length;
     if (!allTabsAvailable && pageInfo.isProfile) {
       const refreshTabsBtn = document.createElement("button");
-      setButtonWithIcon(refreshTabsBtn, "Check for More Tabs", "refresh");
+      setLocalizedButton(refreshTabsBtn, "checkTabs", "refresh");
       refreshTabsBtn.className = "ettpd-refresh-tabs-btn";
       refreshTabsBtn.style.cssText = `
         background: #f0f0f0;
@@ -1972,7 +1965,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
         if (isRefreshing) return;
         isRefreshing = true;
         refreshTabsBtn.disabled = true;
-        updateButtonWithIcon(refreshTabsBtn, "Checking...", "hourglass");
+        setLocalizedButton(refreshTabsBtn, "preparing", "hourglass");
         refreshTabsBtn.style.background = "#999";
 
         try {
@@ -1991,29 +1984,29 @@ async function createStepperView(pageInfo, tabOptions, spans) {
 
           // If we found more tabs, re-render
           if (newAvailableTabs.length > availableTabs.length) {
-            updateButtonWithIcon(refreshTabsBtn, "Found More!", "check");
+            setLocalizedButton(refreshTabsBtn, "ready", "check");
             setTimeout(() => {
               showScrapperControls(); // Re-render with new tabs
             }, 500);
           } else {
-            updateButtonWithIcon(
+            setLocalizedButton(
               refreshTabsBtn,
-              "Check for More Tabs",
+              "checkTabs",
               "refresh",
             );
             refreshTabsBtn.style.background = "#f0f0f0";
             // Show a brief message
             const originalContent = refreshTabsBtn.cloneNode(true);
-            refreshTabsBtn.textContent = "No new tabs found";
+            bindText(refreshTabsBtn, "noNewTabs");
             setTimeout(() => {
               refreshTabsBtn.replaceWith(originalContent);
             }, 2000);
           }
         } catch (err) {
           console.error("Error checking for tabs:", err);
-          updateButtonWithIcon(
+          setLocalizedButton(
             refreshTabsBtn,
-            "Check for More Tabs",
+            "checkTabs",
             "refresh",
           );
           refreshTabsBtn.style.background = "#f0f0f0";
@@ -2051,7 +2044,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
 
     const step2Label = document.createElement("div");
     step2Label.className = "ettpd-stepper-step-title";
-    step2Label.textContent = "Select Tab:";
+    bindText(step2Label, "selectTab");
     step2.appendChild(step2Label);
 
     const tabsGrid = document.createElement("div");
@@ -2072,7 +2065,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
     // Show refresh button if not all tabs are available (but at least some are)
     if (tabsAvailable && !allTabsAvailable && pageInfo.isProfile) {
       const refreshTabsBtn = document.createElement("button");
-      setButtonWithIcon(refreshTabsBtn, "Check for More Tabs", "refresh");
+      setLocalizedButton(refreshTabsBtn, "checkTabs", "refresh");
       refreshTabsBtn.className = "ettpd-refresh-tabs-btn";
       refreshTabsBtn.style.cssText = `
         background: #f0f0f0;
@@ -2099,7 +2092,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
         if (isRefreshing) return;
         isRefreshing = true;
         refreshTabsBtn.disabled = true;
-        updateButtonWithIcon(refreshTabsBtn, "Checking...", "hourglass");
+        setLocalizedButton(refreshTabsBtn, "preparing", "hourglass");
         refreshTabsBtn.style.background = "#999";
 
         try {
@@ -2118,29 +2111,29 @@ async function createStepperView(pageInfo, tabOptions, spans) {
 
           // If we found more tabs, re-render
           if (newAvailableTabs.length > availableTabs.length) {
-            updateButtonWithIcon(refreshTabsBtn, "Found More!", "check");
+            setLocalizedButton(refreshTabsBtn, "ready", "check");
             setTimeout(() => {
               showScrapperControls(); // Re-render with new tabs
             }, 500);
           } else {
-            updateButtonWithIcon(
+            setLocalizedButton(
               refreshTabsBtn,
-              "Check for More Tabs",
+              "checkTabs",
               "refresh",
             );
             refreshTabsBtn.style.background = "#f0f0f0";
             // Show a brief message
             const originalContent = refreshTabsBtn.cloneNode(true);
-            refreshTabsBtn.textContent = "No new tabs found";
+            bindText(refreshTabsBtn, "noNewTabs");
             setTimeout(() => {
               refreshTabsBtn.replaceWith(originalContent);
             }, 2000);
           }
         } catch (err) {
           console.error("Error checking for tabs:", err);
-          updateButtonWithIcon(
+          setLocalizedButton(
             refreshTabsBtn,
-            "Check for More Tabs",
+            "checkTabs",
             "refresh",
           );
           refreshTabsBtn.style.background = "#f0f0f0";
@@ -2223,7 +2216,7 @@ async function createStepperView(pageInfo, tabOptions, spans) {
 
     const step3Label = document.createElement("div");
     step3Label.className = "ettpd-stepper-step-title";
-    step3Label.textContent = `Selected: ${selectedTabLabel}`;
+    bindText(step3Label, "templateSelected", { name: selectedTabLabel });
     step3.appendChild(step3Label);
 
     const actionsRow = document.createElement("div");
@@ -2231,14 +2224,14 @@ async function createStepperView(pageInfo, tabOptions, spans) {
 
     const startBtn = document.createElement("button");
     startBtn.className = "ettpd-scrapper-start";
-    setButtonWithIcon(startBtn, "Start", "play");
+    setLocalizedButton(startBtn, "start", "play");
     startBtn.onclick = async () => {
       await startScrappingProcess(selectedTabKey, pageInfo);
     };
 
     const infoBtn = document.createElement("button");
     infoBtn.className = "ettpd-scrapper-learn";
-    setButtonWithIcon(infoBtn, "Info", "info");
+    setLocalizedButton(infoBtn, "info", "info");
     infoBtn.onclick = () => {
       explainerModal(toTitleCase(selectedTabKey));
     };
@@ -2306,15 +2299,13 @@ export async function showScrapperControls() {
 
   // Button Generator
   const tabOptions = [
-    { key: "videos", label: "Scrape Videos", icon: "video" },
-    { key: "reposts", label: "Scrape Reposts", icon: "repost" },
-    { key: "liked", label: "Scrape Likes", icon: "heart" },
-    { key: "favorites", label: "Scrape Favorites", icon: "star" },
+    { key: "videos", label: t("videos"), icon: "video" },
+    { key: "reposts", label: t("reposts"), icon: "repost" },
+    { key: "liked", label: t("liked"), icon: "heart" },
+    { key: "favorites", label: t("favorites"), icon: "star" },
     {
       key: "collection",
-      label: `Scrape: ${
-        spans.collection || pageInfo.collectionName || "Collection"
-      }`,
+      label: t("scanList", { list: spans.collection || pageInfo.collectionName || "Collection" }),
       icon: "folder",
     },
   ];
@@ -2512,20 +2503,7 @@ async function showDownloadConfirmationModal(username, tabName, count) {
     const safeTabName = escapeHtml(toTitleCase(tabName));
     const contentDiv = document.createElement("div");
     contentDiv.style.cssText = "padding: 20px; text-align: center;";
-    replaceElementHtml(
-      contentDiv,
-      `
-      <p style="margin-bottom: 15px; font-size: 14px;">
-        You've previously scraped <strong>@${safeUsername}</strong>'s <strong>${safeTabName}</strong>.
-      </p>
-      <p style="margin-bottom: 20px; font-size: 14px;">
-        Found <strong>${count}</strong> previously downloaded items.
-      </p>
-      <p style="margin-bottom: 20px; font-size: 13px; color: #666;">
-        What would you like to do?
-      </p>
-    `,
-    );
+    bindText(contentDiv, "scanPrevious", () => ({ name: username, list: ["videos", "liked", "reposts", "favorites"].includes(tabName) ? t(tabName) : tabName, count }));
 
     const buttonContainer = document.createElement("div");
     buttonContainer.style.cssText =
@@ -2533,7 +2511,7 @@ async function showDownloadConfirmationModal(username, tabName, count) {
 
     const redownloadBtn = document.createElement("button");
     redownloadBtn.className = "ettpd-pref-btn";
-    setButtonWithIcon(redownloadBtn, "Re-download All", "refresh");
+    setLocalizedButton(redownloadBtn, "redownload", "refresh");
     redownloadBtn.onclick = () => {
       modal.remove();
       resolve("redownload");
@@ -2541,7 +2519,7 @@ async function showDownloadConfirmationModal(username, tabName, count) {
 
     const skipBtn = document.createElement("button");
     skipBtn.className = "ettpd-pref-btn";
-    setButtonWithIcon(skipBtn, "Skip Downloaded", "skip");
+    setLocalizedButton(skipBtn, "skipDownloaded", "skip");
     skipBtn.onclick = () => {
       modal.remove();
       resolve("skip");
@@ -2549,7 +2527,7 @@ async function showDownloadConfirmationModal(username, tabName, count) {
 
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "ettpd-pref-btn danger";
-    setButtonWithIcon(cancelBtn, "Cancel", "error");
+    setLocalizedButton(cancelBtn, "cancel", "error");
     cancelBtn.onclick = () => {
       modal.remove();
       resolve("cancel");
@@ -2573,36 +2551,7 @@ function explainerModal(tab) {
   description.className = "ettpd-scrapper-info";
   replaceElementHtml(
     description,
-    `
-    <div class="alert">
-      <div class="ettpd-scrapper-message-title">
-        💡 Let the Scrapper handle it
-      </div>
-      <div class="ettpd-scrapper-steps">
-        <div class="ettpd-scrapper-message-body">
-          <span class="ettpd-scrapper-message-step">1.</span>
-          <span>Choose a tab above (for example <strong>Scrape Videos</strong>).</span>
-        </div>
-        <div class="ettpd-scrapper-message-body">
-          <span class="ettpd-scrapper-message-step">2.</span>
-          <span>Click <strong>Start</strong> to reload the page and auto-scroll every post under
-          <strong>@${safeUsername} <em>${safeTab}</em></strong>.</span>
-        </div>
-        <div class="ettpd-scrapper-message-body">
-          <span class="ettpd-scrapper-message-step">3.</span>
-          <span>Use <strong>Pause</strong> or <strong>Download Now</strong> anytime if you want to jump in early.</span>
-        </div>
-      </div>
-    </div>
-    <blockquote class="black-text" style="margin: 10px 0;">
-      If you can't <strong>see</strong> the posts, you can't <strong>download</strong> them. <br/>
-      If a tab (Likes, Reposts, etc.) is missing, click it once or refresh the page.
-    </blockquote>
-    <p class="alert">
-      Want full control? Customize where your downloads go under
-      <strong>Settings → File Paths</strong> with your own <strong>File Path Templates</strong>. 🛠️
-    </p>
-  `,
+    '<h3 data-i18n="autoScroll"></h3><p data-i18n="scanHelp"></p><p data-i18n="scanProfileRequired"></p><p data-i18n="templateIntro"></p>',
   );
 
   // Recommended template card with quick apply
@@ -2626,7 +2575,9 @@ function explainerModal(tab) {
   const sparklesIcon = createIcon("sparkles", 16);
   sparklesIcon.style.marginRight = "4px";
   recommendedLabel.appendChild(sparklesIcon);
-  recommendedLabel.appendChild(document.createTextNode("Recommended Template"));
+  const recommendedText = document.createElement("span");
+  bindText(recommendedText, "recommended");
+  recommendedLabel.appendChild(recommendedText);
 
   const recommendedExample = document.createElement("div");
   recommendedExample.style.cssText = `
@@ -2640,7 +2591,7 @@ function explainerModal(tab) {
 
   const applyBtn = document.createElement("button");
   applyBtn.className = "ettpd-action-btn primary";
-  setButtonWithIcon(applyBtn, "Use This Template", "sparkles");
+  setLocalizedButton(applyBtn, "useTemplate", "sparkles");
   applyBtn.style.cssText = `
     width: 100%;
     margin-bottom: 0;
@@ -2675,9 +2626,9 @@ function explainerModal(tab) {
     const checkIcon = createIcon("check", 16);
     checkIcon.style.marginRight = "4px";
     successMessage.appendChild(checkIcon);
-    successMessage.appendChild(
-      document.createTextNode("Template applied successfully!"),
-    );
+    const appliedText = document.createElement("span");
+    bindText(appliedText, "templateSaved");
+    successMessage.appendChild(appliedText);
     successMessage.style.display = "block";
     applyBtn.disabled = true;
     applyBtn.style.opacity = "0.7";
@@ -2691,7 +2642,7 @@ function explainerModal(tab) {
   // Configure button - secondary action
   const configBtn = document.createElement("button");
   configBtn.className = "ettpd-action-btn secondary";
-  setButtonWithIcon(configBtn, "Customize File Paths", "settings");
+  setLocalizedButton(configBtn, "templateTitle", "settings");
   configBtn.style.cssText = `
     width: 100%;
   `;
@@ -2711,7 +2662,7 @@ function explainerModal(tab) {
   // Close button for easy access
   const closeBtn = document.createElement("button");
   closeBtn.className = "ettpd-action-btn secondary";
-  closeBtn.textContent = "✕ Close";
+  bindText(closeBtn, "close");
   closeBtn.style.cssText = `
     width: 100%;
   `;
@@ -2734,7 +2685,7 @@ function showScrapperStateUI(tabKey) {
   container.className = "ettpd-scrapper-active-ui";
 
   const heading = document.createElement("h4");
-  heading.textContent = `📂 ${toTitleCase(tabKey)} Scrapper Selected`;
+  bindText(heading, "scanList", () => ({ list: ["videos", "liked", "reposts", "favorites"].includes(tabKey) ? t(tabKey) : AppState.scrapperDetails.selectedCollectionName || t("collection") }));
   heading.className = "ettpd-scrapper-title";
 
   const actions = document.createElement("div");
@@ -2742,16 +2693,8 @@ function showScrapperStateUI(tabKey) {
 
   const startBtn = document.createElement("button");
   startBtn.className = "ettpd-scrapper-start";
-  startBtn.title =
-    AppState.scrapperDetails.scrappingStage == "ongoing" ||
-    AppState.scrapperDetails.scrappingStage == "downloading"
-      ? "Press to cancel and start anew"
-      : "Initiate Scrapping";
-  startBtn.textContent =
-    AppState.scrapperDetails.scrappingStage == "ongoing" ||
-    AppState.scrapperDetails.scrappingStage == "downloading"
-      ? "🚀 Start*"
-      : "🚀 Start";
+  bindText(startBtn, ["ongoing", "downloading"].includes(AppState.scrapperDetails.scrappingStage) ? "abandonStart" : "start", {}, "title");
+  bindText(startBtn, "start");
   // startBtn.disabled =
   //   AppState.scrapperDetails.scrappingStage == "ongoing" ||
   //   AppState.scrapperDetails.scrappingStage == "downloading";
@@ -2768,9 +2711,7 @@ function showScrapperStateUI(tabKey) {
 
   const pauseBtn = document.createElement("button");
   pauseBtn.className = "ettpd-scrapper-pause";
-  pauseBtn.textContent = AppState.scrapperDetails.paused
-    ? "▶️ Resume"
-    : "⏸️ Pause";
+  bindText(pauseBtn, AppState.scrapperDetails.paused ? "resume" : "pause");
   pauseBtn.disabled =
     AppState.scrapperDetails.scrappingStage != "ongoing" &&
     AppState.scrapperDetails.scrappingStage != "downloading";
@@ -2780,18 +2721,18 @@ function showScrapperStateUI(tabKey) {
     if (AppState.scrapperDetails.paused) {
       // Pause logic
       AppState.downloadPreferences.autoScrollMode = "off";
-      setButtonWithIcon(pauseBtn, "Resume", "play");
+      setLocalizedButton(pauseBtn, "resume", "play");
       console.log(`[Scrapper] Paused "${tabKey}"`);
     } else {
       // Resume logic
       AppState.downloadPreferences.autoScrollMode = "always";
-      setButtonWithIcon(pauseBtn, "Pause", "pause");
+      setLocalizedButton(pauseBtn, "pause", "pause");
       console.log(`[Scrapper] Resumed "${tabKey}"`);
     }
   };
   const learnBtn = document.createElement("button");
   learnBtn.className = "ettpd-scrapper-learn";
-  setButtonWithIcon(learnBtn, "Info", "info");
+  setLocalizedButton(learnBtn, "info", "info");
   learnBtn.style.fontSize = "12px";
   learnBtn.onclick = () => {
     console.log(`[Scrapper] Showing explainer for "${tabKey}"`);
@@ -2844,7 +2785,7 @@ function createDownloadAllButton() {
   const btn = document.createElement("button");
   btn.id = DOM_IDS.DOWNLOAD_ALL_BUTTON;
   btn.className = "ettpd-btn download-all-btn";
-  setButtonWithIcon(btn, "Download", "down");
+  setLocalizedButton(btn, "download", "down");
   btn.disabled = true;
   btn.onclick = (e) => {
     e.stopPropagation();
@@ -2855,21 +2796,21 @@ function createDownloadAllButton() {
   const pauseBtn = document.createElement("button");
   pauseBtn.id = DOM_IDS.DOWNLOAD_ALL_BUTTON + "-pause";
   pauseBtn.className = "ettpd-btn download-all-btn-pause";
-  setButtonWithIcon(pauseBtn, "Pause", "pause");
+  setLocalizedButton(pauseBtn, "pause", "pause");
   pauseBtn.disabled = true;
   pauseBtn.style.display = "none";
-  pauseBtn.title = "Pause downloading";
+  bindText(pauseBtn, "pause", {}, "title");
   pauseBtn.onclick = (e) => {
     e.stopPropagation();
     if (!AppState.downloading.isDownloadingAll) return;
     AppState.downloading.pausedAll = !(AppState.downloading.accountBatch?.paused ?? AppState.downloading.pausedAll);
     if (AppState.downloading.accountBatch) AppState.downloading.accountBatch.paused = AppState.downloading.pausedAll;
     if (AppState.downloading.pausedAll) {
-      setButtonWithIcon(pauseBtn, "Resume", "play");
-      pauseBtn.title = "Resume downloading";
+      setLocalizedButton(pauseBtn, "resume", "play");
+      bindText(pauseBtn, "resume", {}, "title");
     } else {
-      setButtonWithIcon(pauseBtn, "Pause", "pause");
-      pauseBtn.title = "Pause downloading";
+      setLocalizedButton(pauseBtn, "pause", "pause");
+      bindText(pauseBtn, "pause", {}, "title");
     }
     updateBatchDownloadProgress({});
   };
@@ -2877,10 +2818,10 @@ function createDownloadAllButton() {
   const stopBtn = document.createElement("button");
   stopBtn.id = DOM_IDS.DOWNLOAD_ALL_BUTTON + "-stop";
   stopBtn.className = "ettpd-btn download-all-btn-stop";
-  setButtonWithIcon(stopBtn, "Stop", "stop");
+  setLocalizedButton(stopBtn, "stop", "stop");
   stopBtn.disabled = true;
   stopBtn.style.display = "none";
-  stopBtn.title = "Stop downloading";
+  bindText(stopBtn, "stop", {}, "title");
   stopBtn.onclick = (e) => {
     e.stopPropagation();
     if (!AppState.downloading.isDownloadingAll) return;
@@ -3007,7 +2948,7 @@ async function populateScrapperTabPicker(messageEl) {
     text-align: center;
     margin-bottom: 2px;
   `;
-  title.textContent = "Quick Start Scrapper";
+  bindText(title, "autoScroll");
   wrapper.appendChild(title);
 
   // Tab grid
@@ -3026,10 +2967,10 @@ async function populateScrapperTabPicker(messageEl) {
   } catch {}
 
   const tabOptions = [
-    { key: "videos", label: "Videos", icon: "video" },
-    { key: "reposts", label: "Reposts", icon: "repost" },
-    { key: "liked", label: "Likes", icon: "heart" },
-    { key: "favorites", label: "Favorites", icon: "star" },
+    { key: "videos", label: t("videos"), icon: "video" },
+    { key: "reposts", label: t("reposts"), icon: "repost" },
+    { key: "liked", label: t("liked"), icon: "heart" },
+    { key: "favorites", label: t("favorites"), icon: "star" },
     {
       key: "collection",
       label: spans.collection || pageInfo.collectionName || "Collection",
@@ -3050,7 +2991,7 @@ async function populateScrapperTabPicker(messageEl) {
       text-align: center;
       padding: 4px;
     `;
-    hint.textContent = "Navigate to a profile page to see available tabs.";
+    hint.textContent = t("scanProfileRequired");
     wrapper.appendChild(hint);
     messageEl.appendChild(wrapper);
     return;
@@ -3149,9 +3090,7 @@ function showAbandonScrappingModal() {
     content.className = "alert";
     replaceElementHtml(
       content,
-      "⚠️ <b>Abandon Current Scrapping?</b><br><br>" +
-        "A scrapping session is already in progress. Starting a new one will <b>abandon</b> the current session.<br><br>" +
-        "Any unsaved progress from the current session may be lost.",
+      '<p data-i18n="scanAbandonWarning"></p>',
     );
 
     const actionsContainer = document.createElement("div");
@@ -3164,7 +3103,7 @@ function showAbandonScrappingModal() {
 
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "ettpd-modal-button secondary";
-    cancelBtn.textContent = "Cancel";
+    bindText(cancelBtn, "cancel");
     cancelBtn.onclick = () => {
       const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
       if (overlay) overlay.remove();
@@ -3173,7 +3112,7 @@ function showAbandonScrappingModal() {
 
     const confirmBtn = document.createElement("button");
     confirmBtn.className = "ettpd-modal-button danger";
-    confirmBtn.textContent = "Abandon & Start New";
+    bindText(confirmBtn, "abandonStart");
     confirmBtn.onclick = () => {
       const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
       if (overlay) overlay.remove();
@@ -3220,39 +3159,29 @@ function renderBatchDownloadProgress(button) {
     AppState.scrapperDetails.isAutoBatchDownloading && AppState.scrapperDetails.paused;
   const progress = typeof status.progress === "number" && Number.isFinite(status.progress)
     ? Math.max(0, Math.min(1, status.progress)) : null;
-  const phases = {
-    load: "Finding downloadable posts",
-    prepare: "Preparing source",
-    fetch: "Downloading file",
-    "fetch-video": "Downloading video",
-    "fetch-audio": "Downloading audio",
-    mux: "Combining audio and video",
-    save: "Saving file",
-    fallback: "Recovering source",
-    retry: `Retry ${status.attempt || 1} of ${status.maxRetries || 3}`,
-    waiting: "Waiting for your choice",
-    paused: "Paused",
-  };
   const waiting = status.phase === "waiting" || status.phase === "paused";
-  const phase = paused && !waiting ? "Pause requested; finishing this file" :
-    phases[status.phase] || "Working";
-  const percent = progress === null ? "" : ` · ${Math.round(progress * 100)}%`;
+  const phase = paused && !waiting ? t("pauseRequested") : status.phase === "retry" ? t("retryProgress", { current: status.attempt || 1, total: status.maxRetries || 3 }) :
+    t(({ "fetch-video": "fetch", "fetch-audio": "fetch", load: "loading", retry: "retrying" })[status.phase] ||
+      (["prepare", "fetch", "mux", "save", "fallback", "waiting", "paused"].includes(status.phase) ? status.phase : "prepare"));
+  const percent = progress === null ? "" : ` · ${new Intl.NumberFormat(getLocale(), { style: "percent" }).format(progress)}`;
   const bytes = status.loaded > 0
     ? ` · ${(status.loaded / 1048576).toFixed(1)}${status.total > 0 ? ` / ${(status.total / 1048576).toFixed(1)}` : ""} MB`
     : "";
-  const batchLabel = status.batchNumber ? `Batch ${status.batchNumber} · ` : "";
+  const batchLabel = status.batchNumber ? `${t("batch", { count: status.batchNumber })} · ` : "";
   const label = isLoadingList
-    ? `${batchLabel}${waiting || paused ? "Paused before loading posts" : "Loading posts"}`
-    : `${batchLabel}${status.phase === "paused" ? "Paused at" : "Downloading"} ${status.batchIndex || 1} of ${status.batchTotal} ${status.unit || "posts"}`;
+    ? `${batchLabel}${waiting || paused ? t("paused") : t("loading")}`
+    : `${batchLabel}${t(status.phase === "paused" ? "pausedProgress" : "progress", { current: status.batchIndex || 1, total: status.batchTotal })}`;
   const photo = !isLoadingList && status.unit === "posts" && status.imageTotal > 1
-    ? ` · Photo ${(status.imageIndex || 0) + 1} of ${status.imageTotal}` : "";
-  const detail = isLoadingList ? `${status.savedPosts || 0} posts confirmed saved` : `${phase}${percent}${bytes}${photo}`;
+    ? ` · ${t("photoProgress", { current: (status.imageIndex || 0) + 1, total: status.imageTotal })}` : "";
+  const detail = isLoadingList ? t("savedCount", { count: status.savedPosts || 0 }) : `${phase}${percent}${bytes}${photo}`;
   button.classList.add("ettpd-batch-progress");
   setBusyDownloadButton(button);
   button.setAttribute("aria-busy", String(!waiting));
   button.title = `${label}. ${detail}`;
   let heading = button.querySelector(".ettpd-batch-progress-label");
   if (!heading) {
+    clearText(button);
+    delete button.dataset.i18nButton;
     heading = document.createElement("span");
     heading.className = "ettpd-batch-progress-label";
     const description = document.createElement("span");
@@ -3260,7 +3189,7 @@ function renderBatchDownloadProgress(button) {
     const track = document.createElement("span");
     track.className = "ettpd-batch-progress-track";
     track.setAttribute("role", "progressbar");
-    track.setAttribute("aria-label", "Batch download progress");
+    bindText(track, "downloads", {}, "aria-label");
     track.setAttribute("aria-valuemin", "0");
     track.setAttribute("aria-valuemax", "100");
     const fill = document.createElement("span");
@@ -3290,10 +3219,10 @@ function renderBatchDownloadProgress(button) {
     pauseButton.style.display = "inline-flex";
     pauseButton.disabled = false;
     if (pauseButton.dataset.progressPaused !== String(paused)) {
-      setButtonWithIcon(pauseButton, paused ? "Resume" : "Pause", paused ? "play" : "pause");
+      setLocalizedButton(pauseButton, paused ? "resume" : "pause", paused ? "play" : "pause");
       pauseButton.dataset.progressPaused = String(paused);
     }
-    pauseButton.title = paused ? "Resume downloading" : "Pause after the current file";
+    pauseButton.title = paused ? t("resume") : t("pauseRequested");
   }
   if (stopButton) {
     stopButton.style.display = "inline-flex";
@@ -3436,7 +3365,7 @@ function updateDownloadAllButtonState(btn, items = []) {
   const isPausedAll = AppState.downloading.pausedAll;
 
   if (!total) {
-    setButtonWithIcon(actualBtn, "Nothing to download", "stop");
+    setLocalizedButton(actualBtn, "noPosts", "stop");
     actualBtn.disabled = true;
     if (pauseBtn) {
       pauseBtn.style.display = "none";
@@ -3459,8 +3388,8 @@ function updateDownloadAllButtonState(btn, items = []) {
       actualBtn.appendChild(
         document.createTextNode(
           done < total
-            ? `Downloading playlist ${done} of ${total} posts…`
-            : `Playlist download complete (${total})`,
+            ? t("progress", { current: done, total: total })
+            : t("downloadedCount", { count: total }),
         ),
       );
     } else if (done < total) {
@@ -3470,7 +3399,7 @@ function updateDownloadAllButtonState(btn, items = []) {
       actualBtn.appendChild(hourglassIcon);
       actualBtn.appendChild(
         document.createTextNode(
-          `Downloading ${done} of ${total} post${total !== 1 ? "s" : ""}…`,
+          t("progress", { current: done, total: total }),
         ),
       );
     } else {
@@ -3480,7 +3409,7 @@ function updateDownloadAllButtonState(btn, items = []) {
       actualBtn.appendChild(checkIcon);
       actualBtn.appendChild(
         document.createTextNode(
-          `All ${total} post${total !== 1 ? "s" : ""} downloaded`,
+          t("downloadedCount", { count: total }),
         ),
       );
     }
@@ -3493,7 +3422,7 @@ function updateDownloadAllButtonState(btn, items = []) {
         isPausedAll ? "Resume" : "Pause",
         isPausedAll ? "play" : "pause",
       );
-      pauseBtn.title = isPausedAll ? "Resume downloading" : "Pause downloading";
+      pauseBtn.title = isPausedAll ? t("resume") : t("pause");
     }
     if (stopBtn) {
       stopBtn.style.display = "inline-flex";
@@ -3503,13 +3432,7 @@ function updateDownloadAllButtonState(btn, items = []) {
     return;
   }
 
-  setButtonWithIcon(
-    actualBtn,
-    `Download ${total > 1 ? `all ${total}` : "1"} post${
-      total !== 1 ? "s" : ""
-    }`,
-    "down",
-  );
+  setLocalizedButton(actualBtn, "downloadCount", "down", { count: total });
   actualBtn.disabled = false;
   if (pauseBtn) {
     pauseBtn.style.display = "none";
@@ -3614,9 +3537,9 @@ export function updateDownloadButtonLabelSimple() {
     // Cap the current item at total to avoid showing "item X of Y" where X > Y
     const currentItem = Math.min(done + 1, total);
     if (done >= total) {
-      downloadAllBtn.textContent = `Downloaded: ${done} of ${total} items discovered`;
+      bindText(downloadAllBtn, "downloadedCount", { count: done });
     } else {
-      downloadAllBtn.textContent = `Downloading item ${currentItem} of ${total} items discovered`;
+      bindText(downloadAllBtn, "progress", { current: currentItem, total });
     }
     setBusyDownloadButton(downloadAllBtn);
     if (pauseBtn) {
@@ -3632,7 +3555,7 @@ export function updateDownloadButtonLabelSimple() {
   }
 
   if (!total) {
-    setButtonWithIcon(downloadAllBtn, "Nothing to download", "stop");
+    setLocalizedButton(downloadAllBtn, "noPosts", "stop");
     downloadAllBtn.disabled = true;
     if (pauseBtn) {
       pauseBtn.style.display = "none";
@@ -3651,8 +3574,8 @@ export function updateDownloadButtonLabelSimple() {
       downloadAllBtn.appendChild(
         document.createTextNode(
           done < total
-            ? `Downloading playlist ${done} of ${total} posts…`
-            : `Playlist download complete (${total})`,
+            ? t("progress", { current: done, total: total })
+            : t("downloadedCount", { count: total }),
         ),
       );
       setBusyDownloadButton(downloadAllBtn);
@@ -3665,8 +3588,8 @@ export function updateDownloadButtonLabelSimple() {
           AppState.downloading.pausedAll ? "play" : "pause",
         );
         pauseBtn.title = AppState.downloading.pausedAll
-          ? "Resume downloading"
-          : "Pause downloading";
+          ? t("resume")
+          : t("pause");
       }
       if (stopBtn) {
         stopBtn.style.display = "inline-flex";
@@ -3679,7 +3602,7 @@ export function updateDownloadButtonLabelSimple() {
       downloadAllBtn.appendChild(hourglassIcon2);
       downloadAllBtn.appendChild(
         document.createTextNode(
-          `Downloading ${done} of ${total} Post${total !== 1 ? "s" : ""}…`,
+          t("progress", { current: done, total: total }),
         ),
       );
       setBusyDownloadButton(downloadAllBtn);
@@ -3692,8 +3615,8 @@ export function updateDownloadButtonLabelSimple() {
           AppState.downloading.pausedAll ? "play" : "pause",
         );
         pauseBtn.title = AppState.downloading.pausedAll
-          ? "Resume downloading"
-          : "Pause downloading";
+          ? t("resume")
+          : t("pause");
       }
       if (stopBtn) {
         stopBtn.style.display = "inline-flex";
@@ -3706,7 +3629,7 @@ export function updateDownloadButtonLabelSimple() {
       downloadAllBtn.appendChild(checkIcon2);
       downloadAllBtn.appendChild(
         document.createTextNode(
-          `Downloaded all ${total} Post${total !== 1 ? "s" : ""}`,
+          t("downloadedCount", { count: total }),
         ),
       );
       if (pauseBtn) {
@@ -3719,13 +3642,7 @@ export function updateDownloadButtonLabelSimple() {
       }
     }
   } else {
-    setButtonWithIcon(
-      downloadAllBtn,
-      `Download ${total > 1 ? "All " + total : "1"} Post${
-        total !== 1 ? "s" : ""
-      }`,
-      "down",
-    );
+    setLocalizedButton(downloadAllBtn, "downloadCount", "down", { count: total });
     downloadAllBtn.disabled = false;
     if (pauseBtn) {
       pauseBtn.style.display = "none";
@@ -4292,7 +4209,7 @@ function getPlaylistHeaderButtonState(
   if (AppState.downloading.isDownloadingAll) {
     if (activeBatchType !== "playlist") {
       return {
-        label: "Download in progress",
+        label: t("busy"),
         icon: "hourglass",
         disabled: true,
       };
@@ -4300,7 +4217,7 @@ function getPlaylistHeaderButtonState(
 
     if (!total) {
       return {
-        label: "Downloading Playlist…",
+        label: t("playlistDownloading"),
         icon: "hourglass",
         disabled: true,
       };
@@ -4308,7 +4225,7 @@ function getPlaylistHeaderButtonState(
 
     return {
       label:
-        done < total ? `Downloading ${done}/${total}` : `Downloaded ${total}`,
+        done < total ? t("progress", { current: done, total: total }) : `Downloaded ${total}`,
       icon: done < total ? "hourglass" : "check",
       disabled: true,
     };
@@ -4316,7 +4233,7 @@ function getPlaylistHeaderButtonState(
 
   if (!total) {
     return {
-      label: "Download playlist",
+      label: t("playlistDownload"),
       icon: "down",
       disabled: !pageInfo.playlistId,
     };
@@ -4409,7 +4326,7 @@ function _syncPlaylistHeaderActionButtonImpl() {
 function createCurrentVideoButton() {
   const btn = document.createElement("button");
   btn.className = "ettpd-btn ettpd-current-video-btn";
-  btn.textContent = "Download Current";
+  bindText(btn, "downloadCurrent");
   btn.disabled = true;
   btn.onclick = () => {};
   btn.style.width = "100%";
@@ -4419,7 +4336,7 @@ function createCurrentVideoButton() {
   return btn;
 }
 
-function createExperimentalHdButton(className, label = "Save Experimental HD") {
+function createExperimentalHdButton(className, label = "HD") {
   const button = document.createElement("button");
   button.type = "button";
   button.className = className;
@@ -4430,7 +4347,7 @@ function createExperimentalHdButton(className, label = "Save Experimental HD") {
 }
 
 function setExperimentalHdIdleContent(button) {
-  button.replaceChildren();
+  clearText(button);
   if (button.dataset.overlayCompact === "true") {
     const icon = document.createElement("span");
     icon.className = "download-btn-icon";
@@ -4447,12 +4364,12 @@ function setExperimentalHdIdleContent(button) {
     button.appendChild(icon);
   }
   button.appendChild(
-    document.createTextNode(button.dataset.defaultLabel || "Save Experimental HD"),
+    document.createTextNode(button.dataset.defaultLabel || "HD"),
   );
 }
 
 function setCompactStandardDownloadContent(button, media) {
-  button.replaceChildren();
+  clearText(button);
   const icon = createIcon("download", 14);
   icon.setAttribute("aria-hidden", "true");
   const actionLabel = getDownloadActionLabel(media);
@@ -4460,13 +4377,13 @@ function setCompactStandardDownloadContent(button, media) {
   button.title = getStandardDownloadTitle(media);
   button.setAttribute(
     "aria-label",
-    `${actionLabel} standard download`,
+    getStandardDownloadTitle(media),
   );
 }
 
 function getDownloadActionLabel(media) {
   const qualityLabel = getMediaQualityLabel(media);
-  return !qualityLabel || qualityLabel === "?" ? "Save" : qualityLabel;
+  return !qualityLabel || qualityLabel === "?" ? t("download") : qualityLabel;
 }
 
 function getResolutionDetails({
@@ -4481,27 +4398,27 @@ function getResolutionDetails({
       resolutionLabel ? ` (${resolutionLabel})` : ""
     }`;
   }
-  return resolutionLabel || "resolution unavailable";
+  return resolutionLabel || t("unknown");
 }
 
 function getStandardDownloadTitle(media) {
-  return `Standard download · Expected ${getResolutionDetails({
+  return t("standardTitle", { resolution: getResolutionDetails({
     width: media?.videoWidth,
     height: media?.videoHeight,
     resolutionLabel: media?.resolutionLabel,
-  })} · Complete audio + video`;
+  }) });
 }
 
 function getExperimentalHdTitle(source) {
   const method =
     source?.deliveryMethod === "tiktok-gateway-muxed"
-      ? "TikTok complete audio + video source"
-      : "Matched video + audio streams";
-  return `Experimental HD · Expected ${getResolutionDetails({
+        ? t("completeSource")
+        : t("matchedStreams");
+      return t("hdTitle", { resolution: getResolutionDetails({
     width: source?.width,
     height: source?.height,
     resolutionLabel: source?.resolutionLabel,
-  })} · ${method}`;
+  }), method });
 }
 
 function getExperimentalHdSource(media) {
@@ -4541,11 +4458,11 @@ function updateExperimentalHdProgress(button, status) {
   const phaseProgress = Number(status?.progress);
   const hasProgress = Number.isFinite(phaseProgress);
   const phaseDetails = {
-    fetch: { label: "Downloading HD", start: 0, weight: 0.7 },
-    mux: { label: "Combining audio", start: 0.7, weight: 0.25 },
-    save: { label: "Saving file", start: 0.95, weight: 0.05 },
+    fetch: { label: "hdFetching", start: 0, weight: 0.7 },
+    mux: { label: "mux", start: 0.7, weight: 0.25 },
+    save: { label: "save", start: 0.95, weight: 0.05 },
     fallback: {
-      label: "HD unavailable · Saving standard",
+      label: "hdFallback",
       start: 0,
       weight: 0,
     },
@@ -4560,20 +4477,19 @@ function updateExperimentalHdProgress(button, status) {
     button.dataset.compact === "true" ||
     button.dataset.overlayCompact === "true";
 
-  button.replaceChildren();
+  clearText(button);
+  delete button.dataset.i18nButton;
   const label = document.createElement("span");
   label.className = "ettpd-hd-progress-label";
-  label.textContent = isCompact
-    ? overallProgress == null
+  if (isCompact) label.textContent = overallProgress == null
       ? phase === "fallback"
         ? "SD"
         : phase === "mux"
           ? "MUX"
           : "…"
-      : `${overallProgress}%`
-    : `${details.label}${
-        overallProgress == null ? "" : ` · ${overallProgress}%`
-      }`;
+      : new Intl.NumberFormat(getLocale(), { style: "percent" }).format(overallProgress / 100);
+  else if (overallProgress == null) bindText(label, details.label);
+  else bindText(label, "phasePercent", () => ({ phase: t(details.label), percent: new Intl.NumberFormat(getLocale(), { style: "percent" }).format(overallProgress / 100) }));
   const track = document.createElement("span");
   track.className = "ettpd-hd-progress-track";
   const fill = document.createElement("span");
@@ -4582,7 +4498,7 @@ function updateExperimentalHdProgress(button, status) {
   if (overallProgress == null) fill.classList.add("is-indeterminate");
   track.appendChild(fill);
   button.append(label, track);
-  button.title = details.label;
+  bindText(button, details.label, {}, "title");
 }
 
 async function runExperimentalHdDownload(button, media, options = {}) {
@@ -4600,19 +4516,15 @@ async function runExperimentalHdDownload(button, media, options = {}) {
         updateExperimentalHdProgress(button, status);
       },
     });
-    button.replaceChildren(
-      document.createTextNode(
-        usedFallback ? "Saved standard fallback" : "HD saved",
-      ),
-    );
+    bindText(button, usedFallback ? "fallbackSaved" : "hdSaved");
   } catch (error) {
     console.warn("Experimental HD download failed", error);
-    button.replaceChildren(document.createTextNode("HD save failed"));
+    bindText(button, "hdSaveFailed");
   } finally {
     setTimeout(() => {
       button.disabled = false;
       setExperimentalHdIdleContent(button);
-      button.title = button.dataset.defaultTitle || "";
+      bindText(button, "displayName", () => ({ name: getExperimentalHdTitle(getExperimentalHdSource(media)) }), "title");
       delete button.dataset.downloadActive;
       clearDownloadBtnContainers();
     }, 2500);
@@ -4623,8 +4535,7 @@ function updateStandardDownloadProgress(button, media, status) {
   const phase = status?.phase || "fetch";
   const progress = Number(status?.progress);
   const hasProgress = Number.isFinite(progress);
-  const quality = getMediaQualityLabel(media) || "Video";
-  const label = phase === "save" ? "Saving file" : `Downloading ${quality}`;
+  const labelKey = phase === "save" ? "save" : "fetch";
   const overallProgress = hasProgress
     ? Math.round(
         (phase === "save" ? 0.92 + 0.08 * progress : 0.92 * progress) * 100,
@@ -4634,16 +4545,15 @@ function updateStandardDownloadProgress(button, media, status) {
     ".ettpd-compact-quality-download, .download-btn",
   );
 
-  button.replaceChildren();
+  clearText(button);
+  delete button.dataset.i18nButton;
   const text = document.createElement("span");
   text.className = "ettpd-hd-progress-label";
-  text.textContent = isCompact
-    ? overallProgress == null
+  if (isCompact) text.textContent = overallProgress == null
       ? "…"
-      : `${overallProgress}%`
-    : `${label}${
-        overallProgress == null ? "" : ` · ${overallProgress}%`
-      }`;
+      : new Intl.NumberFormat(getLocale(), { style: "percent" }).format(overallProgress / 100);
+  else if (overallProgress == null) bindText(text, labelKey);
+  else bindText(text, "phasePercent", () => ({ phase: t(labelKey), percent: new Intl.NumberFormat(getLocale(), { style: "percent" }).format(overallProgress / 100) }));
   const track = document.createElement("span");
   track.className = "ettpd-hd-progress-track";
   const fill = document.createElement("span");
@@ -4652,7 +4562,7 @@ function updateStandardDownloadProgress(button, media, status) {
   if (overallProgress == null) fill.classList.add("is-indeterminate");
   track.appendChild(fill);
   button.append(text, track);
-  button.title = label;
+  bindText(button, labelKey, {}, "title");
 }
 
 async function runStandardDownload(button, media, options = {}) {
@@ -4669,16 +4579,18 @@ async function runStandardDownload(button, media, options = {}) {
       onProgress: (status) =>
         updateStandardDownloadProgress(button, media, status),
     });
-    button.replaceChildren(
-      document.createTextNode(downloaded === false ? "Already saved" : "Saved"),
-    );
+    bindText(button, downloaded === false ? "alreadySaved" : "saved");
   } catch (error) {
     console.warn("Standard download failed", error);
-    button.replaceChildren(document.createTextNode("Save failed"));
+    bindText(button, "saveFailed");
   } finally {
     setTimeout(() => {
       button.disabled = false;
-      options.reset?.();
+      if (options.reset) {
+        clearText(button);
+        options.reset();
+        bindText(button, "displayName", () => ({ name: getStandardDownloadTitle(media) }), "title");
+      }
       delete button.dataset.downloadActive;
       clearDownloadBtnContainers();
     }, 2000);
@@ -4694,22 +4606,22 @@ function getMediaQualityLabel(media) {
 
 function getMediaQualityTitle(media) {
   if (!["hd", "sd"].includes(media?.qualityTier)) {
-    return "Quality not available yet";
+    return t("unknown");
   }
 
   if (media?.qualityTier !== "hd") {
-    return `SD source selected · Expected ${getResolutionDetails({
+    return t("qualityTitle", { quality: "SD", resolution: getResolutionDetails({
       width: media?.videoWidth,
       height: media?.videoHeight,
       resolutionLabel: media?.resolutionLabel,
-    })}`;
+    }) });
   }
 
-  return `HD source selected · Expected ${getResolutionDetails({
+  return t("qualityTitle", { quality: "HD", resolution: getResolutionDetails({
     width: media?.videoWidth,
     height: media?.videoHeight,
     resolutionLabel: media?.resolutionLabel,
-  })}`;
+  }) });
 }
 
 function createQualityBadge(media) {
@@ -4730,7 +4642,10 @@ function createQualityBadge(media) {
 }
 
 function setButtonLabelWithQuality(button, label, media) {
-  button.replaceChildren(document.createTextNode(label));
+  clearText(button);
+  const caption = document.createElement("span");
+  bindText(caption, media?.isImage ? "downloadImages" : "downloadCurrent");
+  button.appendChild(caption);
   const badge = createQualityBadge(media);
   if (badge) button.appendChild(badge);
   button.title = getStandardDownloadTitle(media);
@@ -4747,7 +4662,7 @@ function updateCurrentVideoButton(btn, experimentalHdBtn, items = []) {
     // Hide the button when there's no current item
     btn.style.display = "none";
     btn.disabled = true;
-    btn.textContent = "Download Current";
+    bindText(btn, "downloadCurrent");
     btn.onclick = () => {};
     if (experimentalHdBtn) {
       experimentalHdBtn.style.display = "none";
@@ -4761,8 +4676,8 @@ function updateCurrentVideoButton(btn, experimentalHdBtn, items = []) {
 
   btn.disabled = false;
   const defaultLabel = currentMedia.isImage
-    ? "Download Current Images"
-    : "Download Current";
+    ? t("downloadImages")
+    : t("downloadCurrent");
   setButtonLabelWithQuality(btn, defaultLabel, currentMedia);
 
   const experimentalHdSource = getExperimentalHdSource(currentMedia);
@@ -4799,7 +4714,7 @@ function createReportBugButton() {
   const discordUrl = "https://discord.gg/KpT7xdUUbM";
   const reportBugBtn = document.createElement("button");
   reportBugBtn.className = "ettpd-btn ettpd-report-bug";
-  reportBugBtn.innerText = "Report Bugs (Quick fix: Refresh/Login/Logout😉)";
+  bindText(reportBugBtn, "reportBug");
 
   const reportBugBtnLink = document.createElement("a");
   reportBugBtnLink.target = "_blank";
@@ -4810,12 +4725,12 @@ function createReportBugButton() {
   return reportBugBtnLink;
 }
 function formatCompactNumberWithTooltip(number) {
-  const compact = Intl.NumberFormat("en", {
+  const compact = Intl.NumberFormat(getLocale(), {
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(number);
 
-  return `<span title="${number.toLocaleString()}">${compact}</span>`;
+  return `<span title="${number.toLocaleString(getLocale())}">${compact}</span>`;
 }
 
 function getLeaderboardRankBadge(count, getUserCurrentTierFunction) {
@@ -4844,23 +4759,23 @@ export function showStatsSpan() {
   if (weeklyCount === allTimeRecsCount && allTimeRecsCount > 0) {
     newHTML = `
       ${formatStatsLine(
-        "This week?!",
+        t("weekly"),
         allTimeRecsCount,
         "top",
         getUserRecommendationsCurrentTier,
       )}
-      <div class="ettpd-stat-line-bottom" title="You're in a downloading mood 😏">📦 Fresh streak</div>
+      <div class="ettpd-stat-line-bottom" data-i18n="jokeSaved2"></div>
     `;
   } else {
     newHTML = `
       ${formatStatsLine(
-        "Downloads this week",
+        `${t("downloads")} · ${t("weekly")}`,
         weeklyCount,
         "top",
         getUserDownloadsCurrentTier,
       )}
       ${formatStatsLine(
-        "All time recommendations",
+        `${t("recommendations")} · ${t("allTime")}`,
         allTimeRecsCount,
         "bottom",
         getUserRecommendationsCurrentTier,
@@ -4949,7 +4864,7 @@ function createCreditsSpan() {
   discordLink.href = "https://discord.gg/KpT7xdUUbM";
   discordLink.target = "_blank";
   discordLink.rel = "noopener noreferrer";
-  discordLink.title = "Join Our Discord";
+  bindText(discordLink, "joinDiscord", {}, "title");
   discordLink.className = "ettpd-discord-link";
 
   // Apply theme class
@@ -5027,9 +4942,9 @@ export function createControlButtons(preferencesBox) {
   // --- User Posts Button ---
   const userPostsBtn = document.createElement("button");
   userPostsBtn.className = "ettpd-settings-toggle";
-  setButtonWithIcon(userPostsBtn, "Scrapper", "folder");
+  setLocalizedButton(userPostsBtn, "autoScroll", "folder");
   userPostsBtn.title =
-    "Download/Archive likes, reposts, favorites or collections";
+    t("scanHelp");
   userPostsBtn.style.flex = "1";
 
   container.appendChild(settingsBtn);
@@ -5041,7 +4956,7 @@ export function createControlButtons(preferencesBox) {
 function createExperimentalHdBanner(preferencesBox, settingsBtn) {
   const banner = document.createElement("aside");
   banner.className = "ettpd-experimental-hd-banner";
-  banner.setAttribute("aria-label", "Experimental HD announcement");
+  bindText(banner, "experimentalHd", {}, "aria-label");
   banner.style.display =
     AppState.downloadPreferences.experimentalHd ||
     AppState.ui.hasDismissedExperimentalHdBanner
@@ -5055,9 +4970,9 @@ function createExperimentalHdBanner(preferencesBox, settingsBtn) {
   const copy = document.createElement("div");
   copy.className = "ettpd-experimental-hd-banner-copy";
   const title = document.createElement("strong");
-  title.textContent = "Try Experimental HD";
+  bindText(title, "experimentalHd");
   const detail = document.createElement("span");
-  detail.textContent = "Save higher-quality video with matched audio when available.";
+  bindText(detail, "experimentalHdHint");
   copy.append(title, detail);
 
   const actions = document.createElement("div");
@@ -5065,7 +4980,7 @@ function createExperimentalHdBanner(preferencesBox, settingsBtn) {
   const tryButton = document.createElement("button");
   tryButton.type = "button";
   tryButton.className = "ettpd-experimental-hd-banner-try";
-  tryButton.textContent = "Try it";
+  bindText(tryButton, "experimentalHd");
   tryButton.onclick = (event) => {
     event.stopPropagation();
     if (!AppState.ui.isPreferenceBoxOpen) settingsBtn.click();
@@ -5094,8 +5009,8 @@ function createExperimentalHdBanner(preferencesBox, settingsBtn) {
   const dismissButton = document.createElement("button");
   dismissButton.type = "button";
   dismissButton.className = "ettpd-experimental-hd-banner-dismiss";
-  dismissButton.setAttribute("aria-label", "Dismiss Experimental HD announcement");
-  dismissButton.title = "Dismiss";
+  bindText(dismissButton, "dismiss", {}, "aria-label");
+  bindText(dismissButton, "dismiss", {}, "title");
   dismissButton.textContent = "×";
   dismissButton.onclick = (event) => {
     event.stopPropagation();
@@ -5168,23 +5083,25 @@ function updateExperimentalHdStatus(status, items = []) {
   }
 
   let state = "waiting";
-  let headline = "Experimental HD is on";
-  let detail = "Standard Save stays unchanged. Save HD appears when a safe matched stream is found.";
+  let headline = "experimentalHd";
+  let headlineValues = {};
+  let detail = "experimentalHdHint";
   if (experimentalSource) {
     state = "ready";
-    headline = `${getResolutionDetails({
+    headline = "qualityTitle";
+    headlineValues = { quality: "HD", resolution: getResolutionDetails({
       width: experimentalSource.width,
       height: experimentalSource.height,
       resolutionLabel: experimentalSource.resolutionLabel,
-    })} HD available`;
-    detail = "Use the separate HD download button for the higher-quality version.";
+    }) };
+    detail = "hdReadyHint";
   } else if (
     currentVideoId &&
     (rawHdSource || hydrationState === "loading" || !hydrationState)
   ) {
     state = "scanning";
-    headline = "Checking for a higher-quality version";
-    detail = "Keep the video playing briefly. Standard download remains available.";
+    headline = "prepare";
+    detail = "hdCheckingHint";
   } else if (currentVideoId) {
     state = "unavailable";
     const observedQuality = getResolutionDetails({
@@ -5192,10 +5109,9 @@ function updateExperimentalHdStatus(status, items = []) {
       height: currentMedia?.observedMaxHeight,
       resolutionLabel: currentMedia?.observedMaxResolution,
     });
-    headline = currentMedia?.observedMaxResolution
-      ? `Best available quality: ${observedQuality}`
-      : "HD not available for this video";
-    detail = "Use the standard download button for this video.";
+    headline = currentMedia?.observedMaxResolution ? "qualityTitle" : "notAvailable";
+    headlineValues = { quality: getMediaQualityLabel(currentMedia) || "?", resolution: observedQuality };
+    detail = "standardHint";
   }
 
   status.dataset.state = state;
@@ -5203,13 +5119,13 @@ function updateExperimentalHdStatus(status, items = []) {
   status.replaceChildren();
   const indicator = document.createElement("span");
   indicator.className = "ettpd-experimental-hd-status-indicator";
-  indicator.textContent = state === "ready" ? "HD" : "ON";
+  indicator.textContent = state === "ready" ? "HD" : "✓";
   const copy = document.createElement("span");
   copy.className = "ettpd-experimental-hd-status-copy";
   const title = document.createElement("strong");
-  title.textContent = headline;
+  bindText(title, headline, headlineValues);
   const description = document.createElement("span");
-  description.textContent = detail;
+  bindText(description, detail);
   copy.append(title, description);
   status.append(indicator, copy);
 }
@@ -5425,7 +5341,7 @@ function renderMediaList(listEl, items = []) {
         if (existingCurrent) existingCurrent.remove();
         if (shouldMarkAsCurrent) {
           const liveEmoji = document.createElement("span");
-          liveEmoji.title = "Currently playing video";
+          bindText(liveEmoji, "currentPost", {}, "title");
           liveEmoji.className = "ettpd-emoji";
           liveEmoji.dataset.role = "current-video";
           const playIcon = createIcon("play", 14);
@@ -5459,7 +5375,7 @@ function renderMediaList(listEl, items = []) {
 function createEmptyListPlaceholder() {
   const li = document.createElement("li");
   li.className = "ettpd-li ettpd-empty";
-  li.textContent = "No videos found to display 😔";
+  bindText(li, "noPosts");
   return li;
 }
 
@@ -5493,7 +5409,7 @@ function buildMediaListItem(media, options = {}) {
 
   if (markAsCurrent) {
     const liveEmoji = document.createElement("span");
-    liveEmoji.title = "Currently playing video";
+    bindText(liveEmoji, "currentPost", {}, "title");
     liveEmoji.className = "ettpd-emoji";
     liveEmoji.dataset.role = "current-video";
     const playIcon = createIcon("play", 14);
@@ -5503,7 +5419,7 @@ function buildMediaListItem(media, options = {}) {
 
   if (media?.downloaderHasLowConfidence) {
     const lowConfidenceEmoji = document.createElement("span");
-    lowConfidenceEmoji.title = "Low confidence data";
+    bindText(lowConfidenceEmoji, "incompleteMetadata", {}, "title");
     lowConfidenceEmoji.className = "ettpd-emoji";
     const infoIcon = createIcon("info", 14);
     lowConfidenceEmoji.appendChild(infoIcon);
@@ -5513,7 +5429,7 @@ function buildMediaListItem(media, options = {}) {
   if (media?.isAd) {
     const adEmoji = document.createElement("span");
     adEmoji.textContent = "📣";
-    adEmoji.title = "Sponsored or ad content";
+    bindText(adEmoji, "adContent", {}, "title");
     adEmoji.className = "ettpd-emoji";
     authorWrapper.appendChild(adEmoji);
   }
@@ -5539,10 +5455,10 @@ function buildMediaListItem(media, options = {}) {
   if (fullDesc.length > 100) {
     descSpan.classList.add("ettpd-desc-expandable");
     descSpan.style.cursor = "pointer";
-    descSpan.title = "Click to expand/collapse";
+    bindText(descSpan, "expandCollapse", {}, "title");
   } else {
     descSpan.style.cursor = "default";
-    descSpan.title = "Description";
+    bindText(descSpan, "field_desc", {}, "title");
   }
   descSpan.onclick = () => {
     expanded = !expanded;
@@ -5568,7 +5484,7 @@ function buildMediaListItem(media, options = {}) {
     const downloadAllBtn = document.createElement("button");
     const tiktokBtnContainer = document.createElement("div");
     tiktokBtnContainer.className = "ettpd-download-btn ettpd-tiktok-btn";
-    tiktokBtnContainer.title = "Open on TikTok";
+    bindText(tiktokBtnContainer, "openPost", {}, "title");
     tiktokBtnContainer.onclick = (e) => {
       e.stopPropagation();
       if (media?.videoId && media?.authorId)
@@ -5580,7 +5496,7 @@ function buildMediaListItem(media, options = {}) {
     const tiktokBtn = document.createElement("span");
     tiktokBtnContainer.appendChild(tiktokBtn);
     downloadAllBtnContainer.appendChild(tiktokBtnContainer);
-    setButtonWithIcon(downloadAllBtn, "Download All Images", "down");
+    setLocalizedButton(downloadAllBtn, "downloadImages", "down");
     downloadAllBtn.className = "ettpd-download-btn";
     downloadAllBtn.style.marginBottom = "10px";
     downloadAllBtn.style.marginTop = "5px";
@@ -5606,7 +5522,7 @@ function buildMediaListItem(media, options = {}) {
       openBtn.appendChild(openBtnSpan);
 
       const downloadBtn = document.createElement("button");
-      downloadBtn.textContent = "Download";
+      bindText(downloadBtn, "download");
       downloadBtn.className = "ettpd-download-btn";
 
       downloadBtn.onclick = async (e) => {
@@ -5617,7 +5533,7 @@ function buildMediaListItem(media, options = {}) {
         const downloadingIcon3 = createIcon("hourglass", 16);
         downloadingIcon3.style.marginRight = "4px";
         downloadBtn.appendChild(downloadingIcon3);
-        downloadBtn.appendChild(document.createTextNode("Downloading..."));
+        downloadBtn.appendChild(document.createTextNode(t("fetch")));
 
         const delayBeforeStart = 600;
         const minDisplayAfter = 1000;
@@ -5636,7 +5552,7 @@ function buildMediaListItem(media, options = {}) {
             const doneIcon3 = createIcon("check", 16);
             doneIcon3.style.marginRight = "4px";
             downloadBtn.appendChild(doneIcon3);
-            downloadBtn.appendChild(document.createTextNode("Done!"));
+            downloadBtn.appendChild(document.createTextNode(t("saved")));
             setTimeout(() => {
               downloadBtn.replaceWith(originalContent.cloneNode(true));
             }, 3000);
@@ -5651,7 +5567,7 @@ function buildMediaListItem(media, options = {}) {
             const failedIcon3 = createIcon("error", 16);
             failedIcon3.style.marginRight = "4px";
             downloadBtn.appendChild(failedIcon3);
-            downloadBtn.appendChild(document.createTextNode("Failed!"));
+            downloadBtn.appendChild(document.createTextNode(t("saveFailed")));
             setTimeout(() => {
               downloadBtn.replaceWith(originalContent.cloneNode(true));
             }, 3000);
@@ -5668,7 +5584,7 @@ function buildMediaListItem(media, options = {}) {
   } else {
     const tiktokBtnContainer = document.createElement("div");
     tiktokBtnContainer.className = "ettpd-download-btn ettpd-tiktok-btn";
-    tiktokBtnContainer.title = "Open on TikTok";
+    bindText(tiktokBtnContainer, "openPost", {}, "title");
     const tiktokBtn = document.createElement("span");
 
     tiktokBtn.onclick = (e) => {
@@ -5682,7 +5598,7 @@ function buildMediaListItem(media, options = {}) {
     tiktokBtnContainer.appendChild(tiktokBtn);
     const viewBtnContainer = document.createElement("div");
     viewBtnContainer.className = "ettpd-download-btn ettpd-view-btn";
-    viewBtnContainer.title = "Open Direct Link";
+    bindText(viewBtnContainer, "openSource", {}, "title");
     const viewBtn = document.createElement("span");
     viewBtn.onclick = (e) => {
       e.stopPropagation();
@@ -6151,11 +6067,8 @@ export function hideDownloader() {
   const showBtn = document.createElement("button");
   showBtn.id = DOM_IDS.SHOW_DOWNLOADER;
   showBtn.className = "ettpd-show-btn";
-  showBtn.title = "Drag to move me anywhere";
-  showBtn.setAttribute(
-    "aria-label",
-    "Open downloader (drag to move me anywhere)",
-  );
+  bindText(showBtn, "dragMove", {}, "title");
+  bindText(showBtn, "dragMove", {}, "aria-label");
 
   // Create SVG drag-handle + download icon
   const svgIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -6195,7 +6108,7 @@ export function hideDownloader() {
   // Set button content - icon + label
   showBtn.appendChild(svgIcon);
   const textSpan = document.createElement("span");
-  textSpan.textContent = "Open";
+  bindText(textSpan, "open");
   showBtn.appendChild(textSpan);
 
   // Add Discord icon as a small clickable element
@@ -6203,7 +6116,7 @@ export function hideDownloader() {
   discordLink.href = "https://discord.gg/KpT7xdUUbM";
   discordLink.target = "_blank";
   discordLink.rel = "noopener noreferrer";
-  discordLink.title = "Join Our Discord";
+  bindText(discordLink, "joinDiscord", {}, "title");
   discordLink.style.cssText = `
     display: inline-flex;
     align-items: center;
@@ -6301,7 +6214,7 @@ export function hideDownloader() {
         if (!isExtensionEnabledSync()) {
           // Extension is disabled, show message
           alert(
-            "Extension is disabled. Please enable it from the extension popup to use the downloader.",
+            t("disabledHint"),
           );
           return;
         }
@@ -6372,11 +6285,8 @@ export function showRateUsPopUpLegacy() {
     font-family: Arial, sans-serif;
     text-align: center;
   ">
-    <h2 style="margin-bottom: 15px; font-size: 1.5em; color: #1da1f2;">Download Complete! 🎉</h2>
-    <p style="margin-bottom: 20px; font-size: 1em; line-height: 1.5; color: #555555;">
-      Your video has been successfully downloaded! 🎥<br>
-      We'd love your support—rate us 5 ⭐ on ${escapeHtml(reviewTarget.storeLabel)} to help us grow! 🥰
-    </p>
+    <h2 style="margin-bottom: 15px; font-size: 1.5em; color: #1da1f2;" data-i18n="thanks"></h2>
+    <p style="margin-bottom: 20px; font-size: 1em; line-height: 1.5; color: #555555;" data-i18n="reviewInvitation"></p>
     <a
       href="${escapeHtml(reviewTarget.url)}"
       target="_blank"
@@ -6396,7 +6306,7 @@ export function showRateUsPopUpLegacy() {
       onmouseover="this.style.backgroundColor='#0a84d6';"
       onmouseout="this.style.backgroundColor='#1da1f2';"
     >
-      Rate Now
+      <span data-i18n="rate"></span>
     </a>
   </div>
 `,
@@ -6420,8 +6330,8 @@ export function showRateUsPopUpLegacy() {
 export function showStatsPopUp() {
   if (AppState.downloading.isDownloadingAll || AppState.downloading.isActive) {
     showToast(
-      "Download in progress",
-      "Wait for the download to be over or refresh 🙂",
+      t("busy"),
+      t("busyMessage"),
     );
     return;
   }
@@ -6438,17 +6348,17 @@ export function showStatsPopUp() {
   tabNav.className = "ettpd-tab-nav";
 
   const tabs = [
-    { key: "downloads", label: "Downloads", icon: "down" },
-    { key: "recommendations", label: "Recommendations", icon: "star" },
+    { key: "downloads", label: "downloads", icon: "down" },
+    { key: "recommendations", label: "recommendations", icon: "star" },
   ];
 
   const tabButtons = tabs.map(({ key, label, icon }) => {
     const btn = document.createElement("button");
     btn.className = "ettpd-tab-btn";
     if (icon) {
-      setButtonWithIcon(btn, label, icon);
+      setLocalizedButton(btn, label, icon);
     } else {
-      btn.textContent = label;
+      bindText(btn, label);
     }
     btn.dataset.key = key;
     return btn;
@@ -6497,19 +6407,19 @@ export function showStatsPopUp() {
               </div>
               <div class="ettpd-leaderboard-count" title="${item.count.toLocaleString()}">
                 ${formatCompactNumberWithTooltip(item.count)}
-                <span class="ettpd-leaderboard-count-label">posts</span>
+                <span class="ettpd-leaderboard-count-label" data-i18n="posts"></span>
               </div>
             </li>`;
             })
             .join("")
-        : `<li class="ettpd-leaderboard-empty">No entries yet</li>`;
+        : `<li class="ettpd-leaderboard-empty" data-i18n="noEntries"></li>`;
 
       return `
         <section class="ettpd-stats-card">
           <div class="ettpd-stats-card__header">
             <div class="ettpd-stats-card__title">${label}</div>
             <div class="ettpd-stats-card__total" title="${count.toLocaleString()}">
-              <span class="ettpd-total-label">Total</span>
+              <span class="ettpd-total-label" data-i18n="total"></span>
               <span class="ettpd-total-value">${formatCompactNumberWithTooltip(
                 count,
               )}</span>
@@ -6525,27 +6435,25 @@ export function showStatsPopUp() {
     const sameCount = weeklyCount === allTimeCount && allTimeCount > 0;
 
     const funMessage = sameCount
-      ? `<div class="ettpd-stats-banner">You peaked this week 😮‍💨</div>`
+      ? `<div class="ettpd-stats-banner" data-i18n="jokeSaved2"></div>`
       : "";
 
     replaceElementHtml(
       content,
       `
     <div class="ettpd-summary-line black-text">
-      You've ${
-        tabKey === "downloads" ? "downloaded" : "been recommended"
-      } <strong title="${totalCount.toLocaleString()}">${formatCompactNumberWithTooltip(
+      <span data-i18n="${tabKey}"></span>: <strong title="${totalCount.toLocaleString()}">${formatCompactNumberWithTooltip(
         totalCount,
-      )}</strong> posts. Level: ${tierLabel}
+      )}</strong> · ${tierLabel}
     </div>
     ${
       sameCount
-        ? section("🔥 Weekly Top (also All Time)", weeklyList, weeklyCount) +
+        ? section(`${t("weekly")} · ${t("allTime")}`, weeklyList, weeklyCount) +
           funMessage
-        : section("🔥 Weekly Top", weeklyList, weeklyCount) +
-          section("🏆 All Time", allTimeList, allTimeCount)
+        : section(t("weekly"), weeklyList, weeklyCount) +
+          section(t("allTime"), allTimeList, allTimeCount)
     }
-    <p class="alert ettpd-disclaimer">📌 Stats are local to your browser. You're in control. 🤝</p>
+    <p class="alert ettpd-disclaimer" data-i18n="statsLocal"></p>
   `,
     );
   };
@@ -6570,7 +6478,7 @@ export function showStatsPopUp() {
   rateBtn.target = "_blank";
   rateBtn.rel = "noopener noreferrer";
   rateBtn.className = "ettpd-modal-button";
-  setButtonWithIcon(rateBtn, "Rate Us", "star");
+  setLocalizedButton(rateBtn, "rate", "star");
 
   const coffeeBtn = document.createElement("button");
   coffeeBtn.type = "button";
@@ -6580,15 +6488,15 @@ export function showStatsPopUp() {
 
   const resetBtn = document.createElement("button");
   resetBtn.className = "ettpd-modal-button reset-leaderboard";
-  resetBtn.textContent = "🧹 Reset";
+  bindText(resetBtn, "reset");
   resetBtn.addEventListener("click", () => {
     const confirmed = confirm(
-      "⚠️ This will wipe your local leaderboard stats (downloads + recommendations). Nothing else will be touched. Want to proceed with the reset?",
+      t("statsResetWarning"),
     );
     if (!confirmed) return;
 
     const doubleCheck = confirm(
-      "🚨 Just making sure — this can't be undone. All your leaderboard stats will be gone. Still want to do it?",
+      t("irreversible"),
     );
     if (!doubleCheck) return;
 
@@ -6622,7 +6530,7 @@ export function showStatsPopUp() {
     };
     AppState.currentTierProgress = { downloads: 0, recommendations: 0 };
 
-    showToast("Success", "✅ All leaderboard data has been reset.");
+    showToast(t("leaderboard"), t("statsReset"));
     document.getElementById(DOM_IDS.MODAL_CONTAINER)?.remove();
     displayFoundUrls({ forced: true });
   });
@@ -6634,9 +6542,10 @@ export function showStatsPopUp() {
   contentWrapper.appendChild(tabNav);
   contentWrapper.appendChild(content);
 
+  const unsubscribe = onLanguageChange(() => renderTab(tabButtons.find(button => button.classList.contains("active"))?.dataset.key || "downloads"));
   createModal({
     children: [contentWrapper, actionBtnContainer],
-    onClose: () => {},
+    onClose: unsubscribe,
   });
 }
 
@@ -6658,7 +6567,7 @@ export function createModal({ children = [], onClose = null }) {
   const btn = document.createElement("button");
   btn.textContent = "×";
   btn.id = "ettpd-close";
-  btn.setAttribute("aria-label", "Close modal");
+  bindText(btn, "close", {}, "aria-label");
   btn.classList.add("ettpd-modal-close");
 
   btn.onclick = () => {
@@ -6711,12 +6620,7 @@ export function showMorpheusRateUsPage() {
       return;
     }
     createModalMorpheus({
-      message: `<div class="ettpd-morpheus-message">
-  You've just seen how good this downloader is.<br>
-  Now it's your turn to support the mission.<br><br>
-  <strong>Take the red pill ☕ — fuel us.<br>
-  Take the blue pill ⭐ — rate us.</strong>
-</div>`,
+      message: '<div class="ettpd-morpheus-message" data-i18n="reviewInvitation"></div>',
       redPillClick: (e, overlay) => {
         AppState.rateDonate.lastShownAt = Date.now();
         localStorage.setItem(
@@ -6775,7 +6679,7 @@ export function createModalMorpheus({
   const btn = document.createElement("button");
   btn.textContent = "x";
   btn.className = "ettpd-close-morpheus";
-  btn.setAttribute("aria-label", "Close modal");
+  bindText(btn, "close", {}, "aria-label");
   btn.onclick = () => {
     overlay.remove();
     if (typeof onClose === "function") onClose();
@@ -6788,7 +6692,7 @@ export function createModalMorpheus({
     replaceElementHtml(msg, message);
   } else {
     msg.textContent =
-      "You take the blue pill… You wake up in your bed and believe whatever you want to believe.";
+      t("reviewInvitation");
   }
 
   // 🔵 Blue pill button (right hand)
@@ -6835,12 +6739,11 @@ export function createFilenameTemplateModal() {
 
   const templateTitle = document.createElement("div");
   templateTitle.className = "ettpd-template-title";
-  templateTitle.textContent = "Download Folder Templates";
+  bindText(templateTitle, "templateTitle");
 
   const templateHeroCopy = document.createElement("p");
   templateHeroCopy.className = "ettpd-template-hero-copy";
-  templateHeroCopy.textContent =
-    "Choose how your files are named and organized when they are saved.";
+  bindText(templateHeroCopy, "templateIntro");
 
   templateHero.append(templateTitle, templateHeroCopy);
 
@@ -6849,13 +6752,10 @@ export function createFilenameTemplateModal() {
   replaceElementHtml(
     locationNote,
     `
-    <strong>Where files go</strong>
-    <span>${
-      AppState.downloadPreferences.showFolderPicker
-        ? "Your browser can still ask where to save each file. This template controls the suggested folder path and filename."
-        : "Files are saved inside your browser's default Downloads folder. This template controls the folders and filename inside that location."
-    }</span>
-    <span><strong>Name cleanup</strong>: if a folder or file segment would start with <code>.</code>, the downloader rewrites it so it stays visible and browser-safe. Example: <code>@.dernful</code> becomes <code>@_dernful</code>.</span>
+    <strong data-i18n="templateLocation"></strong>
+    <span data-i18n="${AppState.downloadPreferences.showFolderPicker ? "templatePickerLocation" : "templateDefaultLocation"}"></span>
+    <span data-i18n="templateSafePath"></span>
+    <code>@.dernful → @_dernful</code>
     <code>Downloads/${escapeHtml(DOWNLOAD_FOLDER_DEFAULT)}/...</code>
   `,
   );
@@ -6891,49 +6791,31 @@ export function createFilenameTemplateModal() {
   const tabConfig = [
     {
       key: "guide",
-      label: "Guide",
+      label: "guide",
       body: `
-        <p class="ettpd-template-subtitle">Templates build the relative path inside your Downloads folder. Use <code>{field}</code>, <code>{field|fallback}</code>, or <code>{field:maxLen|fallback}</code>.</p>
+        <p class="ettpd-template-subtitle" data-i18n="templateSyntax"></p>
+        <code>{field} / {field|fallback} / {field:maxLen|fallback}</code>
         <details class="ettpd-template-accordion">
-          <summary class="ettpd-template-summary">Show examples and rules</summary>
+          <summary class="ettpd-template-summary" data-i18n="templateRules"></summary>
           <ul class="ettpd-template-list">
-            <li><strong>Save location</strong>: your files go to <code>Downloads/${DOWNLOAD_FOLDER_DEFAULT}/...</code> unless you changed your browser save location.</li>
-            <li><strong>Extensions</strong>: auto-added (<code>.jpeg</code> / <code>.mp4</code>).</li>
-            <li><strong>Numbering</strong>: <code>{sequenceNumber}</code> only on multi-image unless forced with <code>{sequenceNumber|required}</code>.</li>
-            <li><strong>Length</strong>: trim with <code>{desc:40|no-desc}</code> or any field. Use negative numbers for last N chars: <code>{videoId:-4}</code> takes last 4 characters.</li>
-            <li><strong>Paths</strong>: keep them relative; no leading <code>/</code> or <code>..</code>. If a filename would be invalid, the downloader cleans it automatically.</li>
-            <li><strong>Leading dots</strong>: browsers can hide or reject dot-prefixed names, so <code>.name</code> is rewritten to <code>_name</code>. Example: <code>@.dernful</code> becomes <code>@_dernful</code>.</li>
-            <li><strong>Ads & media</strong>: <code>{ad}</code> adds "ad"; <code>{mediaType}</code> is <em>image</em>/<em>video</em>.</li>
-            <li><strong>Quality</strong>: <code>{quality}</code> is <em>HD</em> or <em>SD</em> based on the file actually saved.</li>
-            <li><strong>Context</strong>: <code>{tabName}</code> follows the scrapper tab (Videos, Reposts, Liked, Favorited).</li>
+            <li><span data-i18n="templateExtensions"></span> <code>.jpeg / .mp4</code></li>
+            <li><span data-i18n="templateNumbering"></span> <code>{sequenceNumber|required}</code></li>
+            <li><span data-i18n="templateLength"></span> <code>{desc:40|no-desc} / {videoId:-4}</code></li>
+            <li><span data-i18n="templateSafePath"></span> <code>.name → _name</code></li>
+            <li><span data-i18n="templateContext"></span> <code>{ad}: ad / {mediaType}: image, video / {quality}: HD, SD / {tabName}: Videos, Reposts, Liked, Favorited</code></li>
           </ul>
         </details>
       `,
     },
     {
       key: "fields",
-      label: "Supported fields",
+      label: "fields",
       body: `
-        <p class="ettpd-template-subtitle">These values can be used in folder names and file names.</p>
-        <p><strong>Supported fields</strong></p>
+        <p class="ettpd-template-subtitle" data-i18n="templateSyntax"></p>
+        <p><strong data-i18n="fields"></strong></p>
         <code class="ettpd-template-code">${knownFields.join(", ")}</code>
         <div class="ettpd-template-grid">
-          <div><strong>{videoId}</strong><span>Unique post ID</span></div>
-          <div><strong>{authorUsername}</strong><span>@handle of the creator</span></div>
-          <div><strong>{authorNickname}</strong><span>Display name when available</span></div>
-          <div><strong>{desc}</strong><span>Caption or description text</span></div>
-          <div><strong>{createTime}</strong><span>Original post timestamp</span></div>
-          <div><strong>{downloadTime}</strong><span>When you downloaded it</span></div>
-          <div><strong>{musicTitle}</strong><span>Track title</span></div>
-          <div><strong>{musicAuthor}</strong><span>Track artist</span></div>
-          <div><strong>{views}</strong><span>View count when available</span></div>
-          <div><strong>{duration}</strong><span>Length in seconds</span></div>
-          <div><strong>{hashtags}</strong><span>Hashtags with the # symbol</span></div>
-          <div><strong>{sequenceNumber}</strong><span>Index for multi-asset posts</span></div>
-          <div><strong>{ad}</strong><span>"ad" when marked as ad</span></div>
-          <div><strong>{mediaType}</strong><span>image or video</span></div>
-          <div><strong>{quality}</strong><span>HD or SD for the file actually saved</span></div>
-          <div><strong>{tabName}</strong><span>Videos, Reposts, Liked, or Favorited</span></div>
+          ${knownFields.map(field => `<div><strong>{${field}}</strong><span data-i18n="field_${field}"></span></div>`).join("")}
         </div>
       `,
     },
@@ -6943,7 +6825,7 @@ export function createFilenameTemplateModal() {
     const btn = document.createElement("button");
     btn.className = "ettpd-template-tab";
     btn.dataset.key = tab.key;
-    btn.textContent = tab.label;
+    bindText(btn, tab.label);
     btn.onclick = () => renderTab(tab.key);
     tabNav.appendChild(btn);
     return btn;
@@ -6955,6 +6837,7 @@ export function createFilenameTemplateModal() {
     );
     const section = tabConfig.find((tab) => tab.key === key);
     replaceElementHtml(tabContent, section?.body || "");
+    localizeMarkup(tabContent);
   };
 
   instructions.append(tabNav, tabContent);
@@ -6962,8 +6845,7 @@ export function createFilenameTemplateModal() {
 
   const pickerLabel = document.createElement("div");
   pickerLabel.className = "ettpd-template-section-label";
-  pickerLabel.textContent =
-    "Start from a built-in preset or one of your saved templates";
+  bindText(pickerLabel, "templateChoose");
 
   const comboSelect = document.createElement("select");
   comboSelect.className = "ettpd-template-select";
@@ -6972,34 +6854,28 @@ export function createFilenameTemplateModal() {
     selectEl.querySelectorAll("option").forEach((opt) => opt.remove());
 
     const placeholder = document.createElement("option");
-    placeholder.text = "Choose a template or preset...";
+    bindText(placeholder, "templateChoose");
     placeholder.value = "";
     selectEl.appendChild(placeholder);
 
     getSavedTemplates().forEach((template, index) => {
       const opt = document.createElement("option");
       opt.value = `user-${index}`;
-      opt.text =
-        template.label === activeLabel
-          ? `(Active) ${template.label}`
-          : template.label;
+      bindText(opt, template.label === activeLabel ? "templateActive" : "displayName", () => ({ name: templateDisplayName(template) }));
       if (template.label === activeLabel) opt.selected = true;
       selectEl.appendChild(opt);
     });
 
     if (presetTemplates.length) {
       const sep = document.createElement("option");
-      sep.text = "-- Presets --";
+      bindText(sep, "presets");
       sep.disabled = true;
       selectEl.appendChild(sep);
 
       presetTemplates.forEach((template, index) => {
         const opt = document.createElement("option");
         opt.value = `preset-${index}`;
-        opt.text =
-          template.label === activeLabel
-            ? `(Active) ${template.label}`
-            : template.label;
+        bindText(opt, template.label === activeLabel ? "templateActive" : "displayName", () => ({ name: templateDisplayName(template) }));
         if (template.label === activeLabel) opt.selected = true;
         opt.title = template.example;
         selectEl.appendChild(opt);
@@ -7012,7 +6888,8 @@ export function createFilenameTemplateModal() {
   const labelInput = document.createElement("input");
   labelInput.type = "text";
   labelInput.name = "label";
-  labelInput.placeholder = "Template label shown in the list";
+  bindText(labelInput, "templateLabel", {}, "placeholder");
+  bindText(labelInput, "templateLabel", {}, "aria-label");
   labelInput.value = savedLabel;
   labelInput.className = "ettpd-modal-input";
 
@@ -7033,7 +6910,7 @@ export function createFilenameTemplateModal() {
   const activeFullPathTemplate = document.createElement("div");
   activeFullPathTemplate.className = "ettpd-template-active";
   if (savedLabel && savedLabel === savedTemplateObj.label) {
-    activeFullPathTemplate.textContent = `Currently in use: ${savedLabel}`;
+    bindText(activeFullPathTemplate, "templateActive", () => ({ name: templateDisplayName(savedTemplateObj) }));
   }
 
   const presetExample = document.createElement("code");
@@ -7041,27 +6918,27 @@ export function createFilenameTemplateModal() {
 
   const saveBtn = document.createElement("button");
   saveBtn.className = "ettpd-pref-btn";
-  saveBtn.textContent = "Save & Apply";
+  bindText(saveBtn, "saveApply");
 
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "ettpd-pref-btn danger";
-  setButtonWithIcon(deleteBtn, "Delete Template", "delete");
+  setLocalizedButton(deleteBtn, "templateDelete", "delete");
   deleteBtn.style = "margin-right:15px;";
   deleteBtn.disabled = !savedLabel;
 
   const validatePathTemplate = (tpl) => {
     const errs = [];
     if (tpl.startsWith("/") && !tpl.startsWith("@/@")) {
-      errs.push("Path must be relative (no leading / or drive letters)");
+      errs.push(t("templateSafePath"));
     }
     if (/\.\.|^[a-zA-Z]:/.test(tpl)) {
-      errs.push("No '..' or drive letters allowed");
+      errs.push(t("templateSafePath"));
     }
     const tokenRe = /\{(\w+)(\|[^}]+)?\}/g;
     let match;
     while ((match = tokenRe.exec(tpl))) {
       if (!knownFields.includes(match[1])) {
-        errs.push(`Unknown field: ${match[1]}`);
+        errs.push(t("templateUnknownField", { field: match[1] }));
       }
     }
     return errs;
@@ -7073,8 +6950,7 @@ export function createFilenameTemplateModal() {
 
     if (!tpl) {
       error.textContent = "";
-      preview.textContent =
-        "Add a relative path template to preview where files will land inside Downloads.";
+      bindText(preview, "templatePreviewEmpty");
       return;
     }
 
@@ -7084,7 +6960,7 @@ export function createFilenameTemplateModal() {
       warningIcon.style.marginRight = "4px";
       error.appendChild(warningIcon);
       error.appendChild(document.createTextNode(errors.join("; ")));
-      preview.textContent = "";
+      clearText(preview);
       return;
     }
 
@@ -7114,7 +6990,7 @@ export function createFilenameTemplateModal() {
       imageIndex: 3,
       options: { template: tpl, tabName: sample.tabName, quality: sample.quality },
     });
-    preview.textContent = `Preview in Downloads: ${filename}`;
+    bindText(preview, "templatePreview", { path: filename });
   }
 
   comboSelect.onchange = () => {
@@ -7140,9 +7016,9 @@ export function createFilenameTemplateModal() {
 
     inputPathTemplate.value = selected.template || selected.fullPathTemplate;
     labelInput.value = selected.label;
-    activeFullPathTemplate.textContent = `Selected template: ${selected.label}`;
+    bindText(activeFullPathTemplate, "templateSelected", () => ({ name: templateDisplayName(selected) }));
     presetExample.textContent = selected.example
-      ? `Preset example: ${selected.example}`
+      ? selected.example
       : "";
 
     renderPreviewAndErrors();
@@ -7155,7 +7031,7 @@ export function createFilenameTemplateModal() {
   feedbackContainer.style.textAlign = "center";
 
   function showFeedback(text) {
-    replaceElementHtml(feedbackContainer, "<span>Applying...</span>");
+    replaceElementHtml(feedbackContainer, '<span data-i18n="applying"></span>');
     layout.appendChild(feedbackContainer);
     return new Promise((resolve) => {
       setTimeout(() => {
@@ -7175,11 +7051,11 @@ export function createFilenameTemplateModal() {
   saveBtn.onclick = async () => {
     renderPreviewAndErrors();
     if (error.textContent) {
-      showToast("Error", "Fix errors before saving.");
+      showToast(t("errorTitle"), t("fixErrors"));
       return;
     }
     if (!labelInput.value.trim()) {
-      showToast("Error", "Please enter a name.");
+      showToast(t("errorTitle"), t("nameRequired"));
       return;
     }
 
@@ -7188,8 +7064,8 @@ export function createFilenameTemplateModal() {
 
     if (recommendedTemplate && trimmedLabel === recommendedTemplate.label) {
       showToast(
-        "⚠️ Template Name Warning",
-        `The name "${trimmedLabel}" will be automatically updated on next reload. Please rename your template to avoid automatic overrides.`,
+        t("templateLabel"),
+        t("templateReserved"),
         8000,
       );
     }
@@ -7206,49 +7082,49 @@ export function createFilenameTemplateModal() {
     AppState.downloadPreferences.fullPathTemplate = newTemplate;
     saveTemplates(updatedTemplates);
     saveSelectedTemplate();
-    activeFullPathTemplate.textContent = `Now using: ${newTemplate.label}`;
+    bindText(activeFullPathTemplate, "templateActive", () => ({ name: templateDisplayName(newTemplate) }));
     presetExample.textContent = "";
     deleteBtn.disabled = false;
 
     appendTemplateOptions(comboSelect, newTemplate.label);
-    await showFeedback("✅ Template saved and applied!");
+    await showFeedback(t("templateSaved"));
   };
 
   deleteBtn.onclick = async () => {
     const value = comboSelect.value;
     if (!value) {
-      showToast("Error", "Select a user template to delete.");
+      showToast(t("errorTitle"), t("templateDeleteHint"));
       return;
     }
     const [type, indexStr] = value.split("-");
     const index = Number.parseInt(indexStr, 10);
     if (type !== "user") {
-      showToast("Error", "Cannot delete built-in presets.");
+      showToast(t("errorTitle"), t("templateDeleteHint"));
       return;
     }
 
     const currentTemplates = getSavedTemplates();
     const removed = currentTemplates.splice(index, 1)[0];
     if (!removed) {
-      showToast("Error", "That template could not be found.");
+      showToast(t("errorTitle"), t("templateDeleteHint"));
       return;
     }
 
     saveTemplates(currentTemplates);
     labelInput.value = "";
     inputPathTemplate.value = "";
-    activeFullPathTemplate.textContent = "";
+    clearText(activeFullPathTemplate);
     presetExample.textContent = "";
     comboSelect.value = "";
     deleteBtn.disabled = true;
     appendTemplateOptions(comboSelect, "");
     renderPreviewAndErrors();
-    await showFeedback(`🗑️ Deleted template '${removed.label}'.`);
+    await showFeedback(t("templateDeleted", { name: removed.label }));
   };
 
   const inputsLabel = document.createElement("span");
   inputsLabel.className = "ettpd-template-section-label";
-  inputsLabel.textContent = "Edit the template label and relative save path";
+  bindText(inputsLabel, "templateEdit");
 
   inputPathTemplate.addEventListener("input", renderPreviewAndErrors);
   labelInput.addEventListener("input", () => (deleteBtn.disabled = false));
@@ -7281,9 +7157,9 @@ export function createFilenameTemplateModal() {
     templateActionsContainer,
   );
 
-  createModal({
-    children: [layout],
-  });
+  const unsubscribe = onLanguageChange(() => { if (layout.isConnected) renderPreviewAndErrors(); });
+  createModal({ children: [layout], onClose: unsubscribe });
+  localizeMarkup(locationNote);
 }
 
 export function createPreferencesBox() {
@@ -7295,7 +7171,7 @@ export function createPreferencesBox() {
   // Label
   const prefLabel = document.createElement("div");
   prefLabel.className = "ettpd-pref-label";
-  prefLabel.textContent = "Options:";
+  bindText(prefLabel, "options");
 
   // 🔄 Create button container
   const btnContainer = document.createElement("div");
@@ -7304,11 +7180,11 @@ export function createPreferencesBox() {
   // 🔄 Reset Downloader button
   const resetBtn = document.createElement("button");
   resetBtn.className = "ettpd-pref-btn danger";
-  setButtonWithIcon(resetBtn, "Factory Reset", "refresh");
+  setLocalizedButton(resetBtn, "reset", "refresh");
   resetBtn.onclick = async (e) => {
     e.stopPropagation();
     resetAppStateToDefaults();
-    await showFeedback("✅ Downloader state has been reset.");
+    await showFeedback(t("settingsReset"));
     setTimeout(() => {
       AppState.ui.isPreferenceBoxOpen = false;
       AppState.ui.isScrapperBoxOpen = false;
@@ -7320,7 +7196,7 @@ export function createPreferencesBox() {
   // 🧹 Clear List button
   const clearListBtn = document.createElement("button");
   clearListBtn.className = "ettpd-pref-btn";
-  clearListBtn.textContent = "🧹 Clean List";
+  setLocalizedButton(clearListBtn, "clearList", "delete");
   clearListBtn.onclick = (e) => {
     e.stopPropagation();
     if (
@@ -7328,8 +7204,8 @@ export function createPreferencesBox() {
       AppState.downloading.isDownloadingAll
     ) {
       showToast(
-        "Download in progress",
-        "Please wait for the download to be over or refresh!",
+        t("busy"),
+        t("busyMessage"),
       );
       return;
     }
@@ -7341,8 +7217,8 @@ export function createPreferencesBox() {
     AppState.ui.isPreferenceBoxOpen = false;
     AppState.ui.isScrapperBoxOpen = false;
     showToast(
-      "🔄 All set!",
-      "The download list now shows only the posts visible on the main screen — nothing from the sidebar.<br><br>💡 <b>Tip:</b> To scrape this page, scroll all the way down, then click <b>Download All</b> once you're happy with your list.",
+      t("clearList"),
+      t("listCleared"),
     );
 
     setTimeout(() => {
@@ -7360,10 +7236,10 @@ export function createPreferencesBox() {
   // Advanced checkboxes
   const advancedLabel = document.createElement("div");
   advancedLabel.className = "ettpd-pref-label";
-  advancedLabel.textContent = "Downloader Preferences:";
+  bindText(advancedLabel, "settings");
 
   const skipFailedCheckbox = createCheckbox(
-    "Skip Failed Downloads",
+    "skipFailed",
     "skipFailedDownloads",
     () => {
       AppState.downloadPreferences.skipFailedDownloads =
@@ -7372,17 +7248,17 @@ export function createPreferencesBox() {
     AppState.downloadPreferences.skipFailedDownloads,
   );
   const skipAdsCheckbox = createCheckbox(
-    "Skip Ads",
+    "skipAds",
     "skipAds",
     () => {
       AppState.downloadPreferences.skipAds =
         !AppState.downloadPreferences.skipAds;
     },
     AppState.downloadPreferences.skipAds,
-    "Will not download ads, buy you will still see ads.",
+    "skipAdsHint",
   );
   const includeCSVFile = createCheckbox(
-    "Include CSV File",
+    "includeCsv",
     "includeCSV",
     () => {
       AppState.downloadPreferences.includeCSV =
@@ -7392,7 +7268,7 @@ export function createPreferencesBox() {
   );
 
   const downloadMessagesCheckbox = createCheckbox(
-    "Funny download messages",
+    "funnyMessages",
     "showDownloadMessages",
     (event) => {
       AppState.downloadPreferences.showDownloadMessages = event.target.checked;
@@ -7402,11 +7278,11 @@ export function createPreferencesBox() {
       );
     },
     AppState.downloadPreferences.showDownloadMessages,
-    'Random jokes after a download, such as "Saved. Your Downloads folder has accepted another side quest."',
+    "funnyMessagesHint",
   );
 
   const disableConfetti = createCheckbox(
-    "Confetti",
+    "confetti",
     "disableConfetti",
     (event) => {
       AppState.downloadPreferences.disableConfetti = !event.target.checked;
@@ -7419,7 +7295,7 @@ export function createPreferencesBox() {
   );
 
   const experimentalHdCheckbox = createCheckbox(
-    "Enable Experimental HD",
+    "experimentalHd",
     "experimentalHd",
     (event) => {
       AppState.downloadPreferences.experimentalHd = event.target.checked;
@@ -7438,7 +7314,7 @@ export function createPreferencesBox() {
       displayFoundUrls({ forced: true });
     },
     AppState.downloadPreferences.experimentalHd,
-    "Combines TikTok's separate HD video and audio only when an exact pair is detected. Downloads may take longer and use more memory. Falls back automatically.",
+    "experimentalHdHint",
   );
   experimentalHdCheckbox.dataset.setting = "experimental-hd";
 
@@ -7453,7 +7329,7 @@ export function createPreferencesBox() {
 
     const label = document.createElement("label");
     label.className = "ettpd-label";
-    label.textContent = "Theme:";
+    bindText(label, "theme");
     label.style.marginRight = "8px";
 
     const select = document.createElement("select");
@@ -7467,15 +7343,15 @@ export function createPreferencesBox() {
       currentStored === "classic" ? "light" : currentStored;
 
     const options = [
-      { value: "dark", label: "🌙 Dark" },
-      { value: "light", label: "☀️ Light" },
-      { value: "system", label: "🖥️ System" },
+      { value: "dark", label: "themeDark" },
+      { value: "light", label: "themeLight" },
+      { value: "system", label: "themeSystem" },
     ];
 
     options.forEach(({ value, label }) => {
       const opt = document.createElement("option");
       opt.value = value;
-      opt.textContent = label;
+      bindText(opt, label);
       if (value === currentNormalized) {
         opt.selected = true;
       }
@@ -7524,7 +7400,7 @@ export function createPreferencesBox() {
           : newTheme === "dark"
             ? "Dark"
             : "Light";
-      showFeedback(`Theme set to ${themeLabel} mode`);
+      showFeedback(t("settingsSaved"));
     };
 
     // Listen for system theme changes when "system" is selected
@@ -7575,7 +7451,7 @@ export function createPreferencesBox() {
 
     const label = document.createElement("label");
     label.className = "ettpd-label";
-    label.textContent = "Extension Status:";
+    bindText(label, "extensionStatus");
     label.style.marginBottom = "0";
 
     const toggleContainer = document.createElement("div");
@@ -7620,9 +7496,7 @@ export function createPreferencesBox() {
           message.className = "alert";
           replaceElementHtml(
             message,
-            "⚠️ <b>Disable Extension?</b><br><br>" +
-              "The extension will be completely disabled. No scripts will run, no polling will occur, and no downloads will be processed.<br><br>" +
-              "To re-enable, click the extension icon and select 'Turn On'.",
+            '<p data-i18n="disableWarning"></p>',
           );
 
           const actionsContainer = document.createElement("div");
@@ -7635,7 +7509,7 @@ export function createPreferencesBox() {
 
           const cancelBtn = document.createElement("button");
           cancelBtn.className = "ettpd-modal-button secondary";
-          cancelBtn.textContent = "Cancel";
+          bindText(cancelBtn, "cancel");
           cancelBtn.onclick = () => {
             const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
             if (overlay) overlay.remove();
@@ -7644,7 +7518,7 @@ export function createPreferencesBox() {
 
           const disableBtn = document.createElement("button");
           disableBtn.className = "ettpd-modal-button danger";
-          disableBtn.textContent = "Disable";
+          bindText(disableBtn, "disable");
           disableBtn.onclick = async () => {
             console.log("[EXT_POWER] disabling via modal");
             await setExtensionEnabled(false);
@@ -7653,7 +7527,7 @@ export function createPreferencesBox() {
             toggleIcon.textContent = "🔌";
 
             showFeedback(
-              "Extension disabled. Reloading the page to stop the downloader...",
+              t("disabling"),
             );
 
             const overlay = document.getElementById(DOM_IDS.MODAL_CONTAINER);
@@ -7682,7 +7556,7 @@ export function createPreferencesBox() {
         toggle.classList.add("ettpd-power-toggle-on");
         toggleIcon.textContent = "⚡";
         showFeedback(
-          "Extension enabled. Reload the page for changes to take effect.",
+          t("refreshHint"),
         );
       }
     };
@@ -7700,7 +7574,7 @@ export function createPreferencesBox() {
   feedbackContainer.className = "ettpd-reset-feedback";
   // Utility function to show feedback
   function showFeedback(text) {
-    replaceElementHtml(feedbackContainer, "<span>Applying...</span>");
+    replaceElementHtml(feedbackContainer, '<span data-i18n="applying"></span>');
     preferencesBox.appendChild(feedbackContainer);
     // Then show the actual message after displayFoundUrls finishes
     return new Promise((resolve, reject) => {
@@ -7740,12 +7614,12 @@ export function createPreferencesBox() {
       } else {
         AppState[stateKey] = checkbox.checked;
       }
-      showFeedback(`${label} saved!`);
+      showFeedback(t("settingsSaved"));
     };
 
     const span = document.createElement("span");
-    span.textContent = label;
-    span.title = title;
+    bindText(span, label);
+    if (title) bindText(span, title, {}, "title");
     container.appendChild(checkbox);
     container.appendChild(span);
     return container;
@@ -7759,7 +7633,7 @@ export function createPreferencesBox() {
     let intervalId = null;
     const updateLabel = () => {
       const isAvailable = !listScrollingCompleted() || canClickNextButton();
-      label.textContent = `Auto Scroll Mode (${isAvailable ? "Available" : "Unavailable"})`;
+      label.textContent = `${t("autoScroll")} (${t(isAvailable ? "available" : "notAvailable")})`;
     };
     updateLabel();
 
@@ -7798,15 +7672,15 @@ export function createPreferencesBox() {
     select.name = "scrollMode";
     select.className = "ettpd-select";
     const options = [
-      { value: "onVideoEnd", label: "On Video End", icon: "repost" },
-      { value: "always", label: "Anytime (Load More)", icon: "refresh" },
-      { value: "off", label: "Off", icon: "stop" },
+      { value: "onVideoEnd", label: "onVideoEnd", icon: "repost" },
+      { value: "always", label: "loadMore", icon: "refresh" },
+      { value: "off", label: "off", icon: "stop" },
     ];
 
     options.forEach(({ value, label }) => {
       const opt = document.createElement("option");
       opt.value = value;
-      opt.textContent = label;
+      bindText(opt, label);
       select.appendChild(opt);
     });
 
@@ -7814,7 +7688,7 @@ export function createPreferencesBox() {
     select.onchange = (e) => {
       AppState.downloadPreferences.autoScrollMode = e.target.value;
       showFeedback(
-        `Auto Scroll Mode set to "${e.target.selectedOptions[0].text}"`,
+        t("settingsSaved"),
       );
     };
 
@@ -7828,7 +7702,7 @@ export function createPreferencesBox() {
 
   const templateEditorBtn = document.createElement("button");
   templateEditorBtn.className = "ettpd-pref-btn";
-  templateEditorBtn.textContent = "📝 File Paths Preferences";
+  setLocalizedButton(templateEditorBtn, "templateTitle", "settings");
   templateEditorBtn.onclick = (e) => {
     e.stopPropagation();
     createFilenameTemplateModal();
@@ -7855,8 +7729,8 @@ export function createPreferencesBox() {
 export function createSettingsToggle(preferencesBox) {
   const settingsBtn = document.createElement("button");
   settingsBtn.className = "ettpd-settings-toggle";
-  setButtonWithIcon(settingsBtn, "Settings", "settings");
-  settingsBtn.title = "Click to toggle settings";
+  setLocalizedButton(settingsBtn, "settings", "settings");
+  bindText(settingsBtn, "settings", {}, "title");
   settingsBtn.onclick = (e) => {
     e.stopPropagation();
     // Close Scrapper if open
@@ -8023,7 +7897,6 @@ function createDownloadButton({
   });
 
   const className = `download-btn ${videoId}`;
-  const mediaTypeLabel = isImage ? "Image" : "Video";
   const getOverlayMedia = () =>
     AppState.allDirectLinks?.find(
       (media) => String(media?.videoId) === String(videoId),
@@ -8053,7 +7926,7 @@ function createDownloadButton({
   btn.className = className;
   btn.dataset.wrapperId = wrapperId;
   btn.title = getStandardDownloadTitle(getOverlayMedia());
-  btn.setAttribute("aria-label", `Standard ${mediaTypeLabel} download`);
+  bindText(btn, isImage ? "downloadImages" : "download", {}, "aria-label");
   const refreshReadiness = () => {
     if (btn.dataset.downloadActive === "true") return true;
     if (isImage) return true;
@@ -8063,12 +7936,12 @@ function createDownloadButton({
     btn.disabled = !ready;
     btn.classList.toggle("is-source-loading", !ready && !unavailable);
     btn.setAttribute("aria-busy", String(!ready && !unavailable));
-    btn.title = ready ? getStandardDownloadTitle(ready) : "Preparing a downloadable source with audio. Playback is not a downloadable file.";
+    btn.title = ready ? getStandardDownloadTitle(ready) : t("sourcePreparing");
     if (ready) replaceElementHtml(btn, buildDefaultMarkup());
     else {
       const label = document.createElement("span");
       label.className = "download-btn-label";
-      label.textContent = unavailable ? "Not ready" : "Loading";
+      bindText(label, unavailable ? "notAvailable" : "prepare");
       btn.replaceChildren(label);
     }
     return !!ready;
@@ -8091,7 +7964,7 @@ function createDownloadButton({
     } finally {
       preparing = false;
       if (btn.isConnected && !refreshReadiness()) {
-        btn.title = "Download source is not ready. TikTok may require verification. Wait for the post to load or reopen it.";
+        bindText(btn, "unavailable", {}, "title");
       }
     }
   };
@@ -8186,8 +8059,8 @@ function createDownloadButton({
         console.warn("IMAGES_DL ❌ Invalid source", { src, videoId, from });
       }
       showToast(
-        "Save Failed",
-        "This video source is not ready yet. Try again in a moment.",
+        t("errorTitle"),
+        t("unavailable"),
       );
       return;
     }
@@ -8277,7 +8150,7 @@ function syncOverlayExperimentalHdButton(container, videoId) {
   button.style.display = "inline-flex";
   button.title = getExperimentalHdTitle(source);
   button.dataset.defaultTitle = button.title;
-  button.setAttribute("aria-label", "Save experimental HD video with audio");
+  bindText(button, "experimentalHdHint", {}, "aria-label");
   button.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -8308,8 +8181,8 @@ function syncShortDramaDownloadButton() {
   button.className = "ettpd-episode-download";
   button.type = "button";
   button.dataset.seriesId = seriesId;
-  button.title = "Download episodes";
-  button.setAttribute("aria-label", "Download episodes");
+  bindText(button, "episodesTitle", {}, "title");
+  bindText(button, "episodesTitle", {}, "aria-label");
   button.appendChild(createIcon("download", 18));
   button.onclick = event => {
     event.preventDefault();
@@ -8327,17 +8200,19 @@ async function showShortDramaBatchDialog(seriesId, trigger) {
   const content = document.createElement("div");
   content.className = "ettpd-episode-dialog";
   const title = document.createElement("h3");
-  title.textContent = "Download episodes";
+  bindText(title, "episodesTitle");
   const status = document.createElement("p");
   status.setAttribute("role", "status");
-  status.textContent = "Loading available episodes...";
+  bindText(status, "episodesLoading");
   const form = document.createElement("form");
   form.hidden = true;
   const range = document.createElement("div");
   range.className = "ettpd-episode-range";
   const createNumber = text => {
     const label = document.createElement("label");
-    label.textContent = text;
+    const caption = document.createElement("span");
+    bindText(caption, text);
+    label.appendChild(caption);
     const input = document.createElement("input");
     input.type = "number";
     input.min = "1";
@@ -8347,16 +8222,16 @@ async function showShortDramaBatchDialog(seriesId, trigger) {
     range.appendChild(label);
     return input;
   };
-  const first = createNumber("First episode");
-  const last = createNumber("Last episode");
+  const first = createNumber("episodeFirst");
+  const last = createNumber("episodeLast");
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.className = "ettpd-action-btn";
-  setButtonWithIcon(submit, "Download episodes", "download");
+  setLocalizedButton(submit, "episodesTitle", "download");
   const cancel = document.createElement("button");
   cancel.type = "button";
-  cancel.className = "ettpd-action-btn";
-  cancel.textContent = "Cancel";
+  cancel.className = "ettpd-action-btn secondary";
+  bindText(cancel, "cancel");
   form.append(range, submit);
   content.append(title, status, form, cancel);
   const close = () => {
@@ -8376,7 +8251,7 @@ async function showShortDramaBatchDialog(seriesId, trigger) {
       seriesId, requestUrl, signal: controller.signal,
       onProgress: ({ loaded, total }) => {
         if (getShortDramaId() !== seriesId || !modal.isConnected) { close(); modal.remove(); return; }
-        status.textContent = `Loading episodes: ${loaded}${total ? ` of ${total}` : ""}`;
+        bindText(status, "episodesLoaded", { count: loaded });
       },
     });
     if (controller.signal.aborted || getShortDramaId() !== seriesId) return;
@@ -8386,8 +8261,8 @@ async function showShortDramaBatchDialog(seriesId, trigger) {
       const ready = getReadyVideoDownloadMedia(item.id, [media]);
       return ready ? { item, number, media: { ...media, episodeNumber: number } } : null;
     }).filter(Boolean);
-    title.textContent = discovered.title;
-    if (!available.length) throw new Error("No complete downloadable episodes are currently available to this account.");
+    if (discovered.title) bindText(title, "title", { list: discovered.title });
+    if (!available.length) throw Object.assign(new Error("No available episodes"), { code: "EPISODES_EMPTY" });
     const highest = Math.max(discovered.total, ...available.map(entry => entry.number));
     first.value = "1";
     last.value = String(highest);
@@ -8399,8 +8274,7 @@ async function showShortDramaBatchDialog(seriesId, trigger) {
       const selected = valid ? available.filter(entry => entry.number >= start && entry.number <= end) : [];
       submit.disabled = !valid || !selected.length;
       const omitted = valid ? end - start + 1 - selected.length : 0;
-      status.textContent = !valid ? "Choose a valid episode range." :
-        `${selected.length} episodes available${omitted > 0 ? `; ${omitted} unavailable, restricted, or preview-only episodes will be skipped` : ""}.`;
+      bindText(status, valid ? "episodeSelection" : "episodeRange", valid ? { count: selected.length, skipped: omitted } : {});
       return selected;
     };
     first.oninput = last.oninput = updateSelection;
@@ -8421,11 +8295,11 @@ async function showShortDramaBatchDialog(seriesId, trigger) {
     };
   } catch (error) {
     if (!controller.signal.aborted) {
-      status.textContent = error.message;
+      bindText(status, error.code === "EPISODES_EMPTY" ? "episodesEmpty" : "unavailable");
       const retry = document.createElement("button");
       retry.type = "button";
       retry.className = "ettpd-action-btn";
-      setButtonWithIcon(retry, "Retry episode lookup", "refresh");
+      setLocalizedButton(retry, "episodesRetry", "refresh");
       retry.onclick = () => {
         close();
         modal.remove();
@@ -8549,7 +8423,7 @@ function createNativeAccountPageLoader(source) {
 
 function notifyDownloadBusy() {
   if (!AppState.downloading.isActive && !AppState.downloading.isDownloadingAll && !AppState.downloading.accountBatch) return false;
-  showToast("Download already in progress", "Wait for the current download to finish, or click Stop before starting another.");
+  showToast(t("busy"), t("busyMessage"));
   return true;
 }
 
@@ -8569,33 +8443,48 @@ async function showAccountBatchDialog(descriptor) {
   if (notifyDownloadBusy() || document.getElementById(DOM_IDS.MODAL_CONTAINER)) return;
   const originUrl = window.location.href;
   const content = document.createElement("div");
-  content.className = "ettpd-episode-dialog";
+  content.className = "ettpd-episode-dialog ettpd-account-download-dialog";
   const title = document.createElement("h3");
-  title.textContent = `Download ${descriptor.title}`;
+  bindText(title, "title", () => ({ list: ["videos", "liked", "reposts", "favorites"].includes(descriptor.kind) ? t(descriptor.kind) : descriptor.title }));
   const status = document.createElement("p");
   status.setAttribute("role", "status");
-  status.textContent = "Preparing this list...";
+  bindText(status, "preparing");
   const form = document.createElement("form");
+  form.className = "ettpd-account-download-form";
   form.hidden = true;
+  const limitLabel = document.createElement("label");
+  limitLabel.className = "ettpd-account-batch-size";
+  const limitTitle = document.createElement("span"); bindText(limitTitle, "maxPosts"); limitLabel.append(limitTitle);
+  const limit = document.createElement("input");
+  limit.type = "number"; limit.name = "maxPosts"; limit.min = "1"; limit.step = "1";
+  bindText(limit, "all", {}, "placeholder");
+  limitLabel.appendChild(limit);
   const label = document.createElement("label");
-  label.textContent = "Max posts per batch";
+  const batchTitle = document.createElement("span"); bindText(batchTitle, "batchSize"); label.append(batchTitle);
   const size = document.createElement("input");
   size.type = "number"; size.min = "1"; size.max = "100"; size.step = "1"; size.value = String(DEFAULT_BATCH_SIZE); size.required = true;
   label.className = "ettpd-account-batch-size";
   label.appendChild(size);
+  const advanced = document.createElement("details");
+  const advancedTitle = document.createElement("summary");
+  bindText(advancedTitle, "advanced");
+  advanced.append(advancedTitle, label);
   const resumeLabel = document.createElement("label");
   resumeLabel.className = "ettpd-checkbox-container";
   const resume = document.createElement("input");
   resume.type = "checkbox";
   const resumeText = document.createElement("span");
-  resumeText.textContent = "Resume saved progress";
+  bindText(resumeText, "resumeSaved");
   resumeLabel.append(resume, resumeText);
   const submit = document.createElement("button");
   submit.type = "submit"; submit.className = "ettpd-action-btn";
-  setButtonWithIcon(submit, "Start batches", "download");
-  form.append(label, resumeLabel, submit);
+  const updateSubmitLabel = () => setLocalizedButton(submit,
+    resume.checked ? "resume" : limit.value.trim() ? "download" : "downloadAll", "download");
+  limit.value = "";
+  updateSubmitLabel();
+  form.append(limitLabel, advanced, resumeLabel, submit);
   const cancel = document.createElement("button");
-  cancel.type = "button"; cancel.className = "ettpd-action-btn"; cancel.textContent = "Cancel";
+  cancel.type = "button"; cancel.className = "ettpd-action-btn secondary"; bindText(cancel, "cancel");
   content.append(title, status, form, cancel);
   const controller = new AbortController();
   const modal = createModal({ children: [content], onClose: () => controller.abort() });
@@ -8608,8 +8497,8 @@ async function showAccountBatchDialog(descriptor) {
       const notice = await inspectAccountList(descriptor.kind, controller.signal);
       if (controller.signal.aborted) return;
       if (notice) {
-        status.textContent = notice.message;
-        cancel.textContent = "Close";
+        bindText(status, notice.code === "LIST_PRIVATE" ? "private" : notice.code === "LIST_EMPTY" ? "empty" : "unavailable");
+        bindText(cancel, "close");
         return;
       }
     }
@@ -8643,37 +8532,73 @@ async function showAccountBatchDialog(descriptor) {
       source = resolveAccountList({ ...descriptor, profile });
     }
     if (controller.signal.aborted) return;
-    if (window.location.href !== originUrl) { status.textContent = "The account page changed. Close this dialog and select the list again."; return; }
+    if (window.location.href !== originUrl) { bindText(status, "pageChanged"); return; }
     source.title = descriptor.title;
     const saved = getProgressiveListCheckpoint(source.scope);
+    const restartWarning = document.createElement("p");
+    bindText(restartWarning, "restartWarning");
+    const limitHint = document.createElement("p");
+    limitHint.className = "ettpd-limit-hint";
+    bindText(limitHint, "limitNote");
+    limitLabel.append(limitHint);
+    const allowance = document.createElement("p");
+    const updateAllowance = () => {
+      const maximum = Number(limit.value);
+      if (limit.value.trim() && Number.isSafeInteger(maximum) && maximum > 0) bindText(allowance, "remainingLimit", { count: Math.max(0, maximum - (resume.checked ? saved?.completed.length || 0 : 0)) });
+      else bindText(allowance, "all");
+    };
+    limitLabel.append(allowance);
+    limit.addEventListener("input", () => { updateSubmitLabel(); updateAllowance(); });
     resumeLabel.hidden = !saved;
     resume.checked = !!saved && !saved.finished;
-    if (saved) size.value = String(saved.batchSize);
+    if (saved) {
+      size.value = String(saved.batchSize);
+      limit.value = saved.maxPosts == null ? "" : String(saved.maxPosts);
+    }
     size.disabled = resume.checked;
-    resume.onchange = () => { size.disabled = resume.checked; if (resume.checked) size.value = String(saved.batchSize); };
-    status.textContent = saved
-      ? `${saved.completed.length} posts confirmed saved. Starting over may download them again. Each batch is saved before more posts are loaded.`
-      : "Each batch is saved before more posts are loaded. Private or unavailable lists require access in TikTok.";
+    resume.onchange = () => {
+      size.disabled = resume.checked;
+      if (resume.checked) {
+        size.value = String(saved.batchSize);
+        limit.value = saved.maxPosts == null ? "" : String(saved.maxPosts);
+      }
+      updateSubmitLabel();
+      bindText(limitTitle, resume.checked ? "totalLimit" : "maxPosts");
+      updateAllowance();
+      restartWarning.hidden = resume.checked;
+    };
+    updateSubmitLabel();
+    bindText(limitTitle, resume.checked ? "totalLimit" : "maxPosts");
+    updateAllowance();
+    restartWarning.hidden = resume.checked;
+    bindText(status, saved ? saved.finished ? "summaryFinished" : "summaryPaused" : "ready");
+    if (saved) {
+      content.insertBefore(renderResumeSummary(saved), form);
+      content.insertBefore(restartWarning, form);
+    }
     form.hidden = false;
     form.onsubmit = event => {
       event.preventDefault();
       const batchSize = Number(size.value);
-      if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 100) { status.textContent = "Choose a batch size from 1 to 100."; return; }
-      if (window.location.href !== originUrl) { status.textContent = "The account page changed. Close this dialog and select the list again."; return; }
-      if (notifyDownloadBusy()) { status.textContent = "Stop the current download before starting another list."; return; }
+      const maxPosts = limit.value.trim() ? Number(limit.value) : null;
+      if (maxPosts !== null && (!Number.isSafeInteger(maxPosts) || maxPosts < 1)) { bindText(status, "invalidLimit"); return; }
+      if (resume.checked && maxPosts !== null && maxPosts < saved.completed.length) { bindText(status, "lowerLimit", { count: saved.completed.length }); return; }
+      if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 100) { bindText(status, "invalidBatch"); return; }
+      if (window.location.href !== originUrl) { bindText(status, "pageChanged"); return; }
+      if (notifyDownloadBusy()) { bindText(status, "busyMessage"); return; }
       if (["videos", "liked", "reposts", "favorites"].includes(source.kind)) source.nativePage = createNativeAccountPageLoader(source);
       controller.abort(); modal.remove();
       AppState.ui.isDownloaderClosed = false;
       displayFoundUrls({ forced: true });
-      void downloadAccountListBatches(source, { batchSize, resume: resume.checked }).then(result => {
-        if (result.finished && !result.completed.length) showToast("Nothing to download", "No accessible downloadable posts were found in this list.");
-        else showToast(result.finished ? "List finished" : "List paused", `${result.completed.length} posts confirmed saved. Use this list's download button to resume.`);
+      void downloadAccountListBatches(source, { batchSize, maxPosts, resume: resume.checked }).then(result => {
+        if (result.finished && !result.completed.length) showToast(t("noPosts"), t("empty"));
+        else showToast(t(result.limitReached ? "limitReached" : result.finished ? "finished" : "paused"), `${t("savedCount", { count: result.completed.length })}. ${t(result.finished ? "summaryFinished" : "summaryPaused")}`);
       }).catch(error => {
-        if (error.name !== "AbortError") showToast(error.code === "LIST_PRIVATE" ? "List unavailable" : "List paused", error.message);
+        if (error.name !== "AbortError") showToast(t("paused"), t(error.code === "LIST_PRIVATE" ? "private" : "unavailable"));
       });
     };
   } catch (error) {
-    if (!controller.signal.aborted) status.textContent = error.message;
+    if (!controller.signal.aborted) bindText(status, "unavailable");
   }
 }
 
@@ -8681,8 +8606,9 @@ function makeAccountDownloadControl(descriptor, className = "ettpd-account-downl
   const button = document.createElement("button");
   button.type = "button";
   button.className = className;
-  button.title = `Download ${descriptor.title} in batches`;
-  button.setAttribute("aria-label", button.title);
+  const titleValues = () => ({ list: ["videos", "liked", "reposts", "favorites"].includes(descriptor.kind) ? t(descriptor.kind) : descriptor.title });
+  bindText(button, "title", titleValues, "title");
+  bindText(button, "title", titleValues, "aria-label");
   button.appendChild(createIcon("download", 16));
   button.onclick = event => { event.preventDefault(); event.stopPropagation(); void showAccountBatchDialog(descriptor); };
   return button;
@@ -8742,8 +8668,8 @@ function syncCollectionDownloadButton() {
   button.type = "button";
   button.className = "ettpd-collection-download";
   button.dataset.collectionId = collection.id;
-  button.title = `Download posts from ${collection.name}`;
-  setButtonWithIcon(button, "Download collection", "download");
+  bindText(button, "title", { list: collection.name }, "title");
+  setLocalizedButton(button, "collectionDownload", "download");
   button.onclick = event => {
     event.preventDefault();
     event.stopPropagation();
@@ -8763,15 +8689,15 @@ async function showCollectionDownloadDialog(collection, trigger) {
   title.textContent = collection.name;
   const status = document.createElement("p");
   status.setAttribute("role", "status");
-  status.textContent = "Loading collection posts...";
+  bindText(status, "collectionLoading");
   const start = document.createElement("button");
   start.type = "button";
   start.className = "ettpd-action-btn";
   start.hidden = true;
   const cancel = document.createElement("button");
   cancel.type = "button";
-  cancel.className = "ettpd-action-btn";
-  cancel.textContent = "Cancel";
+  cancel.className = "ettpd-action-btn secondary";
+  bindText(cancel, "cancel");
   content.append(title, status, start, cancel);
   const close = () => {
     controller.abort();
@@ -8791,7 +8717,7 @@ async function showCollectionDownloadDialog(collection, trigger) {
       signal: controller.signal,
       onProgress: ({ loaded }) => {
         if (getCollectionContext()?.id !== collection.id || !modal.isConnected) { close(); modal.remove(); return; }
-        status.textContent = `Loading collection: ${loaded} posts found`;
+        bindText(status, "postsFound", { count: loaded });
       },
     });
     if (controller.signal.aborted || getCollectionContext()?.id !== collection.id) return;
@@ -8805,8 +8731,8 @@ async function showCollectionDownloadDialog(collection, trigger) {
     }).filter(Boolean);
     if (!available.length) throw new Error("This collection has no downloadable posts available to this account.");
     const omitted = items.length - available.length;
-    status.textContent = `${available.length} posts ready${omitted ? `; ${omitted} unavailable posts or ads omitted` : ""}.`;
-    setButtonWithIcon(start, `Download ${available.length} posts`, "download");
+    bindText(status, "postsSelection", { count: available.length, skipped: omitted });
+    setLocalizedButton(start, "downloadCount", "download", { count: available.length });
     start.hidden = false;
     start.onclick = () => {
       if (getCollectionContext()?.id !== collection.id || AppState.downloading.isDownloadingAll) return;
@@ -8821,11 +8747,11 @@ async function showCollectionDownloadDialog(collection, trigger) {
     };
   } catch (error) {
     if (controller.signal.aborted) return;
-    status.textContent = error.message;
+    bindText(status, "unavailable");
     const retry = document.createElement("button");
     retry.type = "button";
     retry.className = "ettpd-action-btn";
-    setButtonWithIcon(retry, "Retry collection lookup", "refresh");
+    setLocalizedButton(retry, "retry", "refresh");
     retry.onclick = () => {
       close(); modal.remove();
       if (getCollectionContext()?.id === collection.id) void showCollectionDownloadDialog(collection, trigger);
@@ -10143,11 +10069,11 @@ export function createAutoSwipeUI() {
 
   const timerText = document.createElement("span");
   timerText.id = "swipeTimerText";
-  timerText.textContent = "Next in 0s";
+  bindText(timerText, "nextIn", { count: 0 });
 
   const pauseBtn = document.createElement("button");
   pauseBtn.id = "pauseSwipeBtn";
-  pauseBtn.textContent = "Pause";
+  bindText(pauseBtn, "pause");
   pauseBtn.style.padding = "4px 8px";
   pauseBtn.style.background = "#f44336";
   pauseBtn.style.border = "none";
@@ -10166,8 +10092,7 @@ export function createAutoSwipeUI() {
         ? AppState.downloadPreferences.autoScrollModePrev || "off"
         : "off";
 
-    pauseBtn.textContent =
-      AppState.downloadPreferences.autoScrollMode != "off" ? "Pause" : "Resume";
+    bindText(pauseBtn, AppState.downloadPreferences.autoScrollMode != "off" ? "pause" : "resume");
 
     if (AppState.downloadPreferences.autoScrollMode != "off") {
       startAutoSwipeLoop(); // Restart loop
@@ -10517,7 +10442,7 @@ function processResumeDownloadPayload(payload) {
   if (!result.success) {
     console.warn("[Resume Download]", result.error);
     showToast(
-      "Resume Failed",
+      t("errorTitle"),
       result.needsNavigation
         ? `Please navigate to @${username}'s profile first.`
         : result.error,
@@ -10540,7 +10465,7 @@ function processResumeDownloadPayload(payload) {
   // Start the scrapping process (UI action)
   startScrappingProcess(result.tabKey, result.pageInfo).catch((err) => {
     console.error("[Resume Download] Failed to start:", err);
-    showToast("Resume Failed", "Failed to start download process.");
+    showToast(t("errorTitle"), t("resumeFailed"));
   });
 }
 

@@ -72,15 +72,21 @@ File extensions follow the downloaded media type. Multi-image posts receive dist
 
 ## Account List Batches
 
-Profile tabs for **Videos, Reposts, Likes, and Favorites**, plus playlist/collection cards, have download controls. The default maximum is **30 posts per batch**, adjustable from 1 to 100. Lists are fetched one page at a time; files are saved and checked by the browser before another page is requested. There is no full-list preload.
+The globe control in the floating toolbar or extension popup selects the interface language, including an explicit English override. Auto follows a supported TikTok language, then the browser language. See [localization coverage and contribution guide](LOCALIZATION.md) for supported locales, translation conventions, and remaining English-only advanced screens.
+
+Profile tabs for **Videos, Reposts, Likes, and Favorites**, plus playlist/collection cards, have download controls. **Download All** downloads the accessible list; the optional **Max videos** control sets an overall limit, counting each post (including a photo post) once. A blank limit means All. **Advanced** contains the internal batch size, which defaults to 30 and can be adjusted from 1 to 100. Lists are fetched one page at a time; files are saved and checked by the browser before another page is requested. There is no full-list preload.
 
 If TikTok refuses a direct profile-list request, the job can use TikTok's own selected tab and scroll only after saving the current visible batch. It verifies the account and selected grid before using posts. If no further page loads, it pauses with completed batches retained rather than guessing that the list is complete.
 
-Profile-list dialogs check TikTok's selected tab before offering Start batches. Private or explicitly empty lists show an explanation and Close instead; they do not start a download or retry loop. A private Likes list does not prevent downloading the account's accessible Videos. Loading failures remain distinct from confirmed empty lists.
+Profile-list dialogs check TikTok's selected tab before offering a download. Private or explicitly empty lists show an explanation and Close instead; they do not start a download or retry loop. A private Likes list does not prevent downloading the account's accessible Videos. Loading failures remain distinct from confirmed empty lists.
 
 Opening a post author's profile from the home feed does not require a page reload before using its list controls. Account identity is resolved from matching feed metadata or the current profile, rather than assuming the initial page data still describes the account being viewed.
 
 Completed post IDs and a bounded current-file checkpoint are stored per account/list in tab-local session storage. If a later request fails, earlier files remain downloaded. Reopen that list's download dialog and choose **Resume saved progress** to continue; an interrupted save is checked before retrying it. Checkpoints expire after 30 minutes without progress. Starting over is explicit and can download files again.
+
+Resume dialogs separate confirmed saves, skipped posts, queued posts, unconfirmed saves, and known failures. The remaining whole-list count stays unknown until the list is finished. A resumed limit includes posts already saved, and the dialog shows how many additional posts are allowed.
+
+Reaching the overall limit stops before more posts are downloaded and retains saved progress without claiming that the list is finished. Resume with a higher limit, or All, to continue without downloading confirmed posts again. Cancel and Close use a neutral secondary style, distinct from the main download action.
 
 Pause and Stop apply to the whole progressive job. A navigation change stops it, and its single refresh-recovery allowance remains spent across later batches. Private or unavailable account lists still require TikTok access; these controls do not bypass restrictions. Browser-level save errors or unknown file outcomes pause the job rather than assuming success.
 

@@ -1,3 +1,4 @@
+import { readCatalogs } from "./localization-fixtures.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -18,6 +19,17 @@ const progressiveSource = await readFile(new URL("../src/modules/storage/progres
 const { ProgressiveBatch } = await import(`data:text/javascript;base64,${Buffer.from(progressiveSource).toString("base64")}`);
 const accountSource = await readFile(new URL("../src/modules/utils/accountLists.js", import.meta.url), "utf8");
 const accountLists = await import(`data:text/javascript;base64,${Buffer.from(accountSource).toString("base64")}`);
+const catalogs = await readCatalogs();
+const coreSource = await readFile(new URL("../src/modules/i18n/core.js", import.meta.url), "utf8");
+const { formatMessage } = await import(`data:text/javascript;base64,${Buffer.from(coreSource).toString("base64")}`);
+const summarySource = await readFile(new URL("../src/modules/storage/resumeSummary.js", import.meta.url), "utf8");
+const { summarizeResume } = await import(`data:text/javascript;base64,${Buffer.from(summarySource).toString("base64")}`);
+const t = (key, values = {}) => formatMessage(catalogs, "en", key, values);
+const bindText = (element, key, values = {}, attribute = null) => {
+  const text = t(key, typeof values === "function" ? values() : values);
+  if (attribute) element.setAttribute(attribute, text); else element.textContent = text;
+  return element;
+};
 
 const constantsSource = await readFile(new URL("../src/modules/state/constants.js", import.meta.url), "utf8");
 const { FILE_STORAGE_LOCATION_TEMPLATE_PRESETS, DOWNLOAD_FOLDER_DEFAULT } = await import(`data:text/javascript;base64,${Buffer.from(constantsSource).toString("base64")}`);
@@ -464,6 +476,7 @@ function progressFixture() {
     removeAttribute(name) { this.attributes.delete(name); }
     getAttribute(name) { return this.attributes.get(name) ?? null; }
     appendChild(child) { child.parentElement = this; this.children.push(child); return child; }
+    insertBefore(child, reference) { child.parentElement = this; const index = this.children.indexOf(reference); this.children.splice(index < 0 ? this.children.length : index, 0, child); return child; }
     append(...children) { children.forEach(child => this.appendChild(child)); }
     replaceChildren(...children) { this.children = []; this.text = ""; children.forEach(child => this.appendChild(child)); }
     get firstElementChild() { return this.children[0]; }
@@ -500,11 +513,15 @@ function progressFixture() {
     .replaceAll("export function ", "function ");
   const context = vm.createContext({
     AppState: state, DOM_IDS: { DOWNLOAD_ALL_BUTTON: "batch" },
+    t, bindText, clearText: element => { element.textContent = ""; }, getLocale: () => "en", summarizeResume, ProgressiveBatch,
+    sessionStorage: fixture().storage,
+    setLocalizedButton: (element, key, icon, values = {}) => { element.textContent = t(key, values); },
     document: { getElementById: () => button, createElement: tag => Object.assign(new Element(), { tagName: tag.toUpperCase() }) },
     setButtonWithIcon: (element, text) => { element.textContent = text; },
     getActiveDownloadBatchType: () => "all", schedulePlaylistHeaderSync() {},
   });
   vm.runInContext(code, context);
+  vm.runInContext(uiSource.slice(uiSource.indexOf("function renderResumeSummary("), uiSource.indexOf("const CHROME_EXTENSION_REVIEW_URL")), context);
   return { state, button, pause, stop, context,
     update: status => {
       context.status = status;
@@ -533,11 +550,11 @@ test("batch button reports bytes and phases, animates unknown totals, and remove
   test.state.downloading.pausedAll = true;
   test.update({});
   assert.match(test.button.textContent, /Pause requested/);
-  assert.equal(test.pause.textContent, "Resume");
+  assert.equal(test.pause.textContent, t("resume"));
   test.state.downloading.accountBatch = { paused: true };
   test.state.downloading.pausedAll = false;
   test.update({});
-  assert.equal(test.pause.textContent, "Resume");
+  assert.equal(test.pause.textContent, t("resume"));
   test.update({ phase: "paused", progress: null });
   assert.match(test.button.textContent, /Paused at 3 of 8/);
   assert.doesNotMatch(test.button.querySelector(".ettpd-batch-progress-fill").className, /is-indeterminate/);
@@ -561,15 +578,15 @@ test("list progress never substitutes the batch cap for an unconfirmed post coun
   assert.equal(track.getAttribute("aria-valuenow"), null);
   assert.equal(track.firstElementChild.style.width, "100%");
   setup.update({ batchTotal: 3, batchIndex: 3, settled: 2, phase: "fetch", progress: 0.5 });
-  assert.match(setup.button.textContent, /Downloading 3 of 3 posts/);
+  assert.ok(setup.button.textContent.includes(t("progress", { current: 3, total: 3 })));
   assert.doesNotMatch(setup.button.textContent, /of 30/);
   setup.update({ batchTotal: null, batchIndex: null, settled: 0, batchNumber: 2, savedPosts: 3, phase: "load", progress: null });
-  assert.match(setup.button.textContent, /Batch 2.*Loading posts.*3 posts confirmed saved/);
+  assert.ok(setup.button.textContent.includes(t("savedCount", { count: 3 })));
   assert.doesNotMatch(setup.button.textContent, /of \d+/);
   assert.equal(track.getAttribute("aria-valuenow"), null);
   setup.state.downloading.accountBatch = { paused: true };
   setup.update({});
-  assert.match(setup.button.textContent, /Paused before loading posts/);
+  assert.ok(setup.button.textContent.includes(t("paused")));
   assert.doesNotMatch(setup.button.textContent, /of \d+/);
   setup.state.downloading.accountBatch.paused = false;
   setup.update({});
@@ -805,7 +822,7 @@ test("early overlay clicks keep a loading state until matching metadata arrives"
   const button = container.children[0];
   assert.equal(button.disabled, true);
   assert.equal(button.dataset.sourceState, "loading");
-  assert.match(button.textContent, /Loading/);
+  assert.equal(button.textContent, t("prepare"));
   assert.equal(hydrations, 0);
   player.paused = false;
   button._refreshSourceReadiness();
@@ -980,8 +997,8 @@ test("episode range dialog queues only the selected episodes and preserves HD so
   await vm.runInContext('showShortDramaBatchDialog("999",trigger)', setup.context);
   const form = modal.querySelector("form");
   const range = form.children[0];
-  range.children[0].firstElementChild.value = "1";
-  range.children[1].firstElementChild.value = "2";
+  range.children[0].children.at(-1).value = "1";
+  range.children[1].children.at(-1).value = "2";
   form.onsubmit({ preventDefault() {} });
   assert.equal(queued.batchType, "episodes");
   assert.deepEqual(Array.from(queued.links, media => media.episodeNumber), [1, 2]);
@@ -1124,7 +1141,7 @@ test("collection dialog batches only confirmed collection posts, including photo
   vm.runInContext(ready + dialog, setup.context);
   await vm.runInContext("showCollectionDownloadDialog(collection,trigger)", setup.context);
   const content = modal.querySelector(".ettpd-modal-box").children[0];
-  const start = content.children.find(child => child.textContent === "Download 2 posts");
+  const start = content.children.find(child => child.textContent === t("downloadCount", { count: 2 }));
   assert.ok(start);
   assert.equal(queued, undefined);
   start.onclick();
@@ -1132,6 +1149,47 @@ test("collection dialog batches only confirmed collection posts, including photo
   assert.deepEqual(Array.from(queued.links, media => media.videoId), ["101", "102"]);
   assert.equal(queued.links[1].isImage, true);
   assert.equal(setup.state.allItemsEverSeen["999"].id, "999");
+});
+
+test("overall download limits stop without another page and resume without duplicates", async () => {
+  const store = new ProgressiveBatch(fixture().storage);
+  const saved = [];
+  let requests = 0;
+  const options = {
+    scope: "videos:limited", batchSize: 30, maxPosts: 3,
+    fetchPage: async () => { requests += 1; return { items: ["1", "2", "3", "4", "5", "6"].map(id => ({ id })), cursor: "next", hasMore: true }; },
+    downloadBatch: async items => { saved.push(...items.map(item => item.id)); return { completed: items.map(item => item.id) }; },
+  };
+  const limited = await store.run(options);
+  assert.deepEqual(saved, ["1", "2", "3"]);
+  assert.equal(limited.limitReached, true);
+  assert.equal(limited.finished, false);
+  assert.equal(limited.maxPosts, 3);
+  assert.equal(requests, 1);
+  await store.run({ ...options, resume: true, maxPosts: undefined });
+  assert.equal(requests, 1);
+  const resumed = await store.run({ ...options, resume: true, maxPosts: 5 });
+  assert.deepEqual(saved, ["1", "2", "3", "4", "5"]);
+  assert.equal(resumed.limitReached, true);
+  assert.equal(requests, 2);
+  for (const maxPosts of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(store.run({ ...options, maxPosts }), /positive whole-number/);
+  }
+});
+
+test("download limits count confirmed posts rather than skipped entries", async () => {
+  const store = new ProgressiveBatch(fixture().storage);
+  const result = await store.run({
+    scope: "videos:limited-skips", batchSize: 2, maxPosts: 3,
+    fetchPage: async () => ({ items: ["1", "2", "3", "4", "5"].map(id => ({ id })), cursor: "end", hasMore: false }),
+    downloadBatch: async items => ({
+      completed: items.filter(item => Number(item.id) > 2).map(item => item.id),
+      skipped: items.filter(item => Number(item.id) <= 2).map(item => item.id),
+    }),
+  });
+  assert.deepEqual(result.completed, ["3", "4", "5"]);
+  assert.deepEqual(result.skipped, ["1", "2"]);
+  assert.equal(result.limitReached, true);
 });
 
 test("progressive batches save before loading later pages and never exceed the chosen size", async () => {
@@ -1336,19 +1394,71 @@ test("account video sorting uses independent resume scopes", () => {
   assert.notEqual(latest.scope, popular.scope);
 });
 
+test("download dialogs separate primary/cancel actions and pass overall limits independently of batches", async () => {
+  for (const mode of ["all", "limited", "resume"]) {
+    const setup = progressFixture();
+    setup.state.downloading.isDownloadingAll = false;
+    const document = setup.context.document;
+    document.getElementById = () => null;
+    const saved = mode === "resume" ? { batchSize: 2, maxPosts: 4, completed: ["1"], finished: false } : null;
+    let modal;
+    let started;
+    Object.assign(setup.context, {
+      DOM_IDS: { MODAL_CONTAINER: "modal" }, window: { location: { href: "https://www.tiktok.com/@user/collection/test-123" } },
+      AbortController, DEFAULT_BATCH_SIZE: 30, resolveAccountList: () => ({ kind: "collection", scope: "collection:123" }),
+      getProgressiveListCheckpoint: () => saved, displayFoundUrls() {}, showToast() {},
+      downloadAccountListBatches: async (source, options) => { started = options; return { finished: false, limitReached: true, completed: ["1"] }; },
+      createModal: ({ children }) => {
+        modal = document.createElement("div"); modal.remove = () => {};
+        const box = document.createElement("div"); box.className = "ettpd-modal-box";
+        box.append(...children); modal.appendChild(box); return modal;
+      },
+    });
+    const code = uiSource.slice(uiSource.indexOf("function notifyDownloadBusy("), uiSource.indexOf("function makeAccountDownloadControl("));
+    vm.runInContext(code, setup.context);
+    await vm.runInContext('showAccountBatchDialog({kind:"collection",id:"123",title:"Collection"})', setup.context);
+    const content = modal.querySelector(".ettpd-modal-box").children[0];
+    const form = content.children.find(child => child.tagName === "FORM");
+    const limit = form.children[0].children.find(child => child.tagName === "INPUT");
+    const advanced = form.children[1];
+    const size = advanced.children[1].children.find(child => child.tagName === "INPUT");
+    const submit = form.children.at(-1);
+    const cancel = content.children.at(-1);
+    assert.ok(cancel.className.includes("secondary"));
+    assert.ok(!submit.className.includes("secondary"));
+    assert.equal(advanced.tagName, "DETAILS");
+    assert.equal(limit.getAttribute("placeholder"), t("all"));
+    assert.equal(submit.textContent, mode === "resume" ? "Resume download" : "Download All");
+    if (mode !== "all") {
+      limit.value = "0";
+      form.onsubmit({ preventDefault() {} });
+      assert.equal(started, undefined);
+      limit.value = mode === "resume" ? "6" : "3";
+      limit.listeners.get("input")();
+      assert.equal(submit.textContent, mode === "resume" ? "Resume download" : "Download");
+    }
+    form.onsubmit({ preventDefault() {} });
+    assert.equal(started.maxPosts, mode === "all" ? null : mode === "resume" ? 6 : 3);
+    assert.equal(started.batchSize, mode === "resume" ? 2 : 30);
+    assert.equal(started.resume, mode === "resume");
+    assert.equal(size.disabled, mode === "resume");
+    await Promise.resolve();
+  }
+});
+
 test("busy account-list clicks explain the block before opening another dialog", async () => {
   const code = uiSource.slice(uiSource.indexOf("function notifyDownloadBusy("), uiSource.indexOf("function makeAccountDownloadControl("));
   for (const downloading of [{ isActive: true }, { isDownloadingAll: true }, { accountBatch: { paused: true } }]) {
     const messages = [];
     const context = vm.createContext({
-      AppState: { downloading }, showToast: (title, message) => messages.push({ title, message }),
+      AppState: { downloading }, t, showToast: (title, message) => messages.push({ title, message }),
       document: { getElementById: () => assert.fail("Busy click must not prepare a dialog") },
     });
     vm.runInContext(code, context);
     await vm.runInContext('showAccountBatchDialog({kind:"liked",title:"Likes"})', context);
     assert.equal(messages.length, 1);
     assert.equal(messages[0].title, "Download already in progress");
-    assert.match(messages[0].message, /finish.*Stop/);
+    assert.match(messages[0].message, /finish.*stop/i);
   }
 });
 
@@ -1551,7 +1661,8 @@ test("SD progress survives pointer exit and cleanup until completion feedback en
     });
     setup.context.document.createTextNode = text => ({ textContent: text });
     const code = uiSource.slice(uiSource.indexOf("async function runStandardDownload("), uiSource.indexOf("function getMediaQualityLabel("));
-    vm.runInContext(code, setup.context);
+    const titles = uiSource.slice(uiSource.indexOf("function getResolutionDetails("), uiSource.indexOf("function getExperimentalHdSource("));
+    vm.runInContext(titles + code, setup.context);
     const operation = vm.runInContext('runStandardDownload(button,{videoId:"123"},{reset(){button.textContent="Save";}})', setup.context);
     assert.equal(control.button.dataset.downloadActive, "true");
     progress({ phase: "fetch", progress: 0.5 });
@@ -1565,6 +1676,7 @@ test("SD progress survives pointer exit and cleanup until completion feedback en
     assert.equal(control.container.isConnected, true);
     assert.equal(setup.timers[0].duration, 2000);
     setup.timers[0].callback();
+    assert.equal(control.button.getAttribute("title"), t("standardTitle", { resolution: t("unknown") }));
     assert.equal(control.button.dataset.downloadActive, undefined);
     assert.equal(control.container.isConnected, false);
   }
@@ -1580,11 +1692,13 @@ test("HD progress and fallback feedback survive cleanup until the visual downloa
     button: control.button, item: { querySelectorAll: () => [control.container] },
     downloadSingleMedia: (media, options) => { progress = options.onProgress; return pending; },
     updateExperimentalHdProgress: (button, status) => { button.textContent = status.phase; },
+    getExperimentalHdSource: () => null,
     setExperimentalHdIdleContent: button => { button.textContent = "HD"; },
   });
   setup.context.document.createTextNode = text => ({ textContent: text });
   const code = uiSource.slice(uiSource.indexOf("async function runExperimentalHdDownload("), uiSource.indexOf("function updateStandardDownloadProgress("));
-  vm.runInContext(code, setup.context);
+  const titles = uiSource.slice(uiSource.indexOf("function getResolutionDetails("), uiSource.indexOf("function getExperimentalHdSource("));
+  vm.runInContext(titles + code, setup.context);
   const operation = vm.runInContext('runExperimentalHdDownload(button,{videoId:"123"})', setup.context);
   progress({ phase: "fallback" });
   vm.runInContext("removeAllInjectedDownloadButtons(item); clearDownloadBtnContainers();", setup.context);
@@ -1596,6 +1710,7 @@ test("HD progress and fallback feedback survive cleanup until the visual downloa
   assert.equal(control.button.dataset.downloadActive, "true");
   assert.equal(setup.timers[0].duration, 2500);
   setup.timers[0].callback();
+  assert.equal(control.button.getAttribute("title"), t("hdTitle", { resolution: t("unknown"), method: t("matchedStreams") }));
   assert.equal(control.container.isConnected, false);
 });
 
@@ -1744,7 +1859,7 @@ test("private and empty list dialogs show Close without Start batches or a downl
     const content = modal.querySelector(".ettpd-modal-box").children[0];
     assert.equal(content.children.find(child => child.tagName === "FORM").hidden, true);
     assert.equal(content.children.at(-1).textContent, "Close");
-    assert.match(content.children[1].textContent, code === "LIST_PRIVATE" ? /private/ : /no posts/);
+    assert.match(content.children[1].textContent, code === "LIST_PRIVATE" ? /private/ : /no posts/i);
     assert.equal(setup.state.downloading.accountBatch, undefined);
   }
 });
@@ -1793,7 +1908,7 @@ test("Favorites uses matching signed-in identity after SPA navigation and handle
       assert.equal(remembered.length, 0);
       assert.equal(fetched, 1);
       assert.equal(form.hidden, true);
-      assert.match(content.children[1].textContent, /no usable account details.*Refresh/);
+      assert.equal(content.children[1].textContent, t("unavailable"));
       assert.doesNotMatch(content.children[1].textContent, /Unexpected end|Response|json/);
     }
   }
@@ -1928,7 +2043,7 @@ test("native progressive response suppression remains scoped to its exact accoun
 
 test("pay-it-forward dialog is local, accessible, deduplicated, and dismissible in both themes", async () => {
   const source = (await readFile(new URL("../src/modules/utils/payItForward.js", import.meta.url), "utf8"))
-    .replaceAll("export function ", "function ");
+    .replace(/^import .*;\n/gm, "").replaceAll("export function ", "function ");
   for (const dark of [false, true]) {
     const setup = progressFixture();
     const document = setup.context.document;
@@ -1985,7 +2100,7 @@ test("pay-it-forward dialog is local, accessible, deduplicated, and dismissible 
 });
 
 test("support clicks grant the donation-equivalent 90-day cooldown even before the first prompt", async () => {
-  const code = (await readFile(new URL("../src/modules/utils/payItForward.js", import.meta.url), "utf8")).replaceAll("export function ", "function ");
+  const code = (await readFile(new URL("../src/modules/utils/payItForward.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "").replaceAll("export function ", "function ");
   const now = 1800000000000;
   const storage = new Map([["tik.tok::lastSupportedAt", String(now)]]);
   const state = { ui: {}, leaderboard: { newlyConfirmedMedia: [{}] }, rateDonate: { lastShownAt: null, shownCount: 0 } };
@@ -2048,7 +2163,7 @@ test("a support click prevents an already delayed Morpheus prompt from opening",
 });
 
 test("popup support timestamps reach open TikTok tabs and newly loaded pages", async () => {
-  const helper = (await readFile(new URL("../src/modules/utils/payItForward.js", import.meta.url), "utf8")).replaceAll("export function ", "function ");
+  const helper = (await readFile(new URL("../src/modules/utils/payItForward.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "").replaceAll("export function ", "function ");
   const content = await readFile(new URL("../src/content/content.js", import.meta.url), "utf8");
   const bridge = content.slice(content.indexOf('  const SUPPORT_CLICK_KEY ='), content.indexOf("  // -------- Browser detection"));
   const timestamp = 1800000000000;

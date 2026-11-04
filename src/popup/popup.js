@@ -1,5 +1,10 @@
 /* main.js */
 import { showPayItForwardDialog } from "../modules/utils/payItForward.js";
+import { t, initializeI18n, createLanguageControl, localizeMarkup, bindText } from "../modules/i18n/index.js";
+
+initializeI18n();
+localizeMarkup();
+document.querySelector(".popup-hero")?.prepend(createLanguageControl("btn secondary"));
 
 document.addEventListener("click", event => {
   if (!event.target.closest("[data-pay-it-forward]")) return;
@@ -222,7 +227,7 @@ async function waitForStateConfirmation(
         // Disable button and show loading state
         newBtn.disabled = true;
         const originalText = newBtn.textContent;
-        newBtn.textContent = "Turning on...";
+        bindText(newBtn, "turningOn");
 
         try {
           // Set up a one-time listener for state broadcast (if available)
@@ -329,12 +334,11 @@ async function waitForStateConfirmation(
           } else {
             // State confirmation failed - re-enable button
             newBtn.disabled = false;
-            newBtn.textContent = originalText;
+            bindText(newBtn, "enable");
             console.error("[EXT_POWER] popup failed to confirm state change");
 
             const errorMessage = document.createElement("p");
-            errorMessage.textContent =
-              "Failed to enable extension. Please try again.";
+            bindText(errorMessage, "enableFailed");
             errorMessage.style.cssText =
               "margin-top: 15px; color: #ef4444; font-weight: bold;";
             if (currentDisabledState) {
@@ -352,11 +356,10 @@ async function waitForStateConfirmation(
         } catch (err) {
           console.error("[EXT_POWER] popup error enabling extension:", err);
           newBtn.disabled = false;
-          newBtn.textContent = originalText;
+          bindText(newBtn, "enable");
 
           const errorMessage = document.createElement("p");
-          errorMessage.textContent =
-            "Error enabling extension. Please try again.";
+          bindText(errorMessage, "enableFailed");
           errorMessage.style.cssText =
             "margin-top: 15px; color: #ef4444; font-weight: bold;";
           if (currentDisabledState) {
@@ -690,7 +693,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
       loading.style.textAlign = "center";
       loading.style.color = "#666";
       loading.style.padding = "20px";
-      loading.textContent = "Loading...";
+      bindText(loading, "historyLoading");
       pastDownloadsContent.appendChild(loading);
 
       console.log("[Past Downloads] Loading progress from storage...");
@@ -713,11 +716,11 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
         const title = document.createElement("p");
         title.style.fontSize = "16px";
         title.style.marginBottom = "10px";
-        title.textContent = "No downloads yet";
+        bindText(title, "historyEmpty");
 
         const subtitle = document.createElement("p");
         subtitle.style.fontSize = "13px";
-        subtitle.textContent = "Start downloading videos to see them here!";
+        bindText(subtitle, "historyHint");
 
         emptyState.append(title, subtitle);
         pastDownloadsContent.appendChild(emptyState);
@@ -746,7 +749,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
         const clearUserBtn = document.createElement("button");
         clearUserBtn.className = "clear-user-btn ghost";
         clearUserBtn.dataset.username = username;
-        clearUserBtn.textContent = "🗑️ Clear All";
+        bindText(clearUserBtn, "clearAll");
 
         userHead.append(usernameLabel, clearUserBtn);
 
@@ -765,11 +768,12 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
 
           const tabLabel = document.createElement("span");
           tabLabel.className = "past-downloads-tab-label";
-          tabLabel.textContent = formatTabName(tabName);
+          if (["videos", "liked", "favorites", "reposts"].includes(tabName)) bindText(tabLabel, tabName);
+          else tabLabel.textContent = formatTabName(tabName);
 
           const tabCount = document.createElement("span");
           tabCount.className = "past-downloads-tab-count";
-          tabCount.textContent = `${count} items`;
+          bindText(tabCount, "itemsCount", { count });
 
           tabMeta.append(tabLabel, tabCount);
 
@@ -780,21 +784,21 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
           downloadCsvBtn.className = "download-csv-btn ghost";
           downloadCsvBtn.dataset.username = username;
           downloadCsvBtn.dataset.tab = tabName;
-          downloadCsvBtn.title = "Download CSV";
+          bindText(downloadCsvBtn, "downloadCsv", {}, "title");
           downloadCsvBtn.textContent = "📥 CSV";
 
           const resumeDownloadBtn = document.createElement("button");
           resumeDownloadBtn.className = "resume-download-btn ghost";
           resumeDownloadBtn.dataset.username = username;
           resumeDownloadBtn.dataset.tab = tabName;
-          resumeDownloadBtn.title = "Resume Download";
-          resumeDownloadBtn.textContent = "▶️ Resume";
+          bindText(resumeDownloadBtn, "resume", {}, "title");
+          bindText(resumeDownloadBtn, "resume");
 
           const clearTabBtn = document.createElement("button");
           clearTabBtn.className = "clear-tab-btn ghost";
           clearTabBtn.dataset.username = username;
           clearTabBtn.dataset.tab = tabName;
-          clearTabBtn.textContent = "Clear";
+          bindText(clearTabBtn, "clearAll");
 
           actions.append(downloadCsvBtn, resumeDownloadBtn, clearTabBtn);
           tabSection.append(tabMeta, actions);
@@ -811,7 +815,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
       const clearAllBtn = document.createElement("button");
       clearAllBtn.id = "clearAllBtn";
       clearAllBtn.className = "btn danger";
-      clearAllBtn.textContent = "🗑️ Clear All Downloads";
+      bindText(clearAllBtn, "clearAll");
       footer.appendChild(clearAllBtn);
 
       pastDownloadsContent.replaceChildren(scrollContainer, footer);
@@ -822,7 +826,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
         .forEach((btn) => {
           btn.addEventListener("click", async (e) => {
             const username = e.target.dataset.username;
-            if (confirm(`Clear all downloads for @${username}?`)) {
+            if (confirm(t("historyClearUser", { name: username }))) {
               await progressStorage.clearUser(username);
               renderPastDownloads();
             }
@@ -843,7 +847,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
               );
 
               if (!videoIds || videoIds.length === 0) {
-                alert("No items to export");
+                alert(t("exportEmpty"));
                 return;
               }
 
@@ -899,7 +903,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
             } catch (err) {
               console.error("Failed to export CSV:", err);
               alert(
-                "Failed to export CSV: " + (err.message || "Unknown error"),
+                t("exportFailed"),
               );
             }
           });
@@ -920,7 +924,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
                 currentWindow: true,
               });
               if (!tabs[0]) {
-                alert("Please open a TikTok page first");
+                alert(t("openTikTok"));
                 return;
               }
 
@@ -988,7 +992,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
                 );
                 if (!pageReady) {
                   alert(
-                    "The TikTok page took too long to load. Please try again once it finishes loading.",
+                    t("pageTimeout"),
                   );
                   return;
                 }
@@ -1000,7 +1004,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
 
                 if (!sent) {
                   alert(
-                    "Failed to trigger resume after navigation. Please refresh the page and try again.",
+                    t("resumeFailed"),
                   );
                   return;
                 }
@@ -1014,7 +1018,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
 
                 if (!sent) {
                   alert(
-                    "Failed to trigger download. Please refresh the page and try again.",
+                    t("resumeFailed"),
                   );
                   return;
                 }
@@ -1023,7 +1027,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
               }
             } catch (err) {
               console.error("Failed to resume download:", err);
-              alert("Failed to resume download. Please try again.");
+              alert(t("resumeFailed"));
             }
           });
         });
@@ -1034,7 +1038,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
           const tabName = e.target.dataset.tab;
           if (
             confirm(
-              `Clear ${formatTabName(tabName)} downloads for @${username}?`,
+              t("historyClearTab", { list: ["videos", "liked", "favorites", "reposts"].includes(tabName) ? t(tabName) : formatTabName(tabName), name: username }),
             )
           ) {
             await progressStorage.clearTab(username, tabName);
@@ -1045,7 +1049,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
 
       if (clearAllBtn) {
         clearAllBtn.addEventListener("click", async () => {
-          if (confirm("Clear ALL downloads history? This cannot be undone.")) {
+          if (confirm(t("historyClearAll"))) {
             await progressStorage.clearAllProgress();
             renderPastDownloads();
           }
@@ -1061,7 +1065,7 @@ document.getElementById("startBtn")?.addEventListener("click", (e) => {
       errorState.style.color = "#ff3b30";
 
       const errorText = document.createElement("p");
-      errorText.textContent = "Error loading downloads history";
+      bindText(errorText, "historyError");
       errorState.appendChild(errorText);
 
       pastDownloadsContent.appendChild(errorState);

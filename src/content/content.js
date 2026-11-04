@@ -1,5 +1,21 @@
+import { LANGUAGE_KEY, SUPPORTED_LOCALES } from "../modules/i18n/core.js";
+
 // content.js
 (() => {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes[LANGUAGE_KEY]) window.postMessage({ type: "ETTPD_LANGUAGE_STATE", value: changes[LANGUAGE_KEY].newValue || "auto" }, location.origin);
+  });
+  window.addEventListener("message", event => {
+    const data = event.data;
+    if (event.source !== window || data?.type !== "ETTPD_LANGUAGE_REQUEST" || typeof data.id !== "string") return;
+    if (data.value !== undefined && data.value !== "auto" && !Object.hasOwn(SUPPORTED_LOCALES, data.value)) return;
+    const done = result => {
+      const success = !chrome.runtime.lastError;
+      window.postMessage({ type: "ETTPD_LANGUAGE_RESPONSE", id: data.id, success, value: data.value ?? result?.[LANGUAGE_KEY] ?? "auto" }, location.origin);
+    };
+    if (data.value === undefined) chrome.storage.local.get(LANGUAGE_KEY, done);
+    else chrome.storage.local.set({ [LANGUAGE_KEY]: data.value }, done);
+  });
   const DEBUG = () => globalThis?.AppStateETTVD?.debug?.active ?? false;
   const PENDING_RESUME_DOWNLOAD_KEY = "tik.tok::pendingResumeDownload";
   const SUPPORT_CLICK_KEY = "tik.tok::lastSupportedAt";

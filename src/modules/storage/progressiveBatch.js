@@ -17,7 +17,8 @@ export class ProgressiveBatch {
         !Array.isArray(state.completed) || !Array.isArray(state.pending) || state.pending.length > 100 ||
         !Array.isArray(state.skipped || []) || !(state.skipped || []).every(id => /^\d+$/.test(id)) ||
         !state.completed.every(id => /^\d+$/.test(id)) || !state.pending.every(id => /^\d+$/.test(id)) ||
-        !Number.isInteger(state.batchSize) || state.batchSize < 1 || state.batchSize > 100) {
+        !Number.isInteger(state.batchSize) || state.batchSize < 1 || state.batchSize > 100 ||
+        state.maxPosts != null && (!Number.isSafeInteger(state.maxPosts) || state.maxPosts < 1)) {
         this.storage.removeItem(`${PROGRESSIVE_BATCH_KEY}:${scope}`);
         return null;
       }
@@ -70,27 +71,37 @@ export class ProgressiveBatch {
 
   clearChunk(scope) { this.storage.removeItem(`${CHUNK_KEY}:${scope}`); }
 
-  async run({ scope, batchSize = DEFAULT_BATCH_SIZE, fetchPage, downloadBatch, onProgress, signal, resume = false, beforePage }) {
+  async run({ scope, batchSize = DEFAULT_BATCH_SIZE, maxPosts, fetchPage, downloadBatch, onProgress, signal, resume = false, beforePage }) {
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 100) throw new Error("Choose a batch size from 1 to 100.");
+    if (maxPosts != null && (!Number.isSafeInteger(maxPosts) || maxPosts < 1)) throw new Error("Choose a positive whole-number download limit, or leave it empty for all posts.");
     const state = resume ? this.read(scope) : null;
     if (!resume) { this.storage.removeItem(`${PROGRESSIVE_BATCH_KEY}:${scope}`); this.clearChunk(scope); }
     const checkpoint = state || {
       version: 1, scope, batchSize, cursor: "0", completed: [], skipped: [], pending: [],
       batches: 0, finished: false, refreshCount: 0,
     };
+    checkpoint.maxPosts = maxPosts === undefined ? checkpoint.maxPosts ?? null : maxPosts;
+    checkpoint.limitReached = false;
     const completed = new Set(checkpoint.completed);
     const skipped = new Set(checkpoint.skipped || []);
     const visited = new Set();
     this.save(checkpoint);
     while (!checkpoint.finished) {
       signal?.throwIfAborted();
+      if (checkpoint.maxPosts != null && completed.size >= checkpoint.maxPosts) {
+        checkpoint.limitReached = true;
+        this.save(checkpoint);
+        onProgress?.({ phase: "limited", batches: checkpoint.batches, saved: completed.size });
+        return checkpoint;
+      }
       await beforePage?.();
       signal?.throwIfAborted();
       const pageCursor = checkpoint.cursor;
       if (visited.has(pageCursor)) throw new Error("TikTok repeated a page cursor. Completed downloads are saved; resume after checking the list.");
       visited.add(pageCursor);
       onProgress?.({ phase: "load", batches: checkpoint.batches, saved: completed.size });
-      const page = await fetchPage(pageCursor, checkpoint.batchSize, signal);
+      const requestSize = Math.min(checkpoint.batchSize, checkpoint.maxPosts == null ? checkpoint.batchSize : checkpoint.maxPosts - completed.size);
+      const page = await fetchPage(pageCursor, requestSize, signal);
       if (!Array.isArray(page?.items)) throw new Error("TikTok did not provide this list's posts.");
       const seen = new Set();
       const items = page.items.filter(item => {
@@ -99,9 +110,11 @@ export class ProgressiveBatch {
         seen.add(id);
         return true;
       });
-      for (let offset = 0; offset < items.length; offset += checkpoint.batchSize) {
+      for (let offset = 0; offset < items.length;) {
         signal?.throwIfAborted();
-        const batch = items.slice(offset, offset + checkpoint.batchSize);
+        const remaining = checkpoint.maxPosts == null ? checkpoint.batchSize : checkpoint.maxPosts - completed.size;
+        const batch = items.slice(offset, offset + Math.min(checkpoint.batchSize, remaining));
+        offset += batch.length;
         checkpoint.pending = batch.map(item => String(item.id || item.videoId));
         this.save(checkpoint);
         onProgress?.({ phase: "download", batches: checkpoint.batches, saved: completed.size, size: batch.length });
@@ -123,6 +136,12 @@ export class ProgressiveBatch {
         this.clearChunk(scope);
         checkpoint.batches += 1;
         this.save(checkpoint);
+        if (checkpoint.maxPosts != null && completed.size >= checkpoint.maxPosts) {
+          checkpoint.limitReached = true;
+          this.save(checkpoint);
+          onProgress?.({ phase: "limited", batches: checkpoint.batches, saved: completed.size });
+          return checkpoint;
+        }
       }
       signal?.throwIfAborted();
       const next = String(page.cursor ?? "");

@@ -1,3 +1,4 @@
+import { t, bindText } from "../i18n/index.js";
 // Utils.js
 import AppState from "../state/state.js";
 import { DownloadRecovery } from "../storage/downloadRecovery.js";
@@ -2504,7 +2505,7 @@ async function reconcileProgressiveChunk(store, scope) {
   return queue;
 }
 
-export async function downloadAccountListBatches(source, { batchSize = 30, resume = false, onProgress } = {}) {
+export async function downloadAccountListBatches(source, { batchSize = 30, maxPosts, resume = false, onProgress } = {}) {
   if (activeAccountBatch || AppState.downloading.isDownloadingAll || downloadRecovery.runningFiles) {
     throw new Error("Finish or stop the current download before starting another list.");
   }
@@ -2524,7 +2525,7 @@ export async function downloadAccountListBatches(source, { batchSize = 30, resum
   try {
     if (resume) restored = await reconcileProgressiveChunk(store, source.scope);
     return await store.run({
-      scope: source.scope, batchSize, resume, signal: controller.signal,
+      scope: source.scope, batchSize, maxPosts, resume, signal: controller.signal,
       beforePage: async () => {
         while (job.paused && !job.stopped) await sleep(250);
         if (job.url !== window.location.href || !isExtensionEnabledSync()) controller.abort();
@@ -2627,16 +2628,16 @@ export function restoreDownloadRecovery() {
   }
   const content = document.createElement("div");
   const title = document.createElement("h3");
-  title.textContent = "Resume saved downloads?";
+  bindText(title, "resumeSaved");
   const description = document.createElement("p");
   const remaining = checkpoint.queue.filter(entry => !["complete", "skipped"].includes(entry.status)).length;
-  description.textContent = `${remaining} files remain in the saved queue. Completed files will be checked before resuming. This operation will not refresh again.`;
+  bindText(description, "recoveryQueue", { count: remaining });
   const resumeBtn = document.createElement("button");
   resumeBtn.className = "ettpd-modal-button primary";
-  resumeBtn.textContent = "Resume downloads";
+  bindText(resumeBtn, "resume");
   const stopBtn = document.createElement("button");
   stopBtn.className = "ettpd-modal-button danger";
-  stopBtn.textContent = "Stop Batch";
+  bindText(stopBtn, "stop");
   content.append(title, description, resumeBtn, stopBtn);
   const modal = createModal({ children: [content], onClose: () => downloadRecovery.finish() });
   resumeBtn.onclick = () => { modal.remove(); checkpoint.paused = false; resume(); };
@@ -2654,7 +2655,7 @@ async function resumeDownloadCheckpoint(checkpoint) {
         downloadRecovery.operation.queue = await downloadRecovery.confirmSaves(getDownloadStatuses);
         break;
       } catch (error) {
-        const retry = await showAlertModal(escapeHtml(error.message), "Check again", () => {});
+        const retry = await showAlertModal(escapeHtml(t("recoveryCheckFailed")), t("retry"), () => {});
         if (!retry) return;
       }
     }
@@ -2753,7 +2754,7 @@ async function resumeDownloadCheckpoint(checkpoint) {
     if (completed) updateAllTimeDownloadsAndLeaderBoard(AppState.displayedState.itemsHash);
   } catch (error) {
     console.warn("[Download] refresh-resume-paused", { operationId: checkpoint.id, error: error.message });
-    await showAlertModal(escapeHtml(error.message), "OK", () => {});
+    await showAlertModal(escapeHtml(t("resumeFailed")), t("close"), () => {});
   } finally {
     AppState.downloading.isActive = false;
     AppState.downloading.isDownloadingAll = false;
@@ -2841,7 +2842,7 @@ async function downloadAllPostImagesAttempt(e, media) {
     const downloadingIcon5 = createIcon("hourglass", 16);
     downloadingIcon5.style.marginRight = "4px";
     downloadAllBtn.appendChild(downloadingIcon5);
-    downloadAllBtn.appendChild(document.createTextNode("Downloading..."));
+    downloadAllBtn.appendChild(document.createTextNode(t("fetch")));
     downloadAllBtn.disabled = true;
 
     AppState.downloading.isActive = true;
@@ -2865,7 +2866,7 @@ async function downloadAllPostImagesAttempt(e, media) {
           downloadAllBtn.appendChild(downloadingIcon6);
           downloadAllBtn.appendChild(
             document.createTextNode(
-              `Downloading ${i}/${media.imagePostImages.length}...`,
+              t("progress", { current: i, total: media.imagePostImages.length }),
             ),
           );
         }
@@ -2888,7 +2889,7 @@ async function downloadAllPostImagesAttempt(e, media) {
           downloadAllBtn.appendChild(failedIcon5);
           downloadAllBtn.appendChild(
             document.createTextNode(
-              `Failed at ${i}/${media.imagePostImages.length}...`,
+              t("saveFailed"),
             ),
           );
         }
@@ -4664,8 +4665,8 @@ export function checkAndUpgradeRecommendedTemplate() {
 
     // Show toast notification
     showToast(
-      "Template Upgraded",
-      `Your active template "${recommendedTemplate.label}" has been updated to the latest version.`,
+      t("templateTitle"),
+      t("templateUpdated", { name: recommendedTemplate.label }),
       6000,
     );
 
@@ -5174,27 +5175,31 @@ export function getWeeklyRecommendationsLeaderBoardList(
   }
 }
 
+function localizedTier(tier, thresholds) {
+  return { ...tier, name: t("level", { count: thresholds.findIndex(candidate => candidate.min === tier.min) + 1 }) };
+}
+
 export function getUserDownloadsCurrentTier(totalCount) {
-  return (
+  return localizedTier(
     [...DOWNLOAD_TIER_THRESHOLDS]
       .reverse()
       .find((t) => totalCount >= t.min) || {
       name: "Novice 🫠",
       emoji: "🌱",
       min: 0,
-    }
+    }, DOWNLOAD_TIER_THRESHOLDS
   );
 }
 
 export function getUserRecommendationsCurrentTier(totalCount) {
-  return (
+  return localizedTier(
     [...RECOMMENDATION_TIER_THRESHOLDS]
       .reverse()
       .find((t) => totalCount >= t.min) || {
       name: "Apprentice 🫠",
       emoji: "🐤",
       min: 0,
-    }
+    }, RECOMMENDATION_TIER_THRESHOLDS
   );
 }
 
@@ -5309,7 +5314,7 @@ export function showCelebration(type = "tier", message, count = 10) {
 
   if (!conf) {
     makeOverlay(
-      message || (type === "tier" ? "🎉 You’ve unlocked a new tier!" : null),
+      message || (type === "tier" ? t("levelUnlocked") : null),
     );
     return;
   }
@@ -5324,7 +5329,7 @@ export function showCelebration(type = "tier", message, count = 10) {
       zIndex: 99999,
     };
 
-    const overlay = makeOverlay(message || "🎉 You’ve unlocked a new tier!");
+    const overlay = makeOverlay(message || t("levelUnlocked"));
     const interval = setInterval(() => {
       const timeLeft = animationEnd - Date.now();
       if (timeLeft <= 0) {
@@ -5420,26 +5425,12 @@ export function showCelebration(type = "tier", message, count = 10) {
 
 window.rerender = displayFoundUrls;
 export function getRandomDownloadSuccessMessage(mediaType = "file", count = 1) {
-  const messages = [...DOWNLOAD_SUCCESS_MESSAGES];
-  const template = messages[Math.floor(Math.random() * messages.length)];
-
-  const isPlural = count > 1;
-  const media = isPlural
-    ? mediaType.toLowerCase() + "s"
-    : mediaType.toLowerCase();
-  const countDisplay = isPlural ? `${count}` : "1";
-
-  return typeof template === "string"
-    ? template.replace("{media}", media).replace("{count}", countDisplay)
-    : template(); // for static ones
+  const messages = ["jokeSaved1", "jokeSaved2", "jokeSaved3", "jokeSaved4"];
+  return t(messages[Math.floor(Math.random() * messages.length)]);
 }
 
 export function showRandomScraperDone() {
-  const msg =
-    SCRAPER_DONE_MESSAGES[
-      Math.floor(Math.random() * SCRAPER_DONE_MESSAGES.length)
-    ];
-  return msg;
+  return t("scanFinished");
 }
 
 function shouldShowRateDonatePopup() {
@@ -5936,7 +5927,7 @@ export function toTitleCase(str) {
     .join(" ");
 }
 
-export function showAlertModal(message, actionText = "OK", onAction = null) {
+export function showAlertModal(message, actionText = t("close"), onAction = null) {
   return new Promise((resolve, _) => {
     const alertDiv = Object.assign(document.createElement("div"), {
       className: "alert",
@@ -5975,7 +5966,7 @@ export function showAlertModal(message, actionText = "OK", onAction = null) {
 
 function showDownloadFailureModal({ filename, url, message = null }) {
   updateBatchDownloadProgress({ phase: "waiting", progress: null });
-  const fileLabel = escapeHtml(filename.split("/").pop() || "Unknown");
+  const fileLabel = filename.split("/").pop() || t("unknown");
   const discordUrl = "https://discord.gg/KpT7xdUUbM";
   const isBlobUrl = typeof url === "string" && /^blob:/i.test(url);
   const canOfferManualSave = typeof url === "string" && !!url && !isBlobUrl;
@@ -5986,16 +5977,13 @@ function showDownloadFailureModal({ filename, url, message = null }) {
   return new Promise((resolve) => {
     const content = document.createElement("div");
     content.className = "alert";
-    replaceElementHtml(
-      content,
-      `⚠️ <b>Download failed.</b><br><br>` +
-        `We couldn't save <b>${fileLabel}</b> automatically.<br><br>` +
-        `${escapeHtml(message || "The video download source is unavailable, or the browser could not save the file.")}<br><br>` +
-        `${downloadRecovery.operation?.refreshCount === 1
-          ? "This operation has already refreshed once. It will not refresh again. Retry after any required TikTok verification, skip this file, or stop."
-          : "Retry the download, or refresh and resume the remaining queue when available."}<br><br>` +
-        `Choose what to do next:`,
-    );
+    const failureTitle = document.createElement("h3");
+    bindText(failureTitle, "errorTitle");
+    const failureDescription = document.createElement("p");
+    bindText(failureDescription, "fileSaveFailed", { name: fileLabel });
+    const recoveryHint = document.createElement("p");
+    bindText(recoveryHint, downloadRecovery.operation?.refreshCount === 1 ? "recoveryOnce" : "recoveryOptions");
+    content.append(failureTitle, failureDescription, recoveryHint);
 
     const actionsContainer = document.createElement("div");
     actionsContainer.className = "ettpd-modal-button-group";
@@ -6012,7 +6000,7 @@ function showDownloadFailureModal({ filename, url, message = null }) {
 
     const manualSaveBtn = document.createElement("button");
     manualSaveBtn.className = "ettpd-modal-button ghost";
-    manualSaveBtn.textContent = "Open Manual Save";
+    bindText(manualSaveBtn, "manualSave");
     manualSaveBtn.onclick = () => {
       window.open(url, "_blank", "noopener,noreferrer");
       finish("manual-save");
@@ -6020,14 +6008,14 @@ function showDownloadFailureModal({ filename, url, message = null }) {
 
     const refreshBtn = document.createElement("button");
     refreshBtn.className = "ettpd-modal-button primary";
-    refreshBtn.textContent = "Refresh and resume";
+    bindText(refreshBtn, "refreshResume");
     const refreshStatus = document.createElement("p");
     refreshStatus.setAttribute("role", "status");
     refreshBtn.onclick = async () => {
       if (checkingRefresh || settled) return;
       checkingRefresh = true;
       refreshBtn.disabled = true;
-      refreshStatus.textContent = "Checking saved files...";
+      bindText(refreshStatus, "checkingSaves");
       try {
         await downloadRecovery.prepareRefresh(
           getDownloadStatuses,
@@ -6040,7 +6028,7 @@ function showDownloadFailureModal({ filename, url, message = null }) {
         });
         finish("refresh-page");
       } catch (error) {
-        refreshStatus.textContent = error.message;
+        bindText(refreshStatus, "recoveryCheckFailed");
         refreshBtn.disabled = false;
       } finally {
         checkingRefresh = false;
@@ -6049,7 +6037,7 @@ function showDownloadFailureModal({ filename, url, message = null }) {
 
     const retryBtn = document.createElement("button");
     retryBtn.className = "ettpd-modal-button primary";
-    retryBtn.textContent = "Retry Download";
+    bindText(retryBtn, "retry");
     retryBtn.onclick = () => finish("retry-file");
 
     const discordBtn = document.createElement("a");
@@ -6057,16 +6045,16 @@ function showDownloadFailureModal({ filename, url, message = null }) {
     discordBtn.href = discordUrl;
     discordBtn.target = "_blank";
     discordBtn.rel = "noopener noreferrer";
-    discordBtn.textContent = "Report on Discord";
+    bindText(discordBtn, "reportBug");
 
     const skipBtn = document.createElement("button");
     skipBtn.className = "ettpd-modal-button secondary";
-    skipBtn.textContent = "Skip This File";
+    bindText(skipBtn, "skipFile");
     skipBtn.onclick = () => finish("skip-file");
 
     const stopBtn = document.createElement("button");
     stopBtn.className = "ettpd-modal-button danger";
-    stopBtn.textContent = "Stop Batch";
+    bindText(stopBtn, "stop");
     stopBtn.onclick = () => finish("stop-batch");
 
     if (canOfferManualSave) {
@@ -6145,14 +6133,14 @@ export function showDownloadMessagesNotice() {
   content.style.maxWidth = "500px";
 
   const title = document.createElement("h3");
-  title.textContent = "Download jokes are now optional";
+  bindText(title, "jokesNotice");
   title.style.margin = "0 0 16px";
   title.style.fontSize = "1.2em";
   const description = document.createElement("p");
-  description.textContent = 'The random jokes after a download are now off by default. Turn "Funny download messages" back on anytime in Settings. Confetti has its own switch.';
+  bindText(description, "jokesNoticeHint");
   description.style.lineHeight = "1.6";
   const example = document.createElement("p");
-  example.textContent = 'For example: "Saved. Your Downloads folder has accepted another side quest."';
+  bindText(example, "jokeSaved1");
   example.style.fontSize = "0.9em";
   example.style.lineHeight = "1.5";
   content.append(title, description, example);
@@ -6164,23 +6152,23 @@ export function showDownloadMessagesNotice() {
     checkbox.type = "checkbox";
     checkbox.checked = checked;
     const text = document.createElement("span");
-    text.textContent = labelText;
+    bindText(text, labelText);
     label.append(checkbox, text);
     content.appendChild(label);
     return checkbox;
   };
   const messagesCheckbox = createPreference(
-    "Funny download messages",
+    "funnyMessages",
     AppState.downloadPreferences.showDownloadMessages,
   );
   const confettiCheckbox = createPreference(
-    "Confetti",
+    "confetti",
     !AppState.downloadPreferences.disableConfetti,
   );
 
   const saveButton = document.createElement("button");
   saveButton.className = "ettpd-action-btn";
-  saveButton.textContent = "Save preferences";
+  bindText(saveButton, "saveApply");
   saveButton.style.marginTop = "20px";
   saveButton.addEventListener("click", () => {
     AppState.downloadPreferences.showDownloadMessages = messagesCheckbox.checked;
@@ -6231,48 +6219,16 @@ export function showBrowserCompatibilityAlert() {
   if (!claimAutomaticPopup()) return;
 
   // Build message based on browser type
-  let title = "Browser Compatibility";
-  let message = "";
-
-  if (browserType === "brave") {
-    title = "Set up Brave downloads";
-    message = `
-      <div style="margin-bottom: 16px;">
-        <p style="margin-bottom: 12px; line-height: 1.6;">
-          To save videos without a Save As dialog for every file:
-        </p>
-        <ol style="padding-left: 20px; line-height: 1.6;">
-          <li>Open Brave's download settings.</li>
-          <li>Turn off <strong>Ask where to save each file before downloading</strong>.</li>
-        </ol>
-        <p style="margin-top: 12px; line-height: 1.6;">
-          Files will save to the Location shown there. This setting applies to all downloads in this Brave profile.
-        </p>
-      </div>
-    `;
-  } else {
-    message = `
-      <div style="margin-bottom: 16px;">
-        <p style="margin-bottom: 12px; line-height: 1.6;">
-          This extension was developed and tested for Chrome. Some features may not work correctly on your current browser.
-        </p>
-        <p style="line-height: 1.6;">
-          For the best experience, we recommend using Chrome.
-        </p>
-      </div>
-    `;
-  }
-
   // Create modal content
   const contentDiv = document.createElement("div");
   contentDiv.style.padding = "20px";
   contentDiv.style.maxWidth = "500px";
   contentDiv.style.boxSizing = "border-box";
-  contentDiv.style.width = "min(500px, calc(100vw - 80px))";
+  contentDiv.style.width = "100%";
 
   // Title
   const titleEl = document.createElement("h3");
-  titleEl.textContent = title;
+  bindText(titleEl, "browserSetup");
   titleEl.style.margin = "0 0 16px 0";
   titleEl.style.fontSize = "1.2em";
   titleEl.style.fontWeight = "600";
@@ -6280,7 +6236,8 @@ export function showBrowserCompatibilityAlert() {
 
   // Message
   const messageEl = document.createElement("div");
-  replaceElementHtml(messageEl, message);
+  bindText(messageEl, browserType === "brave" ? "braveSetup" : "browserCompatibility");
+  messageEl.style.lineHeight = "1.6";
   contentDiv.appendChild(messageEl);
 
   if (browserType === "brave") {
@@ -6288,7 +6245,7 @@ export function showBrowserCompatibilityAlert() {
     settingsAddress.type = "text";
     settingsAddress.readOnly = true;
     settingsAddress.value = "brave://settings/downloads";
-    settingsAddress.setAttribute("aria-label", "Brave download settings address");
+    bindText(settingsAddress, "openDownloadSettings", {}, "aria-label");
     settingsAddress.style.width = "100%";
     settingsAddress.style.boxSizing = "border-box";
     settingsAddress.addEventListener("click", () => settingsAddress.select());
@@ -6309,7 +6266,7 @@ export function showBrowserCompatibilityAlert() {
 
   const checkboxLabel = document.createElement("label");
   checkboxLabel.htmlFor = "browser-compat-never-show";
-  checkboxLabel.textContent = "Never show this again";
+  bindText(checkboxLabel, "neverShow");
   checkboxLabel.style.cursor = "pointer";
   checkboxLabel.style.userSelect = "none";
 
@@ -6328,7 +6285,7 @@ export function showBrowserCompatibilityAlert() {
   if (browserType === "brave") {
     const settingsBtn = document.createElement("button");
     settingsBtn.className = "ettpd-action-btn";
-    settingsBtn.textContent = "Open download settings";
+    bindText(settingsBtn, "openDownloadSettings");
     settingsBtn.style.padding = "8px 16px";
     const settingsStatus = document.createElement("p");
     settingsStatus.setAttribute("role", "status");
@@ -6342,9 +6299,7 @@ export function showBrowserCompatibilityAlert() {
         clearTimeout(timeoutId);
         window.removeEventListener("message", onResponse);
         settingsBtn.disabled = false;
-        settingsStatus.textContent = success
-          ? "Download settings opened in a new tab."
-          : "Copy the address above into Brave's address bar to open download settings.";
+        bindText(settingsStatus, success ? "settingsOpened" : "settingsAddressHint");
       };
       const onResponse = (event) => {
         if (
@@ -6367,7 +6322,7 @@ export function showBrowserCompatibilityAlert() {
 
   const okBtn = document.createElement("button");
   okBtn.className = "ettpd-action-btn";
-  okBtn.textContent = browserType === "brave" ? "Done" : "OK, I understand";
+  bindText(okBtn, "close");
   okBtn.style.padding = "8px 16px";
 
   okBtn.addEventListener("click", () => {
@@ -6935,27 +6890,11 @@ function pick(arr) {
 
 // ✅ 4) Public APIs you asked for
 export function getTierHypeMessageRecommendations({ emoji, name, min }) {
-  const tpl = pick(HYPE_TEMPLATES.recommendations);
-  return renderHypeTemplate(tpl, {
-    emoji,
-    name,
-    min: Intl.NumberFormat("en", {
-      notation: "compact",
-      maximumFractionDigits: 1,
-    }).format(min),
-  });
+  return `${emoji} ${t("levelUnlocked")} ${t("itemsCount", { count: min })}`;
 }
 
 export function getTierHypeMessageDownloads({ emoji, name, min }) {
-  const tpl = pick(HYPE_TEMPLATES.downloads);
-  return renderHypeTemplate(tpl, {
-    emoji,
-    name,
-    min: Intl.NumberFormat("en", {
-      notation: "compact",
-      maximumFractionDigits: 1,
-    }).format(min),
-  });
+  return `${emoji} ${t("levelUnlocked")} ${t("savedCount", { count: min })}`;
 }
 
 // share.js
@@ -6966,8 +6905,8 @@ export function getTierHypeMessageDownloads({ emoji, name, min }) {
 export function showShareOptions(options = {}) {
   const data = {
     url: "https://chromewebstore.google.com/detail/fclobfmgolhdcfcmpbjahiiifilhamcg?utm_source=tiktok-ext",
-    title: "Dude, you have to check out this TikTok downloader...",
-    text: "Simply beautiful!",
+    title: "Easy TikTok Video Downloader",
+    text: t("shareText"),
   };
 
   const contentWrapper = document.createElement("div");
@@ -6975,30 +6914,30 @@ export function showShareOptions(options = {}) {
 
   const heading = document.createElement("div");
   heading.className = "ettpd-share-heading";
-  heading.textContent = "Share Extension 😃";
+  bindText(heading, "share");
   contentWrapper.appendChild(heading);
 
   const list = document.createElement("ul");
   list.className = "ettpd-share-list";
   contentWrapper.appendChild(list);
 
-  getShareTargets(data, options.platforms).forEach((t) => {
+  getShareTargets(data, options.platforms).forEach((target) => {
     const li = document.createElement("li");
 
     const a = document.createElement("a");
     a.className = "ettpd-share-item";
-    a.href = t.href;
+    a.href = target.href;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
-    a.setAttribute("aria-label", t.label);
+    bindText(a, "shareOn", { platform: target.label }, "aria-label");
 
     const icon = document.createElement("span");
     // IMPORTANT: icon image comes from CSS (no JS blob here)
-    icon.className = `ettpd-share-icon icon-${t.key}`;
+    icon.className = `ettpd-share-icon icon-${target.key}`;
 
     const text = document.createElement("span");
     text.className = "ettpd-share-text";
-    text.textContent = t.label;
+    bindText(text, "shareOn", { platform: target.label });
 
     a.appendChild(icon);
     a.appendChild(text);
@@ -7013,11 +6952,11 @@ export function showShareOptions(options = {}) {
   const copyBtn = document.createElement("button");
   copyBtn.type = "button";
   copyBtn.className = "ettpd-share-action ettpd-tab-btn";
-  copyBtn.textContent = "Copy link";
+  bindText(copyBtn, "copyLink");
   copyBtn.addEventListener("click", async () => {
     await copyToClipboard(data.url);
-    copyBtn.textContent = "Copied!";
-    setTimeout(() => (copyBtn.textContent = "Copy link"), 1200);
+    bindText(copyBtn, "copied");
+    setTimeout(() => bindText(copyBtn, "copyLink"), 1200);
   });
   actionBtnContainer.appendChild(copyBtn);
 
@@ -7025,7 +6964,7 @@ export function showShareOptions(options = {}) {
     const systemBtn = document.createElement("button");
     systemBtn.type = "button";
     systemBtn.className = "ettpd-share-action ettpd-tab-btn";
-    systemBtn.textContent = "System share…";
+    bindText(systemBtn, "systemShare");
     systemBtn.addEventListener("click", async () => {
       try {
         await navigator.share({
@@ -7055,59 +6994,59 @@ function getShareTargets({ url, title, text, mediaUrl }, platforms) {
   const map = {
     telegram: {
       key: "telegram",
-      label: "Share on Telegram",
+      label: "Telegram",
       href: `https://t.me/share/url?url=${e(url)}&text=${e(msg || title)}`,
     },
 
     linkedin: {
       key: "linkedin",
-      label: "Share on LinkedIn",
+      label: "LinkedIn",
       href: `https://www.linkedin.com/sharing/share-offsite/?url=${e(url)}`,
     },
     reddit: {
       key: "reddit",
-      label: "Share on Reddit",
+      label: "Reddit",
       href: `https://www.reddit.com/submit?url=${e(url)}&title=${e(title)}`,
     },
     pinterest: {
       key: "pinterest",
-      label: "Share on Pinterest",
+      label: "Pinterest",
       href: `https://www.pinterest.com/pin/create/button/?url=${e(url)}${
         mediaUrl ? `&media=${e(mediaUrl)}` : ""
       }&description=${e(msg || title)}`,
     },
     line: {
       key: "line",
-      label: "Share on Line",
+      label: "Line",
       href: `https://social-plugins.line.me/lineit/share?url=${e(url)}`,
     },
     email: {
       key: "email",
-      label: "Share on Email",
+      label: "Email",
       href: `mailto:?subject=${e(title)}&body=${mailBody}`,
     },
     whatsapp: {
       key: "whatsapp",
-      label: "Share on WhatsApp",
+      label: "WhatsApp",
       href: `https://api.whatsapp.com/send?text=${e(
         msg ? msg + " " + url : url,
       )}`,
     },
     facebook: {
       key: "facebook",
-      label: "Share on Facebook",
+      label: "Facebook",
       href: `https://www.facebook.com/sharer/sharer.php?u=${e(url)}`,
     },
     x: {
       key: "x",
-      label: "Share on X",
+      label: "X",
       href: `https://twitter.com/intent/tweet?url=${e(url)}&text=${e(
         msg || title,
       )}`,
     },
     messenger: {
       key: "messenger",
-      label: "Share on Messenger",
+      label: "Messenger",
       href: `https://www.facebook.com/dialog/send?link=${e(
         url,
       )}&redirect_uri=${e(url)}`,
