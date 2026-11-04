@@ -884,8 +884,9 @@ export function getDownloadFilePath(
 ) {
   try {
     const template =
+      options.template ||
       AppState.downloadPreferences.fullPathTemplate?.template ||
-      getDefaultPresetTemplate();
+      getDefaultPresetTemplate()?.template;
     function getFieldMaxLength(template, fieldName) {
       const regex = new RegExp(`\\{${fieldName}:(\\d+)`);
       const match = template?.match(regex);
@@ -958,7 +959,7 @@ export function getDownloadFilePath(
       : "SD";
     const fieldValues = {
       videoId: rawVideoId,
-      authorUsername: media.authorId,
+      authorUsername: sanitize(media.authorId),
       authorNickname: sanitize(media.authorNickname),
       desc: sanitizeDesc(media.desc, isDescMaxLenDefined ? descMaxLen : 100),
       musicTitle: sanitize(media.musicTitle),
@@ -977,6 +978,7 @@ export function getDownloadFilePath(
         media.createTime ? formattedDate(media.createTime) : "-",
       ),
       downloadTime: formattedDate(new Date()),
+      tabName: options.tabName || media.tabName || AppState.scrapperDetails.selectedTab || "",
       isImage: media.isImage,
       isAd: media.isAd,
       quality,
@@ -1002,9 +1004,10 @@ export function getDownloadFilePath(
           fieldValues.authorUsername || "unknown"
         }/${fieldValues.authorUsername || "user"}-${fieldValues.videoId}`;
 
-    return sanitizeDownloadFilename(
-      `${cleanupPath(resolvedPath) || "download"}${extension}`,
-    );
+    const stem = resolvedPath.replace(/\.(?:mp4|jpe?g|png|webp|gif|webm|mov|m4v|avif|heic)$/i, "") || "download";
+    const imageSuffix = media?.isImage && isMultiImage && !/\{sequenceNumber(?:[:|}])/.test(template)
+      ? `-${sequenceNumber}` : "";
+    return sanitizeDownloadFilename(`${stem}${imageSuffix}${extension}`);
   } catch (err) {
     console.error(err);
     return `tiktok-${media?.isImage ? "image.jpeg" : "video.mp4"}`;
@@ -1017,6 +1020,10 @@ export const applyTemplate = (
   { sequenceNumber, isMultiImage, collectionName },
 ) => {
   const tplHasTabName = /\{tabName(?:[:|}])/.test(tpl);
+  const isProfileBatch = !!AppState.downloading?.accountBatch ||
+    AppState.scrapperDetails.isAutoBatchDownloading &&
+    ["downloading", "ongoing"].includes(AppState.scrapperDetails.scrappingStage);
+  const tabIsFolder = /(?:^|\/)\{tabName[^}]*\}(?=\/|$)/.test(tpl);
 
   return tpl.replace(
     /\{(\w+)(?::(-?\d+))?(?:\|([^}]+))?\}/g,
@@ -1034,57 +1041,33 @@ export const applyTemplate = (
       if (key === "ad") return fieldValues.isAd ? "ad" : "";
       if (key === "mediaType") return fieldValues.isImage ? "image" : "video";
 
-      if (key === "tabName" && fieldValues.tabName) {
-        if (fieldValues.tabName === "collection" && collectionName) {
-          return `Collections/${collectionName}`;
+      if (key === "tabName") {
+        const tab = String(fieldValues.tabName || (isProfileBatch ? AppState.scrapperDetails.selectedTab : "") || fallbackRaw || "");
+        if (tab.toLowerCase() === "collection" && collectionName) {
+          return tabIsFolder ? `Collections/${collectionName}` : `Collections-${collectionName}`;
         }
-        return toTitleCase(fieldValues.tabName);
-      }
-
-      if (
-        key === "tabName" &&
-        AppState.scrapperDetails.isAutoBatchDownloading &&
-        (AppState.scrapperDetails.scrappingStage == "downloading" ||
-          AppState.scrapperDetails.scrappingStage == "ongoing")
-      ) {
-        // Only set tabName when actively scrapping (auto-batch downloading)
-        // This prevents tabName from being set during manual downloads
-        // Check for both "downloading" and "ongoing" stages since batch downloads
-        // can happen during "ongoing" stage
-        const val =
-          toTitleCase(AppState.scrapperDetails.selectedTab || "") ||
-          fallbackRaw ||
-          "";
-        if (AppState.scrapperDetails.selectedTab == "collection") {
-          return `${val}s/${collectionName}`;
-        } else {
-          return val;
-        }
-      } else if (key === "tabName") {
-        return "";
+        return toTitleCase(tab);
       }
 
       // Normal value lookup
       let val = fieldValues[key];
 
-      // Special fallback for authorUsername when tpl has {tabName} and fallback is :profile:
-      // Only apply this during active scrapping (auto-batch downloading)
       if (
         key === "authorUsername" &&
         fallbackRaw === ":profile:" &&
         tplHasTabName &&
-        AppState.scrapperDetails.isAutoBatchDownloading &&
-        (AppState.scrapperDetails.scrappingStage == "downloading" ||
-          AppState.scrapperDetails.scrappingStage == "ongoing")
+        isProfileBatch
       ) {
         val = getCurrentPageUsername() || val;
       }
 
-      if (val == null || val === "") {
-        val = fallbackRaw ?? `missing-${key}`;
+      const hasFieldValue = val != null && val !== "";
+      if (!hasFieldValue) {
+        val = fallbackRaw === ":profile:" ? getCurrentPageUsername() || "unknown" : fallbackRaw ?? `missing-${key}`;
       }
+      val = String(val);
       // Support negative maxLen to take last N characters (e.g., {videoId:-4} for last 4 chars)
-      if (maxLen !== undefined) {
+      if (maxLen !== undefined && hasFieldValue) {
         if (maxLen < 0) {
           val = val.slice(maxLen); // Negative slice takes from end
         } else {
@@ -1134,6 +1117,29 @@ function splitTrailingExtension(value) {
   };
 }
 
+function shortenDownloadPathSegment(value) {
+  const encoder = new TextEncoder();
+  if (encoder.encode(value).length <= 240) return value;
+  const characters = Array.from(value);
+  let suffix = "";
+  let suffixBytes = 0;
+  for (const character of characters.slice().reverse()) {
+    const size = encoder.encode(character).length;
+    if (suffixBytes + size > 64) break;
+    suffix = character + suffix;
+    suffixBytes += size;
+  }
+  let prefix = "";
+  let prefixBytes = 0;
+  for (const character of characters) {
+    const size = encoder.encode(character).length;
+    if (prefixBytes + size > 239 - suffixBytes) break;
+    prefix += character;
+    prefixBytes += size;
+  }
+  return `${prefix.replace(/[.\-_ ]+$/g, "")}-${suffix.replace(/^[.\-_ ]+/g, "")}`;
+}
+
 function cleanDownloadPathSegment(segment, fallback = "download") {
   const raw = (segment ?? "").toString().normalize("NFKC").trim();
   const hasAtPrefix = raw.startsWith("@");
@@ -1158,11 +1164,11 @@ function cleanDownloadPathSegment(segment, fallback = "download") {
     body = fallback;
   }
 
-  if (WINDOWS_RESERVED_FILE_NAMES.has(body.toUpperCase())) {
-    body = `${body}-file`;
+  if (WINDOWS_RESERVED_FILE_NAMES.has(body.split(".")[0].toUpperCase())) {
+    body = body.replace(/^([^.]+)/, "$1-file");
   }
 
-  return hasAtPrefix ? `@${body}` : body;
+  return shortenDownloadPathSegment(hasAtPrefix ? `@${body}` : body);
 }
 
 export const cleanupPath = (path) => {
@@ -1199,11 +1205,9 @@ function sanitizeDownloadFilename(filename) {
   const segments = normalizedFilename.split("/").filter(Boolean);
   const lastSegment = segments.pop() || "download";
   const { stem, extension } = splitTrailingExtension(lastSegment);
-  const cleanedBasePath = cleanupPath(
-    [...segments, stem || "download"].join("/"),
-  );
-
-  return `${cleanedBasePath || "download"}${extension}`;
+  const cleanedSegments = segments.map(segment => cleanDownloadPathSegment(segment, "unknown"));
+  cleanedSegments.push(`${cleanDownloadPathSegment(stem || "download")}${extension}`);
+  return cleanedSegments.join("/");
 }
 
 function getHttpUrls(value) {
