@@ -41,6 +41,7 @@ import {
   rememberCurrentPlaylistItems,
   isOnProfileOrCollectionPage,
   syncPlaylistStateWithLocation,
+  scheduleReviewPopup,
 } from "../utils/utils.js";
 import { DOM_IDS, STORAGE_KEYS } from "../state/constants.js";
 import { isExtensionEnabledSync } from "../utils/extensionState.js";
@@ -879,6 +880,7 @@ function showScrapperCompletionModal() {
 
     // Update download button state
     updateDownloadButtonLabelSimple();
+    scheduleReviewPopup();
   };
 
   endBtn.onclick = endAndClose;

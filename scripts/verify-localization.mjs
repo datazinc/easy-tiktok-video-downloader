@@ -75,7 +75,7 @@ test("all explicit UI message IDs and template-field help exist in the catalogs"
 
 test("every optional success message is authored per locale without English plural construction", async () => {
   const source = await readFile(new URL("../src/modules/utils/utils.js", import.meta.url), "utf8");
-  const code = source.slice(source.indexOf("export function getRandomDownloadSuccessMessage("), source.indexOf("function shouldShowRateDonatePopup("))
+  const code = source.slice(source.indexOf("export function getRandomDownloadSuccessMessage("), source.indexOf("function reviewOperationIsIdle("))
     .replaceAll("export function ", "function ");
   for (const locale of Object.keys(catalogs)) {
     const context = vm.createContext({ t: (key, values) => core.formatMessage(catalogs, locale, key, values) });

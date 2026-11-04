@@ -60,6 +60,8 @@ After all three release directories have been assembled (`dist`, `distchrome`, a
 
 The wide download button shows the current post or file, transfer percentage and bytes when available, and separate source-preparation, retry, recovery, muxing, and saving phases. Unknown transfer totals use an animated indicator rather than an estimated percentage. Photo posts include the current image index.
 
+Experimental HD uses one continuous indicator for the current video, with status text for downloading, combining audio/video, saving, or switching to standard. It does not show a percentage that restarts at each stage. During HD batches, the overall bar advances by completed posts. Each post tries at most one genuine HD upgrade before standard fallback; lower-quality adaptive renditions are not extra HD attempts. A failed paired-stream request cancels its sibling, and an HD network transfer with no activity for 30 seconds is aborted.
+
 While a list page is loading, the button shows **Loading posts** and the number already confirmed saved, without a guessed total. Once the current batch is queued, its counter uses only those confirmed posts. The configured maximum batch size is never presented as a discovered post count or a whole-list total.
 
 Pause takes effect before the next file; an in-flight save is allowed to finish. Pause and Stop are hidden when the batch completes or stops. Resumed queues use the same progress display.
@@ -118,6 +120,8 @@ Video overlays show a disabled **Loading** indicator until matching downloadable
 ## Responsible Use
 
 The extension's coffee, tip-jar, and Support buttons keep their familiar labels but reveal a local pay-it-forward message when clicked, instead of opening a payment page. Clicking grants the same 90-day break from review/tip prompts as a donation. This uses a local support-click timestamp, synchronized across the extension's pages; no click analytics or payment event is sent to a server.
+
+Review prompts are considered only after a browser-confirmed completed save and once downloads, recovery, and automatic scrolling are idle. Single downloads, photo groups, and normally completed list jobs use one scheduler. Eligible milestone reviews take precedence over Morpheus; they cannot appear together. Both share rating/support cooldowns and the one-automatic-popup-per-day limit. Cancelling a delayed prompt does not consume that daily limit, and stopping a download cancels pending review selection.
 
 - This project is maintained for educational, research, interoperability, archival, accessibility, and other lawful uses.
 - The maintainers do not endorse misuse of the software, including copyright infringement, privacy violations, unauthorized copying, abusive automation, or attempts to evade platform restrictions.

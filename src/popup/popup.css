@@ -56,6 +56,10 @@
   box-sizing: border-box;
 }
 
+html {
+  width: 520px;
+}
+
 body {
   margin: 0;
   padding: 0;
