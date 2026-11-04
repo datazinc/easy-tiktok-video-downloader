@@ -45,6 +45,7 @@ import {
   updateDownloaderList,
   hideDownloader,
   showMorpheusRateUsPage,
+  showRateUsPopUpLegacy,
   updateDownloadButtonLabelSimple,
   updateBatchDownloadProgress,
   updateDownloadButtonLabel,
@@ -1255,6 +1256,13 @@ export function hydrateTikTokVideoDetail(videoId, authorId = "", options = {}) {
   if (!options.refresh && videoDetailHydrationPromises.has(normalizedId)) {
     return videoDetailHydrationPromises.get(normalizedId);
   }
+  const cacheResult = promise => {
+    videoDetailHydrationPromises.set(normalizedId, promise);
+    void promise.then(item => {
+      if (!item && videoDetailHydrationPromises.get(normalizedId) === promise) videoDetailHydrationPromises.delete(normalizedId);
+    });
+    return promise;
+  };
 
   const collection = getCollectionContext(window.location.pathname);
   if (collection) {
@@ -1268,8 +1276,7 @@ export function hydrateTikTokVideoDetail(videoId, authorId = "", options = {}) {
         console.warn("[Download] collection-metadata-unavailable", { videoId: normalizedId, error: error.message });
         return null;
       });
-    videoDetailHydrationPromises.set(normalizedId, promise);
-    return promise;
+    return cacheResult(promise);
   }
 
   const normalizedAuthor = String(authorId || "")
@@ -1319,8 +1326,7 @@ export function hydrateTikTokVideoDetail(videoId, authorId = "", options = {}) {
       }
       return null;
     });
-  videoDetailHydrationPromises.set(normalizedId, promise);
-  return promise;
+  return cacheResult(promise);
 }
 
 function getAdaptivePlaybackToken(url) {
@@ -1590,6 +1596,23 @@ export function getBestVideoRendition(...videos) {
       (rendition) => !rendition.experimentalOnly,
     ) || null
   );
+}
+
+export function getPreferredExperimentalHdSource(media) {
+  if (!media || media.isImage) return null;
+  const width = Number(media.videoWidth) || 0;
+  const height = Number(media.videoHeight) || 0;
+  const standardShortEdge = width && height ? Math.min(width, height) : 0;
+  return (media.videoSources || []).find(source => {
+    if (!source.experimentalOnly || source.audioStatus === "video-only" ||
+      source.deliveryMethod !== "tiktok-gateway-muxed" && !source.audioUrl) return false;
+    const sourceWidth = Number(source.width) || 0;
+    const sourceHeight = Number(source.height) || 0;
+    const shortEdge = sourceWidth && sourceHeight ? Math.min(sourceWidth, sourceHeight) : 0;
+    if (source.qualityTier !== "hd" && shortEdge < 1080) return false;
+    if (!standardShortEdge || !shortEdge) return true;
+    return shortEdge > standardShortEdge || shortEdge === standardShortEdge && sourceWidth * sourceHeight > width * height;
+  }) || null;
 }
 
 async function remuxAdaptiveVideoAndAudio(
@@ -2459,13 +2482,16 @@ const downloadRecovery = new DownloadRecovery(() => sessionStorage, () => Date.n
   if (operation?.context?.progressiveScope) new ProgressiveBatch(sessionStorage).recordChunk(operation, saves);
 });
 
-function runRecoveryOperation(media, options, callback) {
-  return downloadRecovery.run(media, options, {
+async function runRecoveryOperation(media, options, callback) {
+  const reviewStopCount = AppState.ui?.reviewStopCount || 0;
+  const result = await downloadRecovery.run(media, options, {
     url: window.location.href,
     preferences: JSON.parse(JSON.stringify(AppState.downloadPreferences)),
     scrapperDetails: JSON.parse(JSON.stringify(AppState.scrapperDetails)),
     progressiveScope: activeAccountBatch?.scope,
   }, callback);
+  if (result !== false && result !== 0 && !result?.stopped && reviewStopCount === (AppState.ui?.reviewStopCount || 0)) scheduleReviewPopup();
+  return result;
 }
 
 export function getProgressiveListCheckpoint(scope) {
@@ -2522,9 +2548,10 @@ export async function downloadAccountListBatches(source, { batchSize = 30, maxPo
   AppState.scrapperDetails.selectedTab = source.kind;
   if (source.kind === "collection") AppState.scrapperDetails.selectedCollectionName = source.title || "collection";
   let restored = null;
+  let reviewCompleted = false;
   try {
     if (resume) restored = await reconcileProgressiveChunk(store, source.scope);
-    return await store.run({
+    const result = await store.run({
       scope: source.scope, batchSize, maxPosts, resume, signal: controller.signal,
       beforePage: async () => {
         while (job.paused && !job.stopped) await sleep(250);
@@ -2598,6 +2625,8 @@ export async function downloadAccountListBatches(source, { batchSize = 30, maxPo
         });
       },
     });
+    reviewCompleted = !result.stopped && (result.finished || result.limitReached);
+    return result;
   } finally {
     activeAccountBatch = null;
     setNativeProgressiveList(null);
@@ -2609,6 +2638,7 @@ export async function downloadAccountListBatches(source, { batchSize = 30, maxPo
     AppState.scrapperDetails.selectedTab = previousTab;
     AppState.scrapperDetails.selectedCollectionName = previousCollection;
     updateDownloadButtonLabelSimple();
+    if (reviewCompleted && !job.stopped && !controller.signal.aborted) scheduleReviewPopup();
   }
 }
 
@@ -2648,6 +2678,7 @@ export function restoreDownloadRecovery() {
 async function resumeDownloadCheckpoint(checkpoint) {
   let completed = 0;
   let processed = 0;
+  let reviewCompleted = false;
   const recordedPosts = new Set();
   try {
     while (true) {
@@ -2752,6 +2783,7 @@ async function resumeDownloadCheckpoint(checkpoint) {
     updateDownloadButtonLabel(mainBtn, AppState.downloading.isDownloadingAll
       ? `Recovery finished: ${completed} files saved` : "Recovery stopped");
     if (completed) updateAllTimeDownloadsAndLeaderBoard(AppState.displayedState.itemsHash);
+    reviewCompleted = completed > 0 && AppState.downloading.isDownloadingAll;
   } catch (error) {
     console.warn("[Download] refresh-resume-paused", { operationId: checkpoint.id, error: error.message });
     await showAlertModal(escapeHtml(t("resumeFailed")), t("close"), () => {});
@@ -2764,6 +2796,7 @@ async function resumeDownloadCheckpoint(checkpoint) {
     updateDownloadButtonLabelSimple();
     downloadRecovery.finish();
     displayFoundUrls({ forced: true });
+    if (reviewCompleted) scheduleReviewPopup();
   }
 }
 
@@ -2787,6 +2820,11 @@ function escapeHtml(value) {
 }
 
 export function stopActiveBatchDownload() {
+  AppState.ui.reviewStopCount = (AppState.ui.reviewStopCount || 0) + 1;
+  if (rateDonatePopupTimer !== null) {
+    clearTimeout(rateDonatePopupTimer);
+    rateDonatePopupTimer = null;
+  }
   if (activeAccountBatch) { activeAccountBatch.stopped = true; activeAccountBatch.abort(); }
   AppState.downloadPreferences.autoScrollMode = "off";
   AppState.downloading.isActive = false;
@@ -2941,34 +2979,55 @@ async function downloadAllPostImagesAttempt(e, media) {
   return successfulDownloads;
 }
 
-async function fetchBlobWithProgress(url, onProgress) {
-  const response = await fetch(url, { credentials: "include" });
-  if (!response.ok) return { response, blob: null };
-
-  const total = Number(response.headers.get("content-length")) || 0;
-  if (!response.body) {
-    const blob = await response.blob();
-    onProgress?.(blob.size, total || blob.size);
-    return { response, blob };
-  }
-
-  const reader = response.body.getReader();
-  const chunks = [];
-  let loaded = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.byteLength;
-    onProgress?.(loaded, total);
-  }
-
-  return {
-    response,
-    blob: new Blob(chunks, {
-      type: response.headers.get("content-type") || "video/mp4",
-    }),
+async function fetchBlobWithProgress(url, onProgress, { signal } = {}) {
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal.reason);
+  let timeout;
+  const resetTimeout = () => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      const error = new Error("HD source stopped responding for 30 seconds");
+      error.code = "ERR_EXPERIMENTAL_HD_TIMEOUT";
+      controller.abort(error);
+    }, 30000);
   };
+  if (signal?.aborted) controller.abort(signal.reason);
+  else signal?.addEventListener("abort", abort, { once: true });
+  resetTimeout();
+  try {
+    const response = await fetch(url, { credentials: "include", signal: controller.signal });
+    if (!response.ok) return { response, blob: null };
+    resetTimeout();
+
+    const total = Number(response.headers.get("content-length")) || 0;
+    if (!response.body) {
+      const blob = await response.blob();
+      onProgress?.(blob.size, total || blob.size);
+      return { response, blob };
+    }
+
+    const reader = response.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.byteLength;
+      resetTimeout();
+      onProgress?.(loaded, total);
+    }
+
+    return {
+      response,
+      blob: new Blob(chunks, {
+        type: response.headers.get("content-type") || "video/mp4",
+      }),
+    };
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
+  }
 }
 
 async function downloadExperimentalHdSource(source, filename, onProgress) {
@@ -2983,7 +3042,7 @@ async function downloadExperimentalHdSource(source, filename, onProgress) {
   let audioLoaded = 0;
   let audioTotal = 0;
   const reportFetchProgress = () => {
-    const total = videoTotal + audioTotal;
+    const total = videoTotal > 0 && audioTotal > 0 ? videoTotal + audioTotal : 0;
     const loaded = videoLoaded + audioLoaded;
     onProgress?.({
       phase: "fetch",
@@ -2992,18 +3051,28 @@ async function downloadExperimentalHdSource(source, filename, onProgress) {
       total,
     });
   };
+  const controller = new AbortController();
+  const fetchTrack = async (url, progress) => {
+    const result = await fetchBlobWithProgress(url, progress, { signal: controller.signal });
+    if (!result.response.ok || !result.blob) {
+      const error = new Error(`Experimental HD fetch failed (${result.response.status})`);
+      error.code = "ERR_EXPERIMENTAL_HD_FETCH";
+      throw error;
+    }
+    return result;
+  };
   const [videoResult, audioResult] = await Promise.all([
-    fetchBlobWithProgress(source.url, (loaded, total) => {
+    fetchTrack(source.url, (loaded, total) => {
       videoLoaded = loaded;
       videoTotal = total;
       reportFetchProgress();
     }),
-    fetchBlobWithProgress(source.audioUrl, (loaded, total) => {
+    fetchTrack(source.audioUrl, (loaded, total) => {
       audioLoaded = loaded;
       audioTotal = total;
       reportFetchProgress();
     }),
-  ]);
+  ]).catch(error => { controller.abort(error); throw error; });
   const videoResponse = videoResult.response;
   const audioResponse = audioResult.response;
   if (!videoResponse.ok || !audioResponse.ok) {
@@ -3014,6 +3083,7 @@ async function downloadExperimentalHdSource(source, filename, onProgress) {
     throw error;
   }
 
+  onProgress?.({ phase: "fetch", progress: 1, loaded: videoResult.blob.size + audioResult.blob.size, total: videoResult.blob.size + audioResult.blob.size });
   onProgress?.({ phase: "mux", progress: 0 });
   const muxedBlob = await remuxAdaptiveVideoAndAudio(
     videoResult.blob,
@@ -3085,10 +3155,10 @@ async function downloadExperimentalGatewaySource(source, filename, onProgress) {
       audioTrack.computeDuration(),
     ]);
     const actualShortEdge = Math.min(width, height);
-    const expectedShortEdge = Math.min(
+    const expectedShortEdge = Math.max(1080, Math.min(
       Number(source.width) || 0,
       Number(source.height) || 0,
-    );
+    ));
     const durationTolerance = Math.max(1, videoDuration * 0.01);
     if (
       (expectedShortEdge && actualShortEdge < expectedShortEdge) ||
@@ -3316,18 +3386,9 @@ async function downloadSingleMediaAttempt(
             qualityTier: media.qualityTier || "unknown",
           },
         ];
-    const videoSources = experimentalHd
-      ? [
-          ...allVideoSources.filter(
-            (source) => source.experimentalOnly,
-          ),
-          ...allVideoSources.filter(
-            (source) => !source.experimentalOnly,
-          ),
-        ]
-      : allVideoSources.filter(
-          (source) => !source.experimentalOnly,
-        );
+    const preferredHd = experimentalHd ? getPreferredExperimentalHdSource(media) : null;
+    const standardSources = allVideoSources.filter(source => !source.experimentalOnly);
+    const videoSources = preferredHd ? [preferredHd, ...standardSources] : standardSources;
     const seenUrls = new Set();
     const sources = (media.isImage ? [{ url: imageUrl }] : videoSources).filter(
       (source) => {
@@ -3354,16 +3415,22 @@ async function downloadSingleMediaAttempt(
         },
       });
 
+      const reportProgress = status => onProgress?.({
+        ...status,
+        experimentalHd: !!preferredHd,
+        quality: source.experimentalOnly ? "hd" : "standard",
+      });
       try {
+        reportProgress({ phase: "prepare", progress: null });
         if (experimentalHd && source.experimentalOnly) {
           if (source.deliveryMethod === "tiktok-gateway-muxed") {
             await downloadExperimentalGatewaySource(
               source,
               filename,
-              onProgress,
+              reportProgress,
             );
           } else if (source.audioStatus === "separate" && source.audioUrl) {
-            await downloadExperimentalHdSource(source, filename, onProgress);
+            await downloadExperimentalHdSource(source, filename, reportProgress);
           } else {
             throw new Error("Experimental HD source is incomplete");
           }
@@ -3371,10 +3438,10 @@ async function downloadSingleMediaAttempt(
           await downloadURLToDisk(source.url, filename, {
             allowFailureModal: isLastSource,
             maxRetries: isLastSource ? 3 : 2,
-            onProgress,
+            onProgress: reportProgress,
             recoverAfterFailure: !media.isImage && isLastSource
               ? (error) => recoverFailedVideoDownload(
-                  media, source, seenUrls, filename, onProgress, error,
+                  media, source, seenUrls, filename, reportProgress, error,
                 )
               : null,
           });
@@ -3392,9 +3459,17 @@ async function downloadSingleMediaAttempt(
         }
         break;
       } catch (sourceError) {
+        if (isStopBatchError(sourceError)) throw sourceError;
         if (isLastSource) throw sourceError;
         if (source.experimentalOnly) {
-          onProgress?.({ phase: "fallback", progress: null });
+          onProgress?.({ phase: "fallback", progress: null, experimentalHd: true, quality: "standard", reason: sourceError.code || "ERR_EXPERIMENTAL_HD" });
+          console.warn("[Download] experimental-hd-fallback", {
+            videoId: media.videoId || media.id,
+            method: source.deliveryMethod,
+            code: sourceError.code || "ERR_EXPERIMENTAL_HD",
+            message: sourceError.message,
+            hdAttempts: 1,
+          });
         }
         console.warn("[Download] Trying lower-quality fallback source", {
           mediaId: media?.id || media?.videoId || null,
@@ -4002,6 +4077,11 @@ export async function downloadURLToDisk(url, filename, options = {}) {
 
         if (res?.success) {
           AppState.sessionHasConfirmedDownloads = true;
+          if (Number.isInteger(res.downloadId)) {
+            const pending = AppState.ui.reviewPendingDownloadIds || [];
+            AppState.ui.reviewPendingDownloadIds = [...new Set([...pending, res.downloadId])].slice(-50);
+            AppState.ui.reviewStatusRetries = 0;
+          }
           options.onProgress?.({ phase: "save", progress: 1 });
           return true;
         }
@@ -4560,18 +4640,7 @@ async function downloadAllLinksAttempt(mainBtn, options = {}) {
   AppState.downloading.pausedAll = false;
   AppState.downloading.batchType = null;
   AppState.downloading.activeBatchUrls = [];
-  const showRateDonateOn = !stoppedByUser &&
-    rateDonatePopupTimer === null && shouldShowRateDonatePopup();
-  if (showRateDonateOn) {
-    rateDonatePopupTimer = setTimeout(() => {
-      rateDonatePopupTimer = null;
-      if (
-        !AppState.downloading.isActive &&
-        !AppState.downloading.isDownloadingAll &&
-        shouldShowRateDonatePopup()
-      ) showMorpheusRateUsPage();
-    }, 10_000);
-  }
+  const showRateDonateOn = !stoppedByUser && scheduleReviewPopup();
   showStatsSpan();
 
   if (AppState.scrapperDetails.scrappingStage == "downloading") {
@@ -5433,13 +5502,54 @@ export function showRandomScraperDone() {
   return t("scanFinished");
 }
 
-function shouldShowRateDonatePopup() {
+function reviewOperationIsIdle() {
+  return !activeAccountBatch && !downloadRecovery.runningFiles && !downloadRecovery.operation &&
+    !["initiated", "ongoing", "downloading"].includes(AppState.scrapperDetails?.scrappingStage);
+}
+
+export function scheduleReviewPopup() {
+  if (rateDonatePopupTimer !== null || !reviewOperationIsIdle() || !canShowAutomaticPopup()) return false;
+  if (!AppState.ui.reviewHasConfirmedDownload && !AppState.ui.reviewPendingDownloadIds?.length) return false;
+  const reviewStopCount = AppState.ui.reviewStopCount || 0;
+  const timer = setTimeout(async () => {
+    let retryPending = false;
+    try {
+      if (!reviewOperationIsIdle() || !canShowAutomaticPopup()) return;
+      const ids = AppState.ui.reviewPendingDownloadIds || [];
+      if (ids.length) {
+        const statuses = await getDownloadStatuses(ids, true);
+        if (statuses.some(item => ids.includes(item.id) && item.state === "complete")) AppState.ui.reviewHasConfirmedDownload = true;
+        const settled = new Set(statuses.filter(item => ["complete", "interrupted"].includes(item.state)).map(item => item.id));
+        AppState.ui.reviewPendingDownloadIds = (AppState.ui.reviewPendingDownloadIds || []).filter(id => !settled.has(id));
+        if (!AppState.ui.reviewHasConfirmedDownload) {
+          AppState.ui.reviewStatusRetries = (AppState.ui.reviewStatusRetries || 0) + 1;
+          retryPending = statuses.some(item => ids.includes(item.id) && item.state === "in_progress") && AppState.ui.reviewStatusRetries < 3;
+          return;
+        }
+      }
+      if (reviewStopCount !== (AppState.ui.reviewStopCount || 0) || !shouldShowRateDonatePopup()) return;
+      if (shouldShowRatePopupLegacy()) showRateUsPopUpLegacy();
+      else showMorpheusRateUsPage();
+    } catch (error) {
+      console.warn("[Review] download-confirmation-unavailable", error.message);
+    } finally {
+      if (rateDonatePopupTimer === timer) {
+        rateDonatePopupTimer = null;
+        if (retryPending) scheduleReviewPopup();
+      }
+    }
+  }, 10_000);
+  rateDonatePopupTimer = timer;
+  return true;
+}
+
+export function shouldShowRateDonatePopup() {
   if (hasSupportCooldown(AppState.rateDonate.lastDonatedAt, AppState.rateDonate.lastSupportedAt)) return false;
-  if (activeAccountBatch) return false;
+  if (!reviewOperationIsIdle()) return false;
   if (!canShowAutomaticPopup()) return false;
   if (AppState.ui.isRatePopupOpen) return false;
   // If nothing was downloaded this week. The downloader must be broken, no, don't even try suggesting they rate us.
-  if (!AppState.leaderboard.newlyConfirmedMedia.length) return false;
+  if (!AppState.ui.reviewHasConfirmedDownload) return false;
   const now = Date.now();
   const { lastRatedAt, lastDonatedAt, lastShownAt, shownCount } =
     AppState.rateDonate;
@@ -5967,7 +6077,7 @@ export function showAlertModal(message, actionText = t("close"), onAction = null
 function showDownloadFailureModal({ filename, url, message = null }) {
   updateBatchDownloadProgress({ phase: "waiting", progress: null });
   const fileLabel = filename.split("/").pop() || t("unknown");
-  const discordUrl = "https://discord.gg/KpT7xdUUbM";
+  const discordUrl = "https://discord.gg/UVEBcbMAqZ";
   const isBlobUrl = typeof url === "string" && /^blob:/i.test(url);
   const canOfferManualSave = typeof url === "string" && !!url && !isBlobUrl;
   const closeResult = AppState.downloading.isDownloadingAll
@@ -6833,8 +6943,8 @@ export function getClosestPlayingVideoId() {
 }
 
 export function shouldShowRatePopupLegacy() {
-  if (hasSupportCooldown(AppState.rateDonate.lastDonatedAt, AppState.rateDonate.lastSupportedAt)) return false;
-  const { lastRatedAt, lastShownAt } = AppState.userMeta || {};
+  if (!shouldShowRateDonatePopup()) return false;
+  const { lastRatedAt, lastShownAt } = AppState.rateDonate;
   const { leaderboard } = AppState;
 
   const daysSinceRated = getDaysSince(lastRatedAt);

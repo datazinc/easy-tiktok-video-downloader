@@ -20,6 +20,7 @@ const episodes = ui.slice(ui.indexOf("async function showShortDramaBatchDialog("
 const statistics = strip(ui.slice(ui.indexOf("export function showStatsPopUp("), ui.indexOf("export function createModal(")));
 const numericStats = ui.slice(ui.indexOf("function formatCompactNumberWithTooltip("), ui.indexOf("export function showStatsSpan("));
 const hdProgress = ui.slice(ui.indexOf("function updateExperimentalHdProgress("), ui.indexOf("async function runExperimentalHdDownload("));
+const readinessControls = strip(ui.slice(ui.indexOf("export function getReadyVideoDownloadMedia("), ui.indexOf("function syncOverlayExperimentalHdButton(")));
 const scraperView = ui.slice(ui.indexOf("function renderActiveScrappingView("), ui.indexOf("async function renderCompletedView("));
 const scraperHelp = ui.slice(ui.indexOf("function explainerModal("), ui.indexOf("function showScrapperStateUI("));
 const utils = read("src/modules/utils/utils.js");
@@ -97,8 +98,15 @@ try {
       document.querySelector('.ettpd-modal-close')?.click();document.body.replaceChildren();await setLanguage('en');
       const button=document.createElement('button');document.body.append(button);bindText(button,'download');
       updateExperimentalHdProgress(button,{phase:'mux',progress:0.5});const before=button.querySelector('.ettpd-hd-progress-fill').style.width;
+      const track=button.querySelector('.ettpd-hd-progress-track'),fill=track.firstElementChild;
       await setLanguage('de');
-      return {phase:button.querySelector('.ettpd-hd-progress-label')?.textContent,fill:button.querySelector('.ettpd-hd-progress-fill')?.style.width,before,expected:catalogs.de.mux};
+      const translatedPhase=button.querySelector('.ettpd-hd-progress-label')?.textContent;
+      const stages=[];
+      for(const status of [{phase:'fetch',progress:0.9,quality:'hd'},{phase:'mux',progress:0},{phase:'fallback',progress:null,quality:'standard'},{phase:'fetch',progress:0.1},{phase:'save',progress:1}]){
+        updateExperimentalHdProgress(button,status);
+        stages.push({sameTrack:button.querySelector('.ettpd-hd-progress-track')===track,sameFill:track.firstElementChild===fill,text:button.textContent,indeterminate:fill.classList.contains('is-indeterminate')});
+      }
+      return {phase:translatedPhase,fill:fill.style.width,before,expected:catalogs.de.mux,stages};
     };
     window.checkTemplateDraft=async()=>{
       await window.renderScreen('templates','en');const input=document.querySelector('input[name=template]');input.value='custom/{videoId}.mp4';input.dispatchEvent(new Event('input'));
@@ -125,6 +133,33 @@ try {
       window.pickerClosed=new Promise(resolve=>picker.addEventListener('close',()=>resolve({removed:!picker.isConnected,focused:document.activeElement===trigger}),{once:true}));
       const bounds=box.getBoundingClientRect();
       return {expected,actual:surface(box),expectedButton,actualButton:surface(close),focused:document.activeElement===select,inlineStyles:picker.querySelectorAll('[style]').length,overflow:box.scrollWidth>box.clientWidth+1,within:bounds.left>=0&&bounds.right<=innerWidth&&bounds.top>=0&&bounds.bottom<=innerHeight,headingSize:parseFloat(getComputedStyle(picker.querySelector('h3')).fontSize)};
+    };
+    window.checkReadinessRetry=async()=>{
+      document.querySelector('.ettpd-modal-close')?.click();document.querySelector('dialog')?.close();document.body.replaceChildren();await setLanguage('en');
+      let now=10000,local=null,requests=0,saved=null;
+      const Date={now:()=>now},AppState={allDirectLinks:[],allItemsEverSeen:{},debug:{active:false}};
+      const findFiberItemById=()=>local?{item:local}:null,buildVideoLinkMeta=item=>item;
+      const getDownloadActionLabel=()=> 'SD',getStandardDownloadTitle=()=> 'Standard source with audio',syncOverlayExperimentalHdButton=()=>{};
+      const hydrateTikTokVideoDetail=async()=>{requests++;return null;},handleFoundItems=items=>{AppState.allDirectLinks=items;};
+      const runStandardDownload=async(button,media)=>{saved=media.url;};
+      ${readinessControls}
+      const parent=document.createElement('div');document.body.append(parent);
+      createDownloadButton({parentEl:parent,videoId:'123',author:'user',getVideoSrc:()=> 'blob:playback',isImage:false});
+      const container=parent.querySelector('.download-btn-container'),button=container.querySelector('button');
+      container.dispatchEvent(new Event('pointerenter'));
+      const loading=button.dataset.sourceState;
+      await new Promise(resolve=>setTimeout(resolve,0));
+      const failed={state:button.dataset.sourceState,disabled:button.disabled};
+      now+=20000;button._refreshSourceReadiness();
+      const expired={state:button.dataset.sourceState,disabled:button.disabled};
+      await setLanguage('fr');const translated=button.title===t('retry');
+      button.click();await new Promise(resolve=>setTimeout(resolve,0));
+      const retried=requests;
+      const restarting={state:button.dataset.sourceState,disabled:button.disabled};
+      local={videoId:'123',id:'123',videoSources:[{url:'https://example.org/verified.mp4',audioStatus:'muxed'}]};
+      button._refreshSourceReadiness();const ready={state:button.dataset.sourceState,disabled:button.disabled};
+      button.click();await new Promise(resolve=>setTimeout(resolve,0));
+      return {loading,failed,expired,translated,retried,restarting,ready,saved,requests};
     };
     return Object.keys(SUPPORTED_LOCALES);
   })()`;
@@ -154,17 +189,34 @@ try {
       fs.writeFileSync(path.join(screenshots, `${screen}-${locale}-${width}.png`), Buffer.from(image.data, "base64"));
     }
   }
+  const readiness = await evaluate("checkReadinessRetry()");
+  assert.equal(readiness.loading, "loading");
+  assert.deepEqual(readiness.failed, { state: "loading", disabled: true });
+  assert.deepEqual(readiness.expired, { state: "unavailable", disabled: false });
+  assert.equal(readiness.translated, true);
+  assert.equal(readiness.retried, 2);
+  assert.deepEqual(readiness.restarting, { state: "loading", disabled: true });
+  assert.deepEqual(readiness.ready, { state: "ready", disabled: false });
+  assert.equal(readiness.saved, "https://example.org/verified.mp4");
+  assert.equal(readiness.requests, 2, "Late local metadata must not require another request");
+  console.log("Real DOM: no early unavailable flash; timeout allows retry, and late metadata restores readiness.");
   const liveProgress = await evaluate("checkLiveProgress()");
   assert.ok(liveProgress.phase.includes(liveProgress.expected));
   assert.equal(liveProgress.fill, liveProgress.before);
+  assert.ok(liveProgress.stages.every(stage => stage.sameTrack && stage.sameFill && stage.indeterminate));
+  assert.ok(liveProgress.stages.every(stage => !/\d+%/.test(stage.text)));
+  console.log("Real DOM: one persistent percentage-free HD indicator across transfer, mux, fallback and save.");
   const draft = await evaluate("checkTemplateDraft()");
   assert.equal(draft.value, "custom/{videoId}.mp4");
   assert.equal(draft.heading, draft.expected);
-  await call("Emulation.setDeviceMetricsOverride", { width: 480, height: 1100, deviceScaleFactor: 1, mobile: false }, sessionId);
+  await call("Emulation.setDeviceMetricsOverride", { width: 520, height: 1100, deviceScaleFactor: 1, mobile: false }, sessionId);
   for (const locale of locales) {
     const popup = await evaluate(`renderPopup(${JSON.stringify(locale)})`);
     assert.equal(popup.overflow, false, `${locale}: popup overflow`);
     assert.ok(popup.heading);
+    const popupSizing = await evaluate(`({documentWidth:getComputedStyle(document.documentElement).width,badgeHeight:document.querySelector('.badge').getBoundingClientRect().height,headingHeight:document.querySelector('.popup-hero h1').getBoundingClientRect().height})`);
+    assert.equal(popupSizing.documentWidth, "520px", `${locale}: missing intrinsic popup width`);
+    assert.ok(popupSizing.badgeHeight < 70 && popupSizing.headingHeight < 100, `${locale}: popup text collapsed into narrow columns`);
     const image = await call("Page.captureScreenshot", { format: "png" }, sessionId);
     fs.writeFileSync(path.join(screenshots, `${locale}-popup.png`), Buffer.from(image.data, "base64"));
   }

@@ -48,6 +48,7 @@ import {
   listScrollingCompleted,
   toTitleCase,
   shouldShowRatePopupLegacy,
+  shouldShowRateDonatePopup,
   getRecommendedPresetTemplate,
   showShareOptions,
   buildVideoLinkMeta,
@@ -62,6 +63,7 @@ import {
   syncPlaylistStateWithLocation,
   hydrateTikTokVideoDetail,
   isAdaptiveGearName,
+  getPreferredExperimentalHdSource,
 } from "../utils/utils.js";
 import {
   startAutoSwipeLoop,
@@ -3134,6 +3136,7 @@ export function updateBatchDownloadProgress(status = {}) {
   const previous = AppState.downloading.batchProgress || {};
   AppState.downloading.batchProgress = {
     ...previous,
+    ...(status.batchIndex !== undefined && status.batchIndex !== previous.batchIndex ? { experimentalHd: false, quality: null } : {}),
     ...(status.phase && status.phase !== previous.phase ? { progress: null, loaded: null, total: null } : {}),
     ...status,
   };
@@ -3157,10 +3160,12 @@ function renderBatchDownloadProgress(button) {
   }
   const paused = AppState.downloading.accountBatch?.paused || AppState.downloading.pausedAll ||
     AppState.scrapperDetails.isAutoBatchDownloading && AppState.scrapperDetails.paused;
-  const progress = typeof status.progress === "number" && Number.isFinite(status.progress)
+  const progress = !status.experimentalHd && typeof status.progress === "number" && Number.isFinite(status.progress)
     ? Math.max(0, Math.min(1, status.progress)) : null;
   const waiting = status.phase === "waiting" || status.phase === "paused";
-  const phase = paused && !waiting ? t("pauseRequested") : status.phase === "retry" ? t("retryProgress", { current: status.attempt || 1, total: status.maxRetries || 3 }) :
+  const phase = paused && !waiting ? t("pauseRequested") : status.experimentalHd && status.phase === "fallback" ? t("hdFallback") :
+    status.experimentalHd && status.phase === "fetch" ? t(status.quality === "standard" ? "standardFetching" : "hdFetching") :
+    status.phase === "retry" ? t("retryProgress", { current: status.attempt || 1, total: status.maxRetries || 3 }) :
     t(({ "fetch-video": "fetch", "fetch-audio": "fetch", load: "loading", retry: "retrying" })[status.phase] ||
       (["prepare", "fetch", "mux", "save", "fallback", "waiting", "paused"].includes(status.phase) ? status.phase : "prepare"));
   const percent = progress === null ? "" : ` · ${new Intl.NumberFormat(getLocale(), { style: "percent" }).format(progress)}`;
@@ -3208,7 +3213,7 @@ function renderBatchDownloadProgress(button) {
   const overall = isLoadingList ? null : Math.min(99, 100 * ((status.settled || 0) + fraction) / status.batchTotal);
   const fill = track.firstElementChild;
   fill.style.width = `${overall === null ? 100 : Math.max(1, overall)}%`;
-  fill.classList.toggle("is-indeterminate", (isLoadingList || progress === null) && !waiting);
+  fill.classList.toggle("is-indeterminate", (isLoadingList || progress === null && !status.experimentalHd) && !waiting);
   track.setAttribute("aria-valuetext", `${label}. ${detail}`);
   if (isLoadingList || progress === null) track.removeAttribute("aria-valuenow");
   else track.setAttribute("aria-valuenow", String(Math.round(overall)));
@@ -4425,98 +4430,60 @@ function getExperimentalHdSource(media) {
   if (!AppState.downloadPreferences.experimentalHd || media?.isImage) {
     return null;
   }
-
-  const standardWidth = Number(media?.videoWidth) || 0;
-  const standardHeight = Number(media?.videoHeight) || 0;
-  const standardShortEdge =
-    standardWidth && standardHeight
-      ? Math.min(standardWidth, standardHeight)
-      : 0;
-  const standardArea = standardWidth * standardHeight;
-
-  return (media?.videoSources || []).find(
-    (source) =>
-      source.experimentalOnly &&
-      source.audioStatus !== "video-only" &&
-      (source.deliveryMethod === "tiktok-gateway-muxed" || source.audioUrl) &&
-      source.qualityTier === "hd" &&
-      (() => {
-        const width = Number(source.width) || 0;
-        const height = Number(source.height) || 0;
-        if (!standardShortEdge || !width || !height) return true;
-        const shortEdge = Math.min(width, height);
-        return (
-          shortEdge > standardShortEdge ||
-          (shortEdge === standardShortEdge && width * height > standardArea)
-        );
-      })(),
-  ) || null;
+  return getPreferredExperimentalHdSource(media);
 }
 
 function updateExperimentalHdProgress(button, status) {
   const phase = status?.phase || "fetch";
-  const phaseProgress = Number(status?.progress);
-  const hasProgress = Number.isFinite(phaseProgress);
-  const phaseDetails = {
-    fetch: { label: "hdFetching", start: 0, weight: 0.7 },
-    mux: { label: "mux", start: 0.7, weight: 0.25 },
-    save: { label: "save", start: 0.95, weight: 0.05 },
-    fallback: {
-      label: "hdFallback",
-      start: 0,
-      weight: 0,
-    },
-  };
-  const details = phaseDetails[phase] || phaseDetails.fetch;
-  const overallProgress = hasProgress
-    ? Math.round(
-        Math.min(1, details.start + details.weight * phaseProgress) * 100,
-      )
-    : null;
+  if (status?.quality) button.dataset.hdFallback = String(status.quality === "standard");
+  else if (phase === "fallback") button.dataset.hdFallback = "true";
+  const fallback = button.dataset.hdFallback === "true";
+  const labelKey = phase === "fallback" ? "hdFallback" :
+    ({ prepare: "prepare", mux: "mux", save: "save", retry: "retrying" })[phase] || (fallback ? "standardFetching" : "hdFetching");
   const isCompact =
     button.dataset.compact === "true" ||
     button.dataset.overlayCompact === "true";
 
-  clearText(button);
-  delete button.dataset.i18nButton;
-  const label = document.createElement("span");
-  label.className = "ettpd-hd-progress-label";
-  if (isCompact) label.textContent = overallProgress == null
-      ? phase === "fallback"
-        ? "SD"
-        : phase === "mux"
-          ? "MUX"
-          : "…"
-      : new Intl.NumberFormat(getLocale(), { style: "percent" }).format(overallProgress / 100);
-  else if (overallProgress == null) bindText(label, details.label);
-  else bindText(label, "phasePercent", () => ({ phase: t(details.label), percent: new Intl.NumberFormat(getLocale(), { style: "percent" }).format(overallProgress / 100) }));
-  const track = document.createElement("span");
-  track.className = "ettpd-hd-progress-track";
-  const fill = document.createElement("span");
-  fill.className = "ettpd-hd-progress-fill";
-  fill.style.width = `${overallProgress ?? 100}%`;
-  if (overallProgress == null) fill.classList.add("is-indeterminate");
-  track.appendChild(fill);
-  button.append(label, track);
-  bindText(button, details.label, {}, "title");
+  let label = button.querySelector(".ettpd-hd-progress-label");
+  let track = button.querySelector(".ettpd-hd-progress-track");
+  if (!label || !track) {
+    clearText(button);
+    delete button.dataset.i18nButton;
+    label = document.createElement("span");
+    label.className = "ettpd-hd-progress-label";
+    track = document.createElement("span");
+    track.className = "ettpd-hd-progress-track";
+    track.setAttribute("role", "progressbar");
+    const fill = document.createElement("span");
+    fill.className = "ettpd-hd-progress-fill is-indeterminate";
+    fill.style.width = "100%";
+    track.appendChild(fill);
+    button.append(label, track);
+  }
+  if (isCompact) label.textContent = fallback ? "SD" : "HD";
+  else bindText(label, labelKey);
+  bindText(track, labelKey, {}, "aria-valuetext");
+  bindText(button, labelKey, {}, "title");
 }
 
 async function runExperimentalHdDownload(button, media, options = {}) {
   button.dataset.downloadActive = "true";
+  button.dataset.hdFallback = "false";
   button.disabled = true;
   let usedFallback = false;
   updateExperimentalHdProgress(button, { phase: "fetch", progress: 0 });
 
   try {
-    await downloadSingleMedia(media, {
+    const saved = await downloadSingleMedia(media, {
       imageIndex: options.imageIndex || 0,
       experimentalHd: true,
       onProgress: (status) => {
-        if (status.phase === "fallback") usedFallback = true;
+        if (status.quality) usedFallback = status.quality === "standard";
+        else if (status.phase === "fallback") usedFallback = true;
         updateExperimentalHdProgress(button, status);
       },
     });
-    bindText(button, usedFallback ? "fallbackSaved" : "hdSaved");
+    bindText(button, saved === false ? "alreadySaved" : usedFallback ? "fallbackSaved" : "hdSaved");
   } catch (error) {
     console.warn("Experimental HD download failed", error);
     bindText(button, "hdSaveFailed");
@@ -4533,8 +4500,8 @@ async function runExperimentalHdDownload(button, media, options = {}) {
 
 function updateStandardDownloadProgress(button, media, status) {
   const phase = status?.phase || "fetch";
-  const progress = Number(status?.progress);
-  const hasProgress = Number.isFinite(progress);
+  const progress = status?.progress;
+  const hasProgress = typeof progress === "number" && Number.isFinite(progress);
   const labelKey = phase === "save" ? "save" : "fetch";
   const overallProgress = hasProgress
     ? Math.round(
@@ -4711,7 +4678,7 @@ function updateCurrentVideoButton(btn, experimentalHdBtn, items = []) {
 }
 
 function createReportBugButton() {
-  const discordUrl = "https://discord.gg/KpT7xdUUbM";
+  const discordUrl = "https://discord.gg/UVEBcbMAqZ";
   const reportBugBtn = document.createElement("button");
   reportBugBtn.className = "ettpd-btn ettpd-report-bug";
   bindText(reportBugBtn, "reportBug");
@@ -4861,7 +4828,7 @@ function createCreditsSpan() {
 
   // Add Discord link (replaces "no refunds lol")
   const discordLink = document.createElement("a");
-  discordLink.href = "https://discord.gg/KpT7xdUUbM";
+  discordLink.href = "https://discord.gg/UVEBcbMAqZ";
   discordLink.target = "_blank";
   discordLink.rel = "noopener noreferrer";
   bindText(discordLink, "joinDiscord", {}, "title");
@@ -6113,7 +6080,7 @@ export function hideDownloader() {
 
   // Add Discord icon as a small clickable element
   const discordLink = document.createElement("a");
-  discordLink.href = "https://discord.gg/KpT7xdUUbM";
+  discordLink.href = "https://discord.gg/UVEBcbMAqZ";
   discordLink.target = "_blank";
   discordLink.rel = "noopener noreferrer";
   bindText(discordLink, "joinDiscord", {}, "title");
@@ -6241,7 +6208,7 @@ export function hideDownloader() {
 }
 
 export function showRateUsPopUpLegacy() {
-  if (!shouldShowRatePopupLegacy()) return;
+  if (!shouldShowRatePopupLegacy() || !claimAutomaticPopup()) return false;
   const reviewTarget = getExtensionReviewTarget();
   AppState.ui.isRatePopupOpen = true;
   hideDownloader();
@@ -6313,6 +6280,10 @@ export function showRateUsPopUpLegacy() {
   );
   overlay.appendChild(box);
 
+  box.querySelector("a")?.addEventListener("click", () => {
+    AppState.rateDonate.lastRatedAt = Date.now();
+    localStorage.setItem(STORAGE_KEYS.RATE_DONATE_DATA, JSON.stringify(AppState.rateDonate));
+  });
   overlay.onclick = () => {
     AppState.ui.isRatePopupOpen = false;
 
@@ -6325,6 +6296,7 @@ export function showRateUsPopUpLegacy() {
     JSON.stringify(AppState.rateDonate),
   );
   document.body.appendChild(overlay);
+  return true;
 }
 
 export function showStatsPopUp() {
@@ -6603,24 +6575,23 @@ export function createModal({ children = [], onClose = null }) {
 }
 
 export function showMorpheusRateUsPage() {
-  if (hasSupportCooldown(AppState.rateDonate.lastDonatedAt, AppState.rateDonate.lastSupportedAt)) return;
-  if (!claimAutomaticPopup()) return;
+  if (!shouldShowRateDonatePopup()) return false;
+  const reviewStopCount = AppState.ui.reviewStopCount || 0;
   const reviewTarget = getExtensionReviewTarget();
   AppState.ui.isRatePopupOpen = true;
   hideDownloader();
   showCelebration("mindblown");
   setTimeout(() => {
-    if (
-      !isExtensionEnabledSync() || document.hidden ||
-      hasSupportCooldown(AppState.rateDonate.lastDonatedAt, AppState.rateDonate.lastSupportedAt) ||
-      AppState.downloading.isActive || AppState.downloading.isDownloadingAll ||
-      document.querySelector(".ettpd-modal-overlay")
-    ) {
-      AppState.ui.isRatePopupOpen = false;
-      return;
-    }
+    AppState.ui.isRatePopupOpen = false;
+    if (reviewStopCount !== (AppState.ui.reviewStopCount || 0) || !shouldShowRateDonatePopup() || !claimAutomaticPopup()) return;
+    AppState.ui.isRatePopupOpen = true;
     createModalMorpheus({
-      message: '<div class="ettpd-morpheus-message" data-i18n="reviewInvitation"></div>',
+      message: `<div class="ettpd-morpheus-message">
+  You've just seen how good this downloader is.<br>
+  Now it's your turn to support the mission.<br><br>
+  <strong>Take the red pill ☕ — fuel us.<br>
+  Take the blue pill ⭐ — rate us.</strong>
+</div>`,
       redPillClick: (e, overlay) => {
         AppState.rateDonate.lastShownAt = Date.now();
         localStorage.setItem(
@@ -6656,6 +6627,7 @@ export function showMorpheusRateUsPage() {
       JSON.stringify(AppState.rateDonate),
     );
   }, 3500);
+  return true;
 }
 
 export function createModalMorpheus({
@@ -6692,7 +6664,7 @@ export function createModalMorpheus({
     replaceElementHtml(msg, message);
   } else {
     msg.textContent =
-      t("reviewInvitation");
+      "You take the blue pill… You wake up in your bed and believe whatever you want to believe.";
   }
 
   // 🔵 Blue pill button (right hand)
@@ -7904,9 +7876,10 @@ function createDownloadButton({
   const getReadyMedia = () => getReadyVideoDownloadMedia(videoId, [
     getOverlayMedia(),
     buildVideoLinkMeta(AppState.allItemsEverSeen[videoId]),
+    buildVideoLinkMeta(findFiberItemById(parentEl, videoId, 40)?.item),
   ]);
   const buildDefaultMarkup = () => {
-    const media = getOverlayMedia();
+    const media = (!isImage && getReadyMedia()) || getOverlayMedia();
     return `<span class="download-btn-icon" aria-hidden="true"></span><span class="download-btn-label">${getDownloadActionLabel(media)}</span>`;
   };
 
@@ -7927,16 +7900,28 @@ function createDownloadButton({
   btn.dataset.wrapperId = wrapperId;
   btn.title = getStandardDownloadTitle(getOverlayMedia());
   bindText(btn, isImage ? "downloadImages" : "download", {}, "aria-label");
+  const preparationWindowMs = 20000;
+  let preparing = false;
+  let preparationAttempts = 0;
+  let windowAttempts = 0;
+  let retryAfter = 0;
+  let preparationDeadline = null;
+  let preparationTimer = null;
   const refreshReadiness = () => {
     if (btn.dataset.downloadActive === "true") return true;
     if (isImage) return true;
     const ready = getReadyMedia();
-    const unavailable = preparationAttempted && !preparing;
+    const unavailable = preparationDeadline !== null && Date.now() >= preparationDeadline && !preparing;
+    if (ready && preparationTimer !== null) {
+      clearTimeout(preparationTimer);
+      preparationTimer = null;
+    }
     btn.dataset.sourceState = ready ? "ready" : unavailable ? "unavailable" : "loading";
-    btn.disabled = !ready;
+    btn.disabled = !ready && !unavailable;
     btn.classList.toggle("is-source-loading", !ready && !unavailable);
     btn.setAttribute("aria-busy", String(!ready && !unavailable));
-    btn.title = ready ? getStandardDownloadTitle(ready) : t("sourcePreparing");
+    clearText(btn);
+    bindText(btn, "displayName", () => ({ name: ready ? getStandardDownloadTitle(ready) : t(unavailable ? "retry" : "sourcePreparing") }), "title");
     if (ready) replaceElementHtml(btn, buildDefaultMarkup());
     else {
       const label = document.createElement("span");
@@ -7946,12 +7931,23 @@ function createDownloadButton({
     }
     return !!ready;
   };
-  let preparing = false;
-  let preparationAttempted = false;
-  const prepareSource = async () => {
-    if (isImage || preparing || preparationAttempted || refreshReadiness()) return;
+  const prepareSource = async ({ restart = false } = {}) => {
+    if (isImage || preparing || refreshReadiness()) return;
+    const expired = preparationDeadline !== null && Date.now() >= preparationDeadline;
+    if (expired && !restart || !expired && Date.now() < retryAfter) return;
+    if (preparationDeadline === null || expired) {
+      preparationDeadline = Date.now() + preparationWindowMs;
+      windowAttempts = 0;
+      if (preparationTimer !== null) clearTimeout(preparationTimer);
+      preparationTimer = setTimeout(() => {
+        preparationTimer = null;
+        if (btn.isConnected) refreshReadiness();
+      }, preparationWindowMs);
+    }
     preparing = true;
-    preparationAttempted = true;
+    preparationAttempts += 1;
+    windowAttempts += 1;
+    refreshReadiness();
     try {
       const localItem = findFiberItemById(parentEl, videoId, 40)?.item;
       if (getReadyVideoDownloadMedia(videoId, [buildVideoLinkMeta(localItem)])) {
@@ -7959,18 +7955,17 @@ function createDownloadButton({
         return;
       }
       const username = /^[\w.]+$/.test(author || "") ? author : "";
-      const item = await hydrateTikTokVideoDetail(videoId, username, { signal: AbortSignal.timeout(12000) });
+      const item = await hydrateTikTokVideoDetail(videoId, username, { signal: AbortSignal.timeout(Math.max(1, Math.min(12000, preparationDeadline - Date.now()))), refresh: preparationAttempts > 1 });
       if (item && String(item.id) === String(videoId)) handleFoundItems([item]);
     } finally {
       preparing = false;
-      if (btn.isConnected && !refreshReadiness()) {
-        bindText(btn, "unavailable", {}, "title");
-      }
+      retryAfter = Date.now() + 3000;
+      if (btn.isConnected) refreshReadiness();
     }
   };
   btn._refreshSourceReadiness = () => {
     const ready = refreshReadiness();
-    if (!ready && !preparationAttempted) {
+    if (!ready && !preparing && windowAttempts < 3 && Date.now() >= retryAfter && (preparationDeadline === null || Date.now() < preparationDeadline)) {
       const rect = parentEl.getBoundingClientRect();
       const player = parentEl.querySelector("video");
       if (player && !player.paused && rect.bottom > 0 && rect.top < window.innerHeight) {
@@ -7979,7 +7974,7 @@ function createDownloadButton({
     }
     return ready;
   };
-  container.addEventListener("pointerenter", () => { void prepareSource().catch(error => console.warn("[Download] source-readiness-failed", { videoId, error: error.message })); });
+  container.addEventListener("pointerenter", () => { void prepareSource({ restart: true }).catch(error => console.warn("[Download] source-readiness-failed", { videoId, error: error.message })); });
   const resetButtonToDefault = () => {
     btn.disabled = false;
     replaceElementHtml(btn, buildDefaultMarkup());
@@ -7996,7 +7991,7 @@ function createDownloadButton({
       const ready = getReadyMedia();
       if (!ready) {
         refreshReadiness();
-        void prepareSource().catch(error => console.warn("[Download] source-readiness-failed", { videoId, error: error.message }));
+        void prepareSource({ restart: true }).catch(error => console.warn("[Download] source-readiness-failed", { videoId, error: error.message }));
         return;
       }
       btn.dataset.sourceState = "downloading";

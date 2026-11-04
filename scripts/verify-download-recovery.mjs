@@ -416,7 +416,7 @@ test("successful original downloads do not invoke recovery or show a dialog", as
   const events = [];
   const context = vm.createContext({
     downloadRecovery: { filename() {}, saveStarted() {}, saveResponded() {} },
-    AppState: { debug: { active: false }, downloading: {}, downloadPreferences: {} },
+    AppState: { ui: {}, debug: { active: false }, downloading: {}, downloadPreferences: {} },
     uuid: () => "request", detectBrowserType: () => "chrome", displayFoundUrls() {},
     fetch: async () => ({ ok: true, headers: { get: () => null }, blob: async () => ({ size: 8 }) }),
     URL: { createObjectURL: () => "blob:test", revokeObjectURL() {} },
@@ -429,6 +429,8 @@ test("successful original downloads do not invoke recovery or show a dialog", as
   vm.runInContext(source, context);
   assert.equal(await vm.runInContext('downloadURLToDisk("https://cdn/video","file.mp4",options)', context), true);
   assert.deepEqual(events, ["save"]);
+  assert.deepEqual(Array.from(context.AppState.ui.reviewPendingDownloadIds), [1]);
+  assert.equal(context.AppState.ui.reviewHasConfirmedDownload, undefined, "Accepted save requests are not completion evidence");
 });
 
 test("pending resumed files bypass old skip-downloaded history without changing the preference", async () => {
@@ -569,6 +571,140 @@ test("batch button reports bytes and phases, animates unknown totals, and remove
   assert.equal(test.button.getAttribute("aria-busy"), null);
 });
 
+test("one HD indicator survives all phases and standard fallback without percentages or restarted bars", () => {
+  const setup = progressFixture();
+  const code = uiSource.slice(uiSource.indexOf("function updateExperimentalHdProgress("), uiSource.indexOf("async function runExperimentalHdDownload("));
+  vm.runInContext(code, setup.context);
+  setup.context.status = { phase: "prepare", progress: null, quality: "hd" };
+  vm.runInContext("updateExperimentalHdProgress(document.getElementById('batch'),status)", setup.context);
+  const track = setup.button.querySelector(".ettpd-hd-progress-track");
+  const fill = track.firstElementChild;
+  for (const status of [
+    { phase: "fetch", progress: 0.3 }, { phase: "fetch", progress: 1 },
+    { phase: "mux", progress: 0 }, { phase: "mux", progress: 1 },
+    { phase: "fallback", progress: null, quality: "standard" },
+    { phase: "fetch", progress: 0 }, { phase: "fetch", progress: 1 },
+    { phase: "save", progress: 0 }, { phase: "save", progress: 1 },
+  ]) {
+    setup.context.status = status;
+    vm.runInContext("updateExperimentalHdProgress(document.getElementById('batch'),status)", setup.context);
+    assert.equal(setup.button.querySelector(".ettpd-hd-progress-track"), track);
+    assert.equal(track.firstElementChild, fill);
+    assert.match(fill.className, /is-indeterminate/);
+    assert.doesNotMatch(setup.button.textContent, /\d+%/);
+    assert.equal(track.getAttribute("aria-valuenow"), null);
+  }
+  assert.equal(setup.button.dataset.hdFallback, "true");
+  assert.equal(setup.button.textContent, t("save"));
+});
+
+test("HD batch progress counts completed posts and never restarts across transfer phases", () => {
+  const setup = progressFixture();
+  setup.update({ batchTotal: 8, batchIndex: 3, settled: 2, phase: "prepare", progress: null, experimentalHd: true });
+  const track = setup.button.querySelector(".ettpd-batch-progress-track");
+  const width = track.firstElementChild.style.width;
+  for (const [phase, progress] of [["fetch", 1], ["mux", 0], ["mux", 1], ["fallback", null], ["fetch", 0], ["fetch", 1], ["save", 0], ["save", 1]]) {
+    setup.update({ phase, progress, experimentalHd: true });
+    assert.equal(setup.button.querySelector(".ettpd-batch-progress-track"), track);
+    assert.equal(track.firstElementChild.style.width, width);
+    assert.doesNotMatch(setup.button.textContent, /\d+%/);
+    assert.doesNotMatch(track.firstElementChild.className, /is-indeterminate/);
+  }
+  setup.update({ batchIndex: 4, settled: 3, phase: "prepare", progress: null });
+  assert.ok(parseFloat(track.firstElementChild.style.width) > parseFloat(width));
+  assert.equal(setup.state.downloading.batchProgress.experimentalHd, false);
+});
+
+test("experimental downloads try one genuine upgrade, never adaptive SD, then one standard fallback path", async () => {
+  const selector = utils.slice(utils.indexOf("export function getPreferredExperimentalHdSource("), utils.indexOf("async function remuxAdaptiveVideoAndAudio("))
+    .replace("export function ", "function ");
+  const attempt = utils.slice(utils.indexOf("async function downloadSingleMediaAttempt("), utils.indexOf("async function prepareBatchMediaForDownload("));
+  for (const outcome of ["hd", "fallback", "stop", "no-upgrade"]) {
+    const calls = [];
+    const progress = [];
+    const standard = { url: "https://cdn/standard", qualityTier: "sd", qualityLabel: "SD", width: 720, height: 1280, audioStatus: "muxed" };
+    const hd = { url: "https://cdn/hd", qualityTier: "hd", qualityLabel: "HD", width: 1080, height: 1920, experimentalOnly: true, deliveryMethod: "tiktok-gateway-muxed", audioStatus: "muxed" };
+    const adaptiveSd = { ...hd, url: "https://cdn/adaptive-sd", qualityTier: "sd", width: 720, height: 1280 };
+    const media = { videoId: "123", videoWidth: outcome === "no-upgrade" ? 1080 : 720, videoHeight: outcome === "no-upgrade" ? 1920 : 1280, url: standard.url, videoSources: [hd, adaptiveSd, { ...hd, url: "https://cdn/second-hd" }, standard] };
+    const context = vm.createContext({
+      AppState: { scrapperDetails: {}, downloading: { isDownloadingAll: true }, debug: { active: false } }, media,
+      getDownloadFilePath: () => "123.mp4", getCurrentPageUsername: () => "😃", detectCurrentTabName: () => "videos",
+      isStopBatchError: error => error.code === "ERR_STOP_BATCH",
+      downloadExperimentalGatewaySource: async (source, filename, report) => {
+        calls.push(source.url); report({ phase: "fetch", progress: 1 });
+        if (outcome !== "hd") throw Object.assign(new Error(outcome), { code: outcome === "stop" ? "ERR_STOP_BATCH" : "ERR_EXPERIMENTAL_HD_MISMATCH" });
+        report({ phase: "save", progress: 1 });
+      },
+      downloadURLToDisk: async (url, filename, options) => { calls.push(url); options.onProgress?.({ phase: "fetch", progress: 1 }); options.onProgress?.({ phase: "save", progress: 1 }); },
+      console: { log() {}, warn() {}, error() {} }, onProgress: status => progress.push(status),
+    });
+    vm.runInContext(selector + attempt, context);
+    const operation = vm.runInContext("downloadSingleMediaAttempt(media,{experimentalHd:true,onProgress})", context);
+    if (outcome === "stop") await assert.rejects(operation, error => error.code === "ERR_STOP_BATCH");
+    else assert.equal(await operation, true);
+    assert.deepEqual(calls, outcome === "hd" || outcome === "stop" ? [hd.url] : outcome === "no-upgrade" ? [standard.url] : [hd.url, standard.url]);
+    assert.equal(progress.filter(status => status.phase === "fallback").length, outcome === "fallback" ? 1 : 0);
+    if (outcome === "hd") assert.ok(progress.every(status => status.quality === "hd"));
+    if (outcome === "fallback") assert.ok(progress.filter(status => status.quality === "standard").every(status => status.experimentalHd));
+  }
+});
+
+test("failed paired HD requests immediately cancel the other stream", async () => {
+  const code = utils.slice(utils.indexOf("async function downloadExperimentalHdSource("), utils.indexOf("async function downloadExperimentalGatewaySource("));
+  let cancelled = false;
+  const context = vm.createContext({
+    AbortController, source: { url: "video", audioUrl: "audio" },
+    fetchBlobWithProgress: async (url, progress, { signal }) => {
+      if (url === "audio") return { response: { ok: false, status: 403 }, blob: null };
+      return new Promise((resolve, reject) => signal.addEventListener("abort", () => { cancelled = true; reject(signal.reason); }, { once: true }));
+    },
+  });
+  vm.runInContext(code, context);
+  await assert.rejects(vm.runInContext("downloadExperimentalHdSource(source,'123.mp4')", context), error => error.code === "ERR_EXPERIMENTAL_HD_FETCH");
+  assert.equal(cancelled, true);
+});
+
+test("paired HD byte totals remain unknown until both streams are sized", async () => {
+  const code = utils.slice(utils.indexOf("async function downloadExperimentalHdSource("), utils.indexOf("async function downloadExperimentalGatewaySource("));
+  const progress = [];
+  const context = vm.createContext({
+    AbortController, source: { url: "video", audioUrl: "audio" }, progress: status => progress.push(status),
+    fetchBlobWithProgress: async (url, report) => {
+      const size = url === "video" ? 100 : 50;
+      report(size, size);
+      return { response: { ok: true }, blob: { size } };
+    },
+    remuxAdaptiveVideoAndAudio: async () => ({}), URL: { createObjectURL: () => "blob:muxed", revokeObjectURL() {} },
+    downloadURLToDisk: async () => true,
+  });
+  vm.runInContext(code, context);
+  await vm.runInContext("downloadExperimentalHdSource(source,'123.mp4',progress)", context);
+  const fetching = progress.filter(status => status.phase === "fetch");
+  assert.equal(fetching[0].progress, null);
+  assert.equal(fetching[0].total, 0);
+  assert.equal(fetching.at(-1).progress, 1);
+  assert.equal(fetching.at(-1).loaded, 150);
+});
+
+test("HD network inactivity is bounded and aborts its request rather than leaving a permanent spinner", async () => {
+  const code = utils.slice(utils.indexOf("async function fetchBlobWithProgress("), utils.indexOf("async function downloadExperimentalHdSource("));
+  let timeout;
+  let signal;
+  const context = vm.createContext({
+    AbortController,
+    setTimeout: (callback, delay) => { assert.equal(delay, 30000); timeout = callback; return 1; }, clearTimeout() {},
+    fetch: (url, options) => {
+      signal = options.signal;
+      return new Promise((resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+    },
+  });
+  vm.runInContext(code, context);
+  const operation = vm.runInContext("fetchBlobWithProgress('https://cdn/stalled')", context);
+  timeout();
+  await assert.rejects(operation, error => error.code === "ERR_EXPERIMENTAL_HD_TIMEOUT");
+  assert.equal(signal.aborted, true);
+});
+
 test("list progress never substitutes the batch cap for an unconfirmed post count", () => {
   const setup = progressFixture();
   setup.update({ batchTotal: null, batchIndex: null, settled: 0, batchNumber: 1, savedPosts: 0, phase: "load", progress: null, unit: "posts" });
@@ -628,6 +764,7 @@ test("completed batch hides Pause/Stop and counts saved posts even if recovery c
     updateAllTimeDownloadsAndLeaderBoard() {}, showCelebration() {}, showStatsSpan() {},
     getRandomDownloadSuccessMessage: () => "Saved",
     shouldShowRateDonatePopup: () => false,
+    scheduleReviewPopup: () => false,
     rateDonatePopupTimer: null,
   });
   vm.runInContext("function updateDownloadButtonLabelSimple(){ updateDownloadAllButtonState(document.getElementById('batch'),AppState.allDirectLinks); }", test.context);
@@ -756,6 +893,7 @@ test("readiness polling cannot overwrite an active overlay's progress or reenabl
     options: { videoId: "123", author: "user", parentEl: parent, isImage: false },
     CSS: { escape: value => value }, getDownloadActionLabel: () => "SD", getStandardDownloadTitle: () => "Save video",
     replaceElementHtml: (element, html) => { element.textContent = html; }, buildVideoLinkMeta: item => item || null,
+    findFiberItemById: () => null,
     syncOverlayExperimentalHdButton() {}, console: { log() {} },
   });
   const code = uiSource.slice(uiSource.indexOf("export function getReadyVideoDownloadMedia("), uiSource.indexOf("function syncOverlayExperimentalHdButton("))
@@ -840,6 +978,192 @@ test("early overlay clicks keep a loading state until matching metadata arrives"
   assert.deepEqual(saves, ["https://cdn/video"]);
 });
 
+function retryReadinessFixture() {
+  const setup = progressFixture();
+  const parent = setup.button;
+  const originalQuery = parent.querySelector.bind(parent);
+  const player = { paused: true };
+  const ready = { videoId: "123", id: "123", authorId: "user", videoSources: [{ url: "https://cdn/video", audioStatus: "muxed" }] };
+  let now = 10000;
+  let local = null;
+  let result = null;
+  let nextTimer = 0;
+  const timers = new Map();
+  const requests = [];
+  const saves = [];
+  parent.getBoundingClientRect = () => ({ top: 0, bottom: 300 });
+  parent.querySelector = selector => selector === "video" ? player : originalQuery(selector);
+  Object.assign(setup.state, { allItemsEverSeen: {}, allDirectLinks: [] });
+  Object.assign(setup.context, {
+    parent, AbortSignal, Date: { now: () => now }, CSS: { escape: value => value }, window: { innerHeight: 800 },
+    setTimeout: (callback, delay) => { const id = ++nextTimer; timers.set(id, { callback, at: now + delay }); return id; },
+    clearTimeout: id => timers.delete(id),
+    getDownloadActionLabel: () => "SD", getStandardDownloadTitle: () => "Download with audio",
+    buildVideoLinkMeta: item => item, findFiberItemById: () => local ? { item: local } : null,
+    hydrateTikTokVideoDetail: async (id, author, options) => { requests.push({ id, author, options }); return result; },
+    handleFoundItems: items => { setup.state.allDirectLinks = items; setup.state.allItemsEverSeen["123"] = items[0]; },
+    replaceElementHtml: (element, html) => { element.textContent = html; }, syncOverlayExperimentalHdButton() {},
+    runStandardDownload: async (button, media) => { saves.push(media.url); }, console: { log() {}, warn() {} },
+  });
+  const source = uiSource.slice(uiSource.indexOf("export function getReadyVideoDownloadMedia("), uiSource.indexOf("function syncOverlayExperimentalHdButton("))
+    .replace("export function ", "function ");
+  vm.runInContext(source, setup.context);
+  vm.runInContext('createDownloadButton({parentEl:parent,videoId:"123",author:"user",getVideoSrc:()=>"blob:playback",isImage:false})', setup.context);
+  const container = parent.children.at(-1);
+  const button = container.children[0];
+  return {
+    setup, player, ready, requests, saves, button, container,
+    advance: milliseconds => {
+      now += milliseconds;
+      for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.callback(); }
+    },
+    pendingTimers: () => timers.size,
+    result: value => { result = value; }, local: value => { local = value; },
+    click: () => button.listeners.get("click")({ preventDefault() {}, stopPropagation() {} }),
+    settle: () => new Promise(resolve => setImmediate(resolve)),
+  };
+}
+
+test("failed preparation retries with a cooldown, caps automatic requests, and permits manual recovery", async () => {
+  const fixture = retryReadinessFixture();
+  fixture.player.paused = false;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    fixture.button._refreshSourceReadiness();
+    fixture.button._refreshSourceReadiness();
+    assert.equal(fixture.requests.length, attempt);
+    assert.equal(fixture.button.dataset.sourceState, "loading");
+    assert.equal(fixture.button.disabled, true);
+    await fixture.settle();
+    assert.equal(fixture.button.dataset.sourceState, "loading");
+    assert.equal(fixture.button.disabled, true);
+    assert.equal(fixture.button.getAttribute("title"), t("sourcePreparing"));
+    fixture.button._refreshSourceReadiness();
+    await fixture.click();
+    assert.equal(fixture.requests.length, attempt, "No request during cooldown");
+    fixture.advance(3000);
+  }
+  fixture.button._refreshSourceReadiness();
+  assert.equal(fixture.requests.length, 3, "No unbounded automatic retries");
+  fixture.advance(11000);
+  fixture.button._refreshSourceReadiness();
+  assert.equal(fixture.button.dataset.sourceState, "unavailable");
+  assert.equal(fixture.button.disabled, false);
+  fixture.result(fixture.ready);
+  await fixture.click();
+  await fixture.settle();
+  assert.equal(fixture.requests.length, 4);
+  assert.equal(fixture.requests[0].options.refresh, false);
+  assert.ok(fixture.requests.slice(1).every(request => request.options.refresh));
+  assert.equal(fixture.button.dataset.sourceState, "ready");
+  assert.equal(fixture.button.disabled, false);
+  assert.deepEqual(fixture.saves, [], "Preparing must not start a download");
+  await fixture.click();
+  assert.deepEqual(fixture.saves, ["https://cdn/video"]);
+});
+
+test("unavailable buttons recover immediately from fresh matching local metadata without another request", async () => {
+  const fixture = retryReadinessFixture();
+  fixture.container.listeners.get("pointerenter")();
+  await fixture.settle();
+  assert.equal(fixture.requests.length, 1);
+  fixture.advance(20000);
+  fixture.button._refreshSourceReadiness();
+  assert.equal(fixture.button.dataset.sourceState, "unavailable");
+  fixture.local({ ...fixture.ready, videoId: "456", id: "456" });
+  fixture.button._refreshSourceReadiness();
+  assert.equal(fixture.button.dataset.sourceState, "unavailable");
+  fixture.local(fixture.ready);
+  fixture.button._refreshSourceReadiness();
+  assert.equal(fixture.button.dataset.sourceState, "ready");
+  assert.equal(fixture.button.disabled, false);
+  assert.equal(fixture.requests.length, 1);
+  await fixture.click();
+  assert.deepEqual(fixture.saves, ["https://cdn/video"]);
+});
+
+test("brief metadata failures never flash unavailable before late metadata becomes ready", async () => {
+  const fixture = retryReadinessFixture();
+  fixture.advance(60000);
+  fixture.button._refreshSourceReadiness();
+  assert.equal(fixture.button.dataset.sourceState, "loading", "Idle time before preparation must not consume the window");
+  fixture.container.listeners.get("pointerenter")();
+  await fixture.settle();
+  fixture.advance(1000);
+  fixture.button._refreshSourceReadiness();
+  assert.equal(fixture.button.dataset.sourceState, "loading");
+  assert.equal(fixture.button.textContent, t("prepare"));
+  fixture.advance(1000);
+  fixture.local(fixture.ready);
+  fixture.button._refreshSourceReadiness();
+  assert.equal(fixture.button.dataset.sourceState, "ready");
+  assert.equal(fixture.button.disabled, false);
+  assert.equal(fixture.pendingTimers(), 0, "Ready sources cancel the timeout");
+  fixture.advance(60000);
+  fixture.button._refreshSourceReadiness();
+  assert.equal(fixture.button.dataset.sourceState, "ready");
+  assert.equal(fixture.requests.length, 1);
+});
+
+test("preparation timeout shows retry without another render and manual retry gets a fresh window", async () => {
+  const fixture = retryReadinessFixture();
+  fixture.container.listeners.get("pointerenter")();
+  await fixture.settle();
+  fixture.advance(19999);
+  assert.equal(fixture.button.dataset.sourceState, "loading");
+  fixture.advance(1);
+  assert.equal(fixture.button.dataset.sourceState, "unavailable");
+  assert.equal(fixture.button.disabled, false);
+  assert.equal(fixture.button.getAttribute("title"), t("retry"));
+  await fixture.click();
+  await fixture.settle();
+  assert.equal(fixture.button.dataset.sourceState, "loading");
+  assert.equal(fixture.button.disabled, true);
+  fixture.advance(2000);
+  fixture.button._refreshSourceReadiness();
+  assert.equal(fixture.button.dataset.sourceState, "loading");
+  assert.equal(fixture.requests.length, 2);
+});
+
+test("transient metadata failures are not cached for posts, episodes or collections", async () => {
+  const source = utils.slice(utils.indexOf("export function hydrateTikTokVideoDetail("), utils.indexOf("function getAdaptivePlaybackToken("))
+    .replace("export function ", "function ");
+  for (const kind of ["post", "episode", "collection"]) {
+    let attempts = 0;
+    let release;
+    const item = { id: "123", video: {} };
+    const request = () => {
+      attempts += 1;
+      if (attempts === 1) return Promise.reject(Object.assign(new Error("Temporary failure"), { name: "AbortError" }));
+      return new Promise(resolve => { release = resolve; });
+    };
+    const context = vm.createContext({
+      videoDetailHydrationPromises: new Map(), URL,
+      window: { location: { origin: "https://www.tiktok.com", pathname: "/@user/video/123" } },
+      AppState: { debug: { active: false } }, console: { warn() {} },
+      getCollectionContext: () => kind === "collection" ? { id: "999" } : null,
+      resolveCollectionRequest: () => "https://www.tiktok.com/api/collection/item_list/?collectionId=999",
+      collectCollectionItems: request,
+      getShortDramaId: () => kind === "episode" ? "999" : null,
+      findShortDramaRequest: () => "https://www.tiktok.com/api/drama/episode/item_list/?dramaID=999",
+      performance: { getEntriesByType: () => [] },
+      fetch: request,
+      DOMParser: class { parseFromString() { return { getElementById: () => ({ textContent: JSON.stringify({ __DEFAULT_SCOPE__: { "webapp.video-detail": { itemInfo: { itemStruct: item } } } }) }) }; } },
+    });
+    vm.runInContext(source, context);
+    assert.equal(await vm.runInContext('hydrateTikTokVideoDetail("123", "user")', context), null, kind);
+    assert.equal(vm.runInContext('videoDetailHydrationPromises.has("123")', context), false, kind);
+    const retry = vm.runInContext('hydrateTikTokVideoDetail("123", "user")', context);
+    const concurrent = vm.runInContext('hydrateTikTokVideoDetail("123", "user")', context);
+    assert.equal(attempts, 2, `${kind}: concurrent callers must share the retry`);
+    assert.equal(retry, concurrent, kind);
+    release(kind === "collection" ? [item] : { ok: true, json: async () => ({ itemList: [item] }), text: async () => "document" });
+    assert.equal((await retry).id, "123", kind);
+    assert.equal((await concurrent).id, "123", kind);
+    assert.equal((await vm.runInContext('hydrateTikTokVideoDetail("123", "user")', context)).id, "123", kind);
+    assert.equal(attempts, 2, `${kind}: successful metadata can remain cached`);
+  }
+});
+
 test("short-drama hydration uses only an observed same-origin episode list and exact episode ID", async () => {
   const source = utils.slice(utils.indexOf("export function hydrateTikTokVideoDetail("), utils.indexOf("function getAdaptivePlaybackToken("))
     .replace("export function ", "function ");
@@ -863,6 +1187,7 @@ test("short-drama hydration uses only an observed same-origin episode list and e
       assert.equal(item.id, "123");
       assert.match(calls[0], /\/api\/drama\/episode\/item_list/);
       assert.equal(await vm.runInContext('hydrateTikTokVideoDetail("789", "_")', context), null);
+      assert.equal(vm.runInContext('videoDetailHydrationPromises.has("789")', context), false);
     } else {
       assert.equal(item, null);
       assert.equal(new URL(calls[0]).hostname, "www.tiktok.com");
@@ -1335,6 +1660,7 @@ test("account job resumes browser-confirmed chunk files without downloading them
     leaderboard: { newlyConfirmedMedia: [] }, ui: {},
   };
   let pending = true;
+  let reviewScheduled = 0;
   const context = vm.createContext({
     activeAccountBatch: null, ProgressiveBatch, sessionStorage: setup.storage, AbortController,
     AppState: state, downloadRecovery: recovery, source,
@@ -1342,6 +1668,12 @@ test("account job resumes browser-confirmed chunk files without downloading them
     document: { getElementById: () => ({}) }, DOM_IDS: { DOWNLOAD_ALL_BUTTON: "button" },
     isExtensionEnabledSync: () => true,
     setNativeProgressiveList() {},
+    scheduleReviewPopup: () => {
+      assert.equal(state.downloading.accountBatch, null);
+      assert.equal(recovery.operation, null);
+      reviewScheduled += 1;
+      return true;
+    },
     updateBatchDownloadProgress: status => progress.push(status), updateDownloadButtonLabelSimple() {},
     fetchAccountListPage: async (source, cursor) => ({
       items: cursor === "0" ? [{ id: "1" }, { id: "2" }] : [{ id: "3" }],
@@ -1372,9 +1704,11 @@ test("account job resumes browser-confirmed chunk files without downloading them
   vm.runInContext(code, context);
   await assert.rejects(vm.runInContext("downloadAccountListBatches(source,{batchSize:2})", context), /still saving|unknown/);
   assert.deepEqual(saved, ["1", "2"]);
+  assert.equal(reviewScheduled, 0, "An incomplete save must not schedule a review");
   pending = false;
   const result = await vm.runInContext("downloadAccountListBatches(source,{batchSize:2,resume:true})", context);
   assert.equal(result.finished, true);
+  assert.equal(reviewScheduled, 1, "Completed list jobs schedule after clearing active-job state");
   assert.deepEqual(saved, ["1", "2", "3"]);
   assert.deepEqual(result.completed, ["1", "2", "3"]);
   const loading = progress.filter(status => status.phase === "load");
@@ -2099,14 +2433,228 @@ test("pay-it-forward dialog is local, accessible, deduplicated, and dismissible 
   assert.doesNotMatch(await readFile(new URL("../src/popup/popup.html", import.meta.url), "utf8"), /linktr\.ee/i);
 });
 
+function reviewPromptFixture() {
+  let now = 1800000000000;
+  let sequence = 0;
+  let statuses = [{ id: 1, state: "complete" }];
+  const timers = new Map();
+  const stored = new Map();
+  const shown = [];
+  const state = {
+    ui: { reviewPendingDownloadIds: [1] }, downloading: {}, scrapperDetails: {},
+    rateDonate: { lastRatedAt: null, lastSupportedAt: null, lastDonatedAt: null, lastShownAt: null, shownCount: 0 },
+    leaderboard: { allTimeDownloadsCount: 1, weekDownloadsData: { count: 1, weekId: "2026-W44" } },
+  };
+  const document = { hidden: false, querySelector: () => null };
+  const recovery = { runningFiles: 0, operation: null };
+  const context = vm.createContext({
+    AppState: state, downloadRecovery: recovery, document, activeAccountBatch: null, rateDonatePopupTimer: null,
+    Date: class extends Date { static now() { return now; } },
+    localStorage: { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) },
+    STORAGE_KEYS: { LAST_AUTOMATIC_POPUP_AT: "automatic", RATE_DONATE_DATA: "review" },
+    isExtensionEnabledSync: () => true,
+    hasSupportCooldown: (donated, supported) => [donated, supported, Number(stored.get("support"))].some(value => value > 0 && now - value < 90 * 86400000),
+    setTimeout: (callback, delay) => { const id = ++sequence; timers.set(id, { callback, delay }); return id; },
+    getDownloadStatuses: async () => statuses,
+    showRateUsPopUpLegacy: () => shown.push("regular"),
+    hideDownloader() {}, showCelebration() {}, getExtensionReviewTarget: () => ({ url: "unused" }),
+    createModalMorpheus: () => shown.push("morpheus"), console: { warn() {} },
+  });
+  const automatic = utils.slice(utils.indexOf("let lastAutomaticPopupAt ="), utils.indexOf("export function makeOverlay("));
+  const eligibility = utils.slice(utils.indexOf("function reviewOperationIsIdle()"), utils.indexOf("export async function getTabSpans("));
+  const legacy = utils.slice(utils.indexOf("export function shouldShowRatePopupLegacy()"), utils.indexOf("// 🧰 2)"));
+  const morpheus = uiSource.slice(uiSource.indexOf("export function showMorpheusRateUsPage()"), uiSource.indexOf("export function createModalMorpheus("));
+  vm.runInContext((automatic + eligibility + legacy + morpheus).replaceAll("export function ", "function "), context);
+  return {
+    state, context, stored, shown, timers, document, recovery,
+    advance: milliseconds => { now += milliseconds; },
+    statuses: value => { statuses = value; },
+    schedule: () => vm.runInContext("scheduleReviewPopup()", context),
+    eligible: () => vm.runInContext("shouldShowRateDonatePopup()", context),
+    legacy: () => vm.runInContext("shouldShowRatePopupLegacy()", context),
+    async fire() {
+      const [id, timer] = timers.entries().next().value;
+      timers.delete(id);
+      now += timer.delay;
+      await timer.callback();
+    },
+  };
+}
+
+test("successful recovery-owned operations schedule reviews only after cleanup, never for skipped or stopped work", async () => {
+  const code = utils.slice(utils.indexOf("async function runRecoveryOperation("), utils.indexOf("export function getProgressiveListCheckpoint("));
+  for (const result of [true, 2, { stopped: false }, false, 0, { stopped: true }, "error"]) {
+    const setup = fixture();
+    let scheduled = 0;
+    const context = vm.createContext({
+      downloadRecovery: setup.recovery, activeAccountBatch: null,
+      window: { location: { href: "https://www.tiktok.com/@user/video/123" } },
+      AppState: { downloadPreferences: {}, scrapperDetails: {} },
+      scheduleReviewPopup: () => { assert.equal(setup.recovery.operation, null); scheduled += 1; },
+      callback: async () => { assert.ok(setup.recovery.operation); assert.equal(scheduled, 0); if (result === "error") throw new Error("failed"); return result; },
+    });
+    vm.runInContext(code, context);
+    const operation = vm.runInContext('runRecoveryOperation([{videoId:"123"}],{},callback)', context);
+    if (result === "error") await assert.rejects(operation, /failed/);
+    else await operation;
+    assert.equal(scheduled, result !== "error" && result !== false && result !== 0 && !result.stopped ? 1 : 0);
+  }
+});
+
+test("review prompts require completed browser saves and share one delayed scheduler", async () => {
+  const fixture = reviewPromptFixture();
+  assert.equal(fixture.eligible(), false);
+  assert.equal(fixture.schedule(), true);
+  assert.equal(fixture.schedule(), false);
+  assert.equal(fixture.timers.size, 1);
+  await fixture.fire();
+  assert.equal(fixture.state.ui.isRatePopupOpen, true);
+  assert.equal(fixture.stored.has("automatic"), false, "Pending Morpheus must not consume daily cooldown");
+  assert.deepEqual(fixture.shown, []);
+  await fixture.fire();
+  assert.deepEqual(fixture.shown, ["morpheus"]);
+  assert.ok(Number(fixture.stored.get("automatic")) > 0);
+  assert.equal(fixture.state.rateDonate.shownCount, 1);
+});
+
+test("interrupted, unknown and in-progress saves cannot trigger a review prompt", async () => {
+  for (const state of ["interrupted", "in_progress", null]) {
+    const fixture = reviewPromptFixture();
+    fixture.statuses(state ? [{ id: 1, state }] : []);
+    fixture.schedule();
+    for (let attempts = 0; fixture.timers.size && attempts < 5; attempts += 1) await fixture.fire();
+    assert.deepEqual(fixture.shown, [], String(state));
+    assert.equal(fixture.timers.size, 0, "Status checks must be bounded");
+    assert.equal(fixture.stored.has("automatic"), false);
+  }
+});
+
+test("progressive and scraper jobs suppress reviews until their operations are idle", () => {
+  const fixture = reviewPromptFixture();
+  vm.runInContext("activeAccountBatch = {}", fixture.context);
+  assert.equal(fixture.schedule(), false);
+  vm.runInContext("activeAccountBatch = null", fixture.context);
+  fixture.state.scrapperDetails.scrappingStage = "ongoing";
+  assert.equal(fixture.schedule(), false);
+  fixture.state.scrapperDetails.scrappingStage = "completed";
+  fixture.recovery.runningFiles = 1;
+  assert.equal(fixture.schedule(), false);
+  fixture.recovery.runningFiles = 0;
+  fixture.recovery.operation = {};
+  assert.equal(fixture.schedule(), false);
+  fixture.recovery.operation = null;
+  assert.equal(fixture.schedule(), true);
+});
+
+test("cancelled delayed Morpheus does not record a display or consume shared cooldown", async () => {
+  for (const reason of ["hidden", "download", "modal", "support", "rated", "stopped"]) {
+    const fixture = reviewPromptFixture();
+    fixture.schedule(); await fixture.fire();
+    if (reason === "hidden") fixture.document.hidden = true;
+    if (reason === "download") fixture.state.downloading.isActive = true;
+    if (reason === "modal") fixture.document.querySelector = () => ({});
+    if (reason === "support") fixture.state.rateDonate.lastSupportedAt = 1800000000000;
+    if (reason === "rated") fixture.state.rateDonate.lastRatedAt = 1800000000000;
+    if (reason === "stopped") fixture.state.ui.reviewStopCount = 1;
+    await fixture.fire();
+    assert.deepEqual(fixture.shown, [], reason);
+    assert.equal(fixture.state.ui.isRatePopupOpen, false, reason);
+    assert.equal(fixture.stored.has("automatic"), false, reason);
+    assert.equal(fixture.state.rateDonate.shownCount, 0, reason);
+  }
+});
+
+test("stopping while browser confirmation is pending cancels review selection", async () => {
+  const fixture = reviewPromptFixture();
+  let release;
+  fixture.context.getDownloadStatuses = () => new Promise(resolve => { release = resolve; });
+  fixture.schedule();
+  const checking = fixture.fire();
+  fixture.state.ui.reviewStopCount = 1;
+  release([{ id: 1, state: "complete" }]);
+  await checking;
+  assert.deepEqual(fixture.shown, []);
+  assert.equal(fixture.timers.size, 0);
+  assert.equal(fixture.stored.has("automatic"), false);
+});
+
+test("regular milestone reviews use rateDonate cooldowns and exclude Morpheus selection", async () => {
+  const fixture = reviewPromptFixture();
+  fixture.state.ui.reviewHasConfirmedDownload = true;
+  fixture.state.leaderboard.allTimeDownloadsCount = 25;
+  let eligibleWeek;
+  for (let week = 0; week < 100; week += 1) {
+    fixture.state.leaderboard.weekDownloadsData.weekId = `week-${week}`;
+    if (fixture.legacy()) { eligibleWeek = week; break; }
+  }
+  assert.notEqual(eligibleWeek, undefined);
+  fixture.state.rateDonate.lastShownAt = 1800000000000 - 89 * 86400000;
+  assert.equal(fixture.legacy(), false);
+  fixture.state.rateDonate.lastShownAt = 1800000000000 - 90 * 86400000;
+  assert.equal(fixture.legacy(), true);
+  fixture.schedule(); await fixture.fire();
+  assert.deepEqual(fixture.shown, ["regular"]);
+  assert.equal(fixture.timers.size, 0);
+});
+
+test("the actual regular review popup records both its display and review click in shared state", () => {
+  const fixture = reviewPromptFixture();
+  fixture.state.ui.reviewHasConfirmedDownload = true;
+  fixture.state.leaderboard.allTimeDownloadsCount = 25;
+  for (let week = 0; week < 100; week += 1) {
+    fixture.state.leaderboard.weekDownloadsData.weekId = `week-${week}`;
+    if (fixture.legacy()) break;
+  }
+  assert.equal(fixture.legacy(), true);
+  let mounted;
+  const listeners = new Map();
+  const anchor = { addEventListener: (name, callback) => listeners.set(name, callback) };
+  fixture.document.createElement = () => ({ style: {}, appendChild() {}, querySelector: () => anchor, remove() {} });
+  fixture.document.body = { appendChild: element => { mounted = element; } };
+  fixture.context.replaceElementHtml = () => {};
+  fixture.context.escapeHtml = value => value;
+  const source = uiSource.slice(uiSource.indexOf("export function showRateUsPopUpLegacy()"), uiSource.indexOf("export function showStatsPopUp()"))
+    .replace("export function ", "function ");
+  vm.runInContext(source, fixture.context);
+  assert.equal(vm.runInContext("showRateUsPopUpLegacy()", fixture.context), true);
+  assert.equal(fixture.state.rateDonate.shownCount, 1);
+  assert.ok(fixture.state.rateDonate.lastShownAt);
+  assert.equal(fixture.state.ui.isRatePopupOpen, true);
+  listeners.get("click")();
+  mounted.onclick();
+  assert.ok(fixture.state.rateDonate.lastRatedAt);
+  assert.equal(JSON.parse(fixture.stored.get("review")).lastRatedAt, fixture.state.rateDonate.lastRatedAt);
+  assert.equal(fixture.state.ui.isRatePopupOpen, false);
+  fixture.advance(31 * 86400000);
+  assert.equal(fixture.eligible(), false, "Review clicks enforce 90 days, not only dismissal backoff");
+});
+
+test("review cooldown backoff and shared 24-hour limit use the same eligibility for both prompts", () => {
+  const fixture = reviewPromptFixture();
+  fixture.state.ui.reviewHasConfirmedDownload = true;
+  fixture.state.ui.reviewPendingDownloadIds = [];
+  for (const [count, days] of [[1, 3], [2, 7], [3, 14], [4, 14], [5, 30]]) {
+    fixture.state.rateDonate.shownCount = count;
+    fixture.state.rateDonate.lastShownAt = 1800000000000 - days * 86400000 + 1;
+    assert.equal(fixture.eligible(), false);
+    fixture.state.rateDonate.lastShownAt -= 1;
+    assert.equal(fixture.eligible(), true);
+  }
+  fixture.stored.set("automatic", String(1800000000000));
+  assert.equal(fixture.eligible(), false);
+  fixture.advance(86400000);
+  assert.equal(fixture.eligible(), true);
+});
+
 test("support clicks grant the donation-equivalent 90-day cooldown even before the first prompt", async () => {
   const code = (await readFile(new URL("../src/modules/utils/payItForward.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "").replaceAll("export function ", "function ");
   const now = 1800000000000;
   const storage = new Map([["tik.tok::lastSupportedAt", String(now)]]);
-  const state = { ui: {}, leaderboard: { newlyConfirmedMedia: [{}] }, rateDonate: { lastShownAt: null, shownCount: 0 } };
+  const state = { ui: { reviewHasConfirmedDownload: true }, leaderboard: { newlyConfirmedMedia: [{}] }, rateDonate: { lastShownAt: null, shownCount: 0 } };
   const context = vm.createContext({
     Date: { now: () => now }, localStorage: { getItem: key => storage.get(key) ?? null },
     AppState: state, activeAccountBatch: null, canShowAutomaticPopup: () => true,
+    reviewOperationIsIdle: () => true,
   });
   const eligibility = utils.slice(utils.indexOf("function shouldShowRateDonatePopup()"), utils.indexOf("export async function getTabSpans("));
   vm.runInContext(code + eligibility, context);
@@ -2137,6 +2685,21 @@ test("support click background action stores a local timestamp for every extensi
   assert.equal(result.timestamp, 1800000000000);
 });
 
+test("Morpheus retains its original invitation, line breaks, emphasis and pill labels", () => {
+  const prompt = uiSource.slice(uiSource.indexOf("export function showMorpheusRateUsPage()"), uiSource.indexOf("export function createModalMorpheus("));
+  assert.ok(prompt.includes(`message: \`<div class="ettpd-morpheus-message">
+  You've just seen how good this downloader is.<br>
+  Now it's your turn to support the mission.<br><br>
+  <strong>Take the red pill ☕ — fuel us.<br>
+  Take the blue pill ⭐ — rate us.</strong>
+</div>\``));
+  assert.doesNotMatch(prompt, /reviewInvitation/);
+  const modal = uiSource.slice(uiSource.indexOf("export function createModalMorpheus("), uiSource.indexOf("export function createFilenameTemplateModal("));
+  assert.ok(modal.includes('bluePill.textContent = "🔵 Rate"'));
+  assert.ok(modal.includes('redPill.textContent = "🔴 Support"'));
+  assert.doesNotMatch(modal, /reviewInvitation/);
+});
+
 test("a support click prevents an already delayed Morpheus prompt from opening", () => {
   const code = uiSource.slice(uiSource.indexOf("export function showMorpheusRateUsPage()"), uiSource.indexOf("export function createModalMorpheus("))
     .replace("export function ", "function ");
@@ -2146,6 +2709,7 @@ test("a support click prevents an already delayed Morpheus prompt from opening",
   const state = { ui: {}, rateDonate: {}, downloading: {} };
   const context = vm.createContext({
     AppState: state, hasSupportCooldown: () => supported, claimAutomaticPopup: () => true,
+    shouldShowRateDonatePopup: () => !supported,
     getExtensionReviewTarget: () => ({ url: "unused" }), hideDownloader() {}, showCelebration() {},
     setTimeout: handler => { callback = handler; }, isExtensionEnabledSync: () => true,
     document: { hidden: false, querySelector: () => null }, createModalMorpheus: () => { shown += 1; },

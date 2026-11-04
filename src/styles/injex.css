@@ -2972,6 +2972,7 @@ dialog.ettpd-language-dialog::backdrop {
 
 /* Base Modal Overlay */
 #ettpd-morpheus-overlay.morpheus-theme {
+  box-sizing: content-box;
   position: fixed;
   z-index: 99998;
   top: 0;
