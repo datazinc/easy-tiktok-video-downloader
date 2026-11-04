@@ -1894,23 +1894,31 @@ export function getSrcById(id) {
 }
 
 export function getCurrentPlayingArticle() {
+  const viewportHeight = window.innerHeight || document.documentElement?.clientHeight || 0;
+  const viewportWidth = window.innerWidth || document.documentElement?.clientWidth || 0;
+  const videos = Array.from(document.querySelectorAll("video"))
+    .map(video => {
+      const rect = video.getBoundingClientRect();
+      const width = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
+      const height = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
+      return { video, area: width * height };
+    })
+    .filter(candidate => candidate.area > 0)
+    .sort((left, right) => Number(!right.video.paused && !right.video.ended) - Number(!left.video.paused && !left.video.ended) || right.area - left.area);
+  const getRoot = element => element?.closest('article,[data-e2e="feed-video"],[data-e2e="browse-video"]') ||
+    element?.closest('[class*="DivPlayerContainer"],[class*="DivStoriesPlayer"]');
+  if (videos.length) return getRoot(videos[0].video) || videos[0].video.parentElement;
+
   const progressBar = document.querySelector(
     'div[role="slider"][aria-valuenow]:not([aria-valuenow="0"])',
   );
-  if (progressBar) {
-    return progressBar.closest("article");
-  }
-
-  const playingVideo = document.querySelector('video[src^="blob:"]');
-  if (playingVideo) {
-    return playingVideo.closest("article");
-  }
+  if (progressBar && getRoot(progressBar)) return getRoot(progressBar);
 
   const unmuted = document.querySelector(
     'div[data-e2e="video-sound"][aria-pressed="true"]',
   );
   if (unmuted) {
-    return unmuted.closest("article");
+    return getRoot(unmuted) || null;
   }
   if (AppState.debug.active)
     console.warn("ttkdebugger: No playing article found");
@@ -4288,18 +4296,6 @@ export function displayFoundUrls({ forced } = {}) {
     }
 
     const pageInfo = syncPlaylistStateWithLocation();
-
-    // Anti flickering
-    if (
-      !forced &&
-      document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER) &&
-      !document.getElementById(DOM_IDS.DOWNLOADER_WRAPPER).querySelector("ol")
-        ?.innerHTML &&
-      !AppState.allDirectLinks.length &&
-      !Object.keys(AppState.allItemsEverSeen).length
-    ) {
-      return;
-    }
 
     const items = getRenderableItemsForCurrentPage(pageInfo);
     const metas = items
@@ -6937,6 +6933,8 @@ function getNearById(article, maxSiblingRadius = 4, maxVisits = 50) {
 
 // Convenience: get current playing article and resolve nearest id
 export function getClosestPlayingVideoId() {
+  const pathId = window.location.pathname.match(/\/@[^/]+\/(?:video|photo)\/(\d+)(?:\/|$)/)?.[1];
+  if (pathId) return pathId;
   const article = getCurrentPlayingArticle();
   if (!article) return null;
   return getNearById(article);

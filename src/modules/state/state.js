@@ -195,7 +195,9 @@ const AppState = {
       getStringOrNull(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE) == "custom" &&
       getStringOrNull(STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION)
         ? "custom"
-        : "bottom-right",
+        : ["top-left", "top-right", "bottom-left", "bottom-right"].includes(getStringOrNull(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE))
+          ? getStringOrNull(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE)
+          : "bottom-left",
     live_ETTPD_CUSTOM_POS: getStringOrNull(
       STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION,
     ),
@@ -243,7 +245,7 @@ const AppState = {
       STORAGE_KEYS.SHOW_DOWNLOAD_MESSAGES,
     ),
     useNativeDownload: getBooleanOrNull(STORAGE_KEYS.USE_NATIVE_DOWNLOAD, null),
-    experimentalHd: getBooleanFromStorage(STORAGE_KEYS.EXPERIMENTAL_HD),
+    experimentalHd: getBooleanOrNull(STORAGE_KEYS.EXPERIMENTAL_HD, true),
     // null = auto (use native for Brave), true = always native, false = always chrome.downloads
   },
   rateDonate: safeParseRateDonateDates(
@@ -283,6 +285,8 @@ try {
 export function resetAppStateToDefaults() {
   // Reset localStorage-dependent values
   localStorage.removeItem(STORAGE_KEYS.DOWNLOADER_POSITION_TYPE);
+  localStorage.removeItem(STORAGE_KEYS.DOWNLOADER_CUSTOM_POSITION);
+  localStorage.removeItem(STORAGE_KEYS.SHOW_BUTTON_POSITION);
   localStorage.removeItem(STORAGE_KEYS.IS_DOWNLOADER_CLOSED);
   localStorage.removeItem(STORAGE_KEYS.SELECTED_FULL_PATH_TEMPLATE);
   localStorage.removeItem(STORAGE_KEYS.FULL_PATH_TEMPLATES);
@@ -328,9 +332,10 @@ export function resetAppStateToDefaults() {
     isHydrating: false,
   };
   AppState.ui = {
-    downloaderPositionType: null,
+    downloaderPositionType: "bottom-left",
     live_ETTPD_CUSTOM_POS: null,
     isPreferenceBoxOpen: false,
+    isScrapperBoxOpen: false,
     isDownloaderClosed: false,
     isRatePopupOpen: false,
     isDragging: false,
@@ -354,7 +359,7 @@ export function resetAppStateToDefaults() {
     showFolderPicker: false,
     showDownloadMessages: false,
     disableConfetti: false,
-    experimentalHd: false,
+    experimentalHd: true,
   };
   // Set default
   localStorage.setItem(

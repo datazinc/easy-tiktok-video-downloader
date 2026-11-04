@@ -62,6 +62,10 @@ The wide download button shows the current post or file, transfer percentage and
 
 Experimental HD uses one continuous indicator for the current video, with status text for downloading, combining audio/video, saving, or switching to standard. It does not show a percentage that restarts at each stage. During HD batches, the overall bar advances by completed posts. Each post tries at most one genuine HD upgrade before standard fallback; lower-quality adaptive renditions are not extra HD attempts. A failed paired-stream request cancels its sibling, and an HD network transfer with no activity for 30 seconds is aborted.
 
+For new users, Experimental HD is enabled and the main downloader opens by default. Existing saved choices are respected. Factory Reset clears those choices and restores HD enabled with the downloader open, including after a page reload.
+
+The downloader and floating Open button default to bottom-left. Selected corners and actual dragged positions are retained; ordinary clicks do not save a new position. Factory Reset also clears saved panel and Open-button locations.
+
 While a list page is loading, the button shows **Loading posts** and the number already confirmed saved, without a guessed total. Once the current batch is queued, its counter uses only those confirmed posts. The configured maximum batch size is never presented as a discovered post count or a whole-list total.
 
 Pause takes effect before the next file; an in-flight save is allowed to finish. Pause and Stop are hidden when the batch completes or stops. Resumed queues use the same progress display.

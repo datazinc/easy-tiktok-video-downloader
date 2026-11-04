@@ -208,6 +208,18 @@ function scheduleUITasks(reason = "timer") {
   );
 }
 
+function scheduleMediaDataDiscovery(event) {
+  if (event.target?.tagName !== "VIDEO" || !isExtensionEnabled()) return;
+  const rect = event.target.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.top >= window.innerHeight || rect.right <= 0 || rect.left >= window.innerWidth) return;
+  const task = uiTasks.find(task => task.name === "initial-data");
+  if (task) task.lastRun = -Infinity;
+  scheduleUITasks("media-ready");
+}
+
+document.addEventListener("loadedmetadata", scheduleMediaDataDiscovery, true);
+document.addEventListener("playing", scheduleMediaDataDiscovery, true);
+
 /**
  * Detects any new video data (logged-in, logged-out or React-Fiber),
  * feeds it into your handler. Runs every 3s.
@@ -272,7 +284,6 @@ export function pollInitialData() {
           if (!mid || mid !== id) {
             continue;
           }
-          AppState.allItemsEverSeen[mid] = item;
           parsed.push(media);
         } catch (e) {
           if (AppState.debug.active)
