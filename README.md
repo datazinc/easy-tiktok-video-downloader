@@ -11,6 +11,13 @@ Easy TikTok Video Downloader is an open source browser extension for saving supp
 - Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 - Responsible-use and platform/trademark disclaimers live in [LEGAL.md](LEGAL.md).
 
+## Install
+
+- [Chrome Web Store: Chrome, Chromium, and Brave](https://chromewebstore.google.com/detail/easy-tiktok-video-downloa/fclobfmgolhdcfcmpbjahiiifilhamcg)
+- [Mozilla Add-ons: Firefox](https://addons.mozilla.org/en-US/firefox/addon/tiktok-downloader-bulk/)
+
+Use the stores for production installation and automatic updates. GitHub archives are for development and store submission. See [installation instructions](INSTALL.md) for temporary testing.
+
 ## Releases
 
 - Release artifacts are published on the GitHub Releases page: https://github.com/datazinc/easy-tiktok-video-downloader/releases
@@ -18,6 +25,9 @@ Easy TikTok Video Downloader is an open source browser extension for saving supp
 - `easy-tiktok-video-downloader-v<version>-chromium.zip`
 - `easy-tiktok-video-downloader-v<version>-chrome.zip`
 - `easy-tiktok-video-downloader-v<version>-firefox.zip`
+- `INSTALL.md` and `SHA256SUMS.txt`
+
+Production installers are available through the stores linked above. GitHub releases do not publish self-distributed XPI/CRX installers or bypass store signing and approval.
 
 Before publishing, the workflow runs the download regression suite and validates each browser package's manifest, popup entry point, runtime files, and copied assets. Chrome and Firefox use the same local `storage` permission as the Chromium build for extension settings and cooldowns; this does not add analytics or remote data collection.
 
@@ -53,6 +63,12 @@ The wide download button shows the current post or file, transfer percentage and
 While a list page is loading, the button shows **Loading posts** and the number already confirmed saved, without a guessed total. Once the current batch is queued, its counter uses only those confirmed posts. The configured maximum batch size is never presented as a discovered post count or a whole-list total.
 
 Pause takes effect before the next file; an in-flight save is allowed to finish. Pause and Stop are hidden when the batch completes or stops. Resumed queues use the same progress display.
+
+## Filename Templates
+
+All eight filename presets use the same renderer as the template editor preview. The recommended preset retains the selected profile and list folders during progressive batches, while each filename identifies the actual post author. Collection folders are expanded only when the tab token occupies a directory segment, so flat templates remain flat.
+
+File extensions follow the downloaded media type. Multi-image posts receive distinct image numbers even when the selected template omits the sequence token. Invalid/reserved filename characters and overlong UTF-8 path components are normalized safely; shortening preserves the end of the component for post IDs and quality labels. Existing downloaded files are not renamed.
 
 ## Account List Batches
 

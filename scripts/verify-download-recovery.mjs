@@ -19,6 +19,103 @@ const { ProgressiveBatch } = await import(`data:text/javascript;base64,${Buffer.
 const accountSource = await readFile(new URL("../src/modules/utils/accountLists.js", import.meta.url), "utf8");
 const accountLists = await import(`data:text/javascript;base64,${Buffer.from(accountSource).toString("base64")}`);
 
+const constantsSource = await readFile(new URL("../src/modules/state/constants.js", import.meta.url), "utf8");
+const { FILE_STORAGE_LOCATION_TEMPLATE_PRESETS, DOWNLOAD_FOLDER_DEFAULT } = await import(`data:text/javascript;base64,${Buffer.from(constantsSource).toString("base64")}`);
+
+function filenameFixture(preset = FILE_STORAGE_LOCATION_TEMPLATE_PRESETS[0]) {
+  const state = {
+    downloadPreferences: { fullPathTemplate: preset },
+    scrapperDetails: { selectedTab: "liked", selectedCollectionName: "Summer of Sports", isAutoBatchDownloading: false },
+    downloading: { accountBatch: { scope: "liked:profile-owner" } },
+  };
+  const context = vm.createContext({
+    AppState: state, DOWNLOAD_FOLDER_DEFAULT, Date, TextEncoder,
+    getDefaultPresetTemplate: () => FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find(preset => preset.isDefault),
+    getCurrentPageUsername: () => "profile-owner",
+    toTitleCase: value => String(value).replace(/\b\w/g, char => char.toUpperCase()),
+    console: { error: error => { throw error; } },
+  });
+  const code = utils.slice(utils.indexOf("export function getDownloadFilePath("), utils.indexOf("function getHttpUrls("))
+    .replaceAll("export function ", "function ").replaceAll("export const ", "const ");
+  vm.runInContext(code, context);
+  return { state, context, render: (media, options = {}) => {
+    context.media = media; context.options = options;
+    return vm.runInContext("getDownloadFilePath(media,options)", context);
+  } };
+}
+
+const filenameMedia = {
+  videoId: "7394627756635573022", authorId: "actual.author", authorNickname: "Actual Author",
+  createTime: new Date(2025, 7, 14, 1, 10), desc: "A useful clip #fun", musicTitle: "Chill Vibes", musicAuthor: "DJ Flow",
+  hashtags: [{ name: "fun" }, { name: "relax" }], qualityLabel: "HD", isImage: false, isAd: false,
+};
+
+test("every filename preset renders safe video paths and distinct photo filenames", () => {
+  for (const preset of FILE_STORAGE_LOCATION_TEMPLATE_PRESETS) {
+    const setup = filenameFixture(preset);
+    const video = setup.render(filenameMedia);
+    assert.ok(video.endsWith(".mp4"), preset.label);
+    assert.doesNotMatch(video, /[{}<>:"\\|?*\x00-\x1F]/, preset.label);
+    assert.ok(!video.startsWith("/") && !video.includes("//"), preset.label);
+    const photos = [0, 1, 2].map(imageIndex => setup.render({ ...filenameMedia, isImage: true, imagePostImages: ["a", "b", "c"] }, { imageIndex }));
+    assert.ok(photos.every(filename => filename.endsWith(".jpeg")), preset.label);
+    assert.equal(new Set(photos).size, 3, `${preset.label}: photo names must not collide`);
+  }
+});
+
+test("recommended paths preserve selected profile/list folders in progressive batches", () => {
+  const setup = filenameFixture();
+  for (const [tab, folder] of [["liked", "Liked"], ["reposts", "Reposts"], ["favorites", "Favorites"], ["collection", "Collections/Summer-of-Sports"]]) {
+    setup.state.scrapperDetails.selectedTab = tab;
+    const filename = setup.render(filenameMedia);
+    assert.ok(filename.startsWith(`${DOWNLOAD_FOLDER_DEFAULT}/@profile-owner/${folder}/`), filename);
+    assert.match(filename, /actual\.author.*3022-HD\.mp4$/);
+  }
+});
+
+test("default, missing fields, dotted stems, reserved names, and Unicode paths remain valid", () => {
+  const setup = filenameFixture();
+  setup.state.downloadPreferences.fullPathTemplate = null;
+  assert.ok(setup.render(filenameMedia).endsWith(".mp4"));
+  for (const preset of FILE_STORAGE_LOCATION_TEMPLATE_PRESETS) {
+    setup.state.downloadPreferences.fullPathTemplate = preset;
+    const filename = setup.render({ videoId: "123" });
+    assert.doesNotMatch(filename, /[{}<>:"\\|?*\x00-\x1F]|missing-|:profile:/, preset.label);
+    const unicode = setup.render({ ...filenameMedia, desc: "測試".repeat(150), musicTitle: "音樂".repeat(100), musicAuthor: "CON" });
+    for (const segment of unicode.split("/")) assert.ok(Buffer.byteLength(segment, "utf8") <= 255, `${preset.label}: oversized segment`);
+  }
+  setup.state.downloadPreferences.fullPathTemplate = { template: "files/post.v1.mp4" };
+  assert.equal(setup.render(filenameMedia), "files/post.v1.mp4");
+  setup.state.downloadPreferences.fullPathTemplate = { template: "CON.mp4" };
+  assert.equal(setup.render(filenameMedia), "CON-file.mp4");
+  setup.state.downloadPreferences.fullPathTemplate = FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find(preset => preset.isRecommended);
+  assert.ok(setup.render({ authorId: "user" }).endsWith("no-id-SD.mp4"));
+  const descriptive = FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find(preset => preset.template.startsWith("desc_clips/"));
+  assert.ok(setup.render({ ...filenameMedia, desc: "測試".repeat(150) }, { options: { template: descriptive.template } }).endsWith(`${filenameMedia.videoId}.mp4`));
+});
+
+test("template previews and browser transport use the same path without mutating saved presets", () => {
+  const setup = filenameFixture();
+  const savedPreset = setup.state.downloadPreferences.fullPathTemplate;
+  const bridgeStart = utils.indexOf("export function sendBasicBlobDownloadRequest(");
+  const bridge = utils.slice(bridgeStart, utils.indexOf("\nexport ", bridgeStart + 1)).replace("export function ", "function ");
+  let posted;
+  setup.context.window = { postMessage: message => { posted = message; } };
+  vm.runInContext(bridge, setup.context);
+  for (const preset of FILE_STORAGE_LOCATION_TEMPLATE_PRESETS) {
+    const filename = setup.render({ ...filenameMedia, desc: "測試-".repeat(150), musicTitle: "CON.txt" }, { options: { template: preset.template } });
+    setup.context.filename = filename;
+    assert.equal(vm.runInContext("sanitizeDownloadFilename(filename)", setup.context), filename, preset.label);
+    vm.runInContext("sendBasicBlobDownloadRequest({filename})", setup.context);
+    assert.equal(posted.payload.filename, filename, preset.label);
+    assert.equal(setup.state.downloadPreferences.fullPathTemplate, savedPreset);
+  }
+  setup.state.scrapperDetails.selectedTab = "collection";
+  const legacy = FILE_STORAGE_LOCATION_TEMPLATE_PRESETS.find(preset => preset.isDefault);
+  assert.ok(!setup.render(filenameMedia, { options: { template: legacy.template } }).includes("/"));
+  assert.equal(setup.render(filenameMedia, { options: { template: "files/post.v1" } }), "files/post.v1.mp4");
+});
+
 function fixture() {
   const values = new Map();
   let now = 1000;

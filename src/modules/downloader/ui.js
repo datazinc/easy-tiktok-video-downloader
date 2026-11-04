@@ -49,8 +49,6 @@ import {
   getRecommendedPresetTemplate,
   showShareOptions,
   buildVideoLinkMeta,
-  cleanupPath,
-  applyTemplate,
   findRecentPlaylistRequestUrl,
   isOnProfileOrCollectionPage,
   rememberCurrentPlaylistItems,
@@ -7051,12 +7049,6 @@ export function createFilenameTemplateModal() {
   deleteBtn.style = "margin-right:15px;";
   deleteBtn.disabled = !savedLabel;
 
-  const sanitize = (val) =>
-    (val ?? "")
-      .toString()
-      .replace(/[^\p{L}\p{N}_-]+/gu, "-")
-      .slice(0, 100);
-
   const validatePathTemplate = (tpl) => {
     const errs = [];
     if (tpl.startsWith("/") && !tpl.startsWith("@/@")) {
@@ -7100,11 +7092,11 @@ export function createFilenameTemplateModal() {
 
     const sample = {
       videoId: "7557564294825626893",
-      authorId: "user456",
+      authorId: "coolguy",
       authorUsername: "coolguy",
       authorNickname: "coolguy",
       desc: "My best post ever that should be trimmed",
-      createTime: "2020-08-23_1201",
+      createTime: new Date(2020, 7, 23, 12, 1),
       downloadTime: "2025-08-23_1201",
       musicTitle: "Chill Vibes",
       musicAuthor: "DJ Flow",
@@ -7118,75 +7110,11 @@ export function createFilenameTemplateModal() {
       quality: "HD",
     };
 
-    const sanitizeDesc = (val, maxLen = 100) => {
-      const str = (val ?? "").toString();
-      const sanitized = str.replace(/[^\p{L}\p{N}_\-.#]+/gu, "-");
-      return sanitized.length > maxLen ? sanitized.slice(0, maxLen) : sanitized;
-    };
-
-    const sanitizeHashtag = (val) => {
-      const str = (val ?? "").toString();
-      const sanitized = str
-        .split("")
-        .map((char) => {
-          if (/[\p{L}\p{N}_\-.]/u.test(char) || char === "#") {
-            return char;
-          }
-          return "-";
-        })
-        .join("")
-        .replace(/-+/g, "-");
-      return sanitized.slice(0, 100);
-    };
-
-    const getFieldMaxLength = (fieldName) => {
-      const regex = new RegExp(`\\{${fieldName}:(-?\\d+)`);
-      const match = tpl.match(regex);
-      return match ? Number(match[1]) : undefined;
-    };
-
-    const sequenceNumber = 4;
-    const isMultiImage = sample.imagePostImages?.length > 1;
-    const descMaxLen = getFieldMaxLength("desc");
-    const isDescMaxLenDefined = descMaxLen !== undefined;
-
-    const fieldValues = {
-      videoId: sanitize(sample.videoId),
-      authorUsername: sanitize(sample.authorUsername),
-      authorNickname: sanitize(sample.authorNickname),
-      desc: sanitizeDesc(
-        sample.desc,
-        isDescMaxLenDefined ? (descMaxLen > 0 ? descMaxLen : 100) : 100,
-      ),
-      createTime: sample.createTime,
-      musicTitle: sanitize(sample.musicTitle),
-      musicAuthor: sanitize(sample.musicAuthor),
-      views: sanitize(sample.views),
-      duration: sanitize(sample.duration),
-      hashtags: (sample.hashtags || [])
-        .map((tag) => {
-          const tagName = tag.name || tag;
-          const prefixedTag = tagName.startsWith("#") ? tagName : `#${tagName}`;
-          return sanitizeHashtag(prefixedTag);
-        })
-        .join(""),
-      tabName: sample.tabName,
-      downloadTime: sample.downloadTime,
-      isAd: sample.isAd,
-      isImage: sample.isImage,
-      quality: sample.quality,
-    };
-
-    const previewTemplate = tpl.startsWith("@/")
-      ? `${DOWNLOAD_FOLDER_DEFAULT}${tpl.slice(1)}`
-      : tpl;
-    const replaced = applyTemplate(previewTemplate, fieldValues, {
-      sequenceNumber,
-      isMultiImage,
-      collectionName: "sample-collection",
+    const filename = getDownloadFilePath(sample, {
+      imageIndex: 3,
+      options: { template: tpl, tabName: sample.tabName, quality: sample.quality },
     });
-    const cleaned = cleanupPath(replaced);
-    preview.textContent = `Preview in Downloads: ${cleaned}.mp4`;
+    preview.textContent = `Preview in Downloads: ${filename}`;
   }
 
   comboSelect.onchange = () => {
