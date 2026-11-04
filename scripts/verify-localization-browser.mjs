@@ -22,6 +22,7 @@ const episodes = ui.slice(ui.indexOf("async function showShortDramaBatchDialog("
 const statistics = strip(ui.slice(ui.indexOf("export function showStatsPopUp("), ui.indexOf("export function createModal(")));
 const numericStats = ui.slice(ui.indexOf("function formatCompactNumberWithTooltip("), ui.indexOf("export function showStatsSpan("));
 const hdProgress = ui.slice(ui.indexOf("function updateExperimentalHdProgress("), ui.indexOf("async function runExperimentalHdDownload("));
+const hdBanner = ui.slice(ui.indexOf("function createExperimentalHdBanner("), ui.indexOf("function createExperimentalHdStatus("));
 const openButton = strip(ui.slice(ui.indexOf("function makeShowButtonDraggable("), ui.indexOf("export function showRateUsPopUpLegacy()")));
 const readinessControls = strip(ui.slice(ui.indexOf("export function getReadyVideoDownloadMedia("), ui.indexOf("function syncOverlayExperimentalHdButton(")));
 const scraperView = ui.slice(ui.indexOf("function renderActiveScrappingView("), ui.indexOf("async function renderCompletedView("));
@@ -79,7 +80,17 @@ try {
     class ProgressiveBatch {readChunk(){return {queue:[{videoId:'5',key:'5:v',lastFailure:true,status:'pending'},{videoId:'6',key:'6:v',status:'saved'}],saves:[{key:'6:v',downloadId:10}]};}}
     const showToast=()=>{},displayFoundUrls=()=>{},replaceElementHtml=(element,html)=>{const svg=element.namespaceURI==='http://www.w3.org/2000/svg';const parsed=new DOMParser().parseFromString(svg?'<svg xmlns="http://www.w3.org/2000/svg">'+html+'</svg>':html,svg?'image/svg+xml':'text/html');element.replaceChildren(...(svg?parsed.documentElement:parsed.body).childNodes);localizeMarkup(element);};
     ${icons}\n${modal}\n${helpers}\n${dialog}\n${templates}\n${preferences}\n${episodes}\n${numericStats}\n${statistics}\n${hdProgress}\n${openButton}\n${scraperView}\n${scraperHelp}\n${recoveryDialog}\n${browserSetup}\n${strip(read("src/modules/utils/payItForward.js"))}
+    ${hdBanner}
     initializeI18n(); onLanguageChange(()=>{for(const button of document.querySelectorAll('[data-i18n-button]'))setButtonWithIcon(button,t(button.dataset.i18nButton,button._i18nValues||{}),button.dataset.i18nIcon||null);});
+    window.checkHdBanner=async(locale,width)=>{
+      document.querySelector('.ettpd-modal-close')?.click();document.querySelector('dialog')?.close();document.body.replaceChildren();await setLanguage(locale);
+      style.textContent=${JSON.stringify(read("src/styles/injex.css"))};
+      AppState.downloadPreferences.experimentalHd=false;AppState.ui.hasDismissedExperimentalHdBanner=false;
+      const wrapper=document.createElement('div');wrapper.style.width=width+'px';document.body.append(wrapper);
+      const banner=createExperimentalHdBanner(document.createElement('div'),document.createElement('button'));wrapper.append(banner);
+      const bounds=banner.getBoundingClientRect(),copy=banner.querySelector('.ettpd-experimental-hd-banner-copy').getBoundingClientRect(),actions=banner.querySelector('.ettpd-experimental-hd-banner-actions').getBoundingClientRect();
+      return {copyWidth:copy.width,bannerWidth:bounds.width,actionsBelow:actions.top>=copy.bottom,overflow:banner.scrollWidth>banner.clientWidth+1,buttonsWithin:[...banner.querySelectorAll('button')].every(button=>{const rect=button.getBoundingClientRect();return rect.left>=bounds.left&&rect.right<=bounds.right;})};
+    };
     window.renderLocale=async(locale,font,dark)=>{document.body.replaceChildren();theme=dark?'dark':'classic';document.body.style.cssText='margin:0;background:'+(dark?'#111':'#fff')+';font-size:'+font+'px';await setLanguage(locale);document.body.append(createLanguageControl());await showAccountBatchDialog({kind:'collection',id:'123',title:'Summer of Sports'});const box=document.querySelector('.ettpd-modal-box');const actions=[...box.querySelectorAll('button')].filter(button=>button.getBoundingClientRect().height>0);actions.at(-1).scrollIntoView({block:'nearest'});const bounds=box.getBoundingClientRect();return {locale:getLocale(),overflow:box.scrollWidth>box.clientWidth+1,summary:[...box.querySelectorAll('dl dd')].map(element=>element.textContent),actions:actions.map(button=>({text:button.textContent,within:button.getBoundingClientRect().left>=bounds.left&&button.getBoundingClientRect().right<=bounds.right}))};};
     window.switchEnglish=async()=>{await setLanguage('en');return {locale:getLocale(),button:document.querySelector('.ettpd-modal-box button[type=submit]').textContent};};
     window.renderScreen=async(screen,locale)=>{
@@ -200,6 +211,18 @@ try {
     return Object.keys(SUPPORTED_LOCALES);
   })()`;
   const locales = await evaluate(setup);
+  for (const width of [260, 420]) for (const locale of locales) {
+    const banner = await evaluate(`checkHdBanner(${JSON.stringify(locale)},${width})`);
+    assert.ok(banner.copyWidth >= banner.bannerWidth * 0.6, `${locale}/${width}: HD banner copy is squeezed`);
+    assert.equal(banner.actionsBelow, true, `${locale}/${width}: HD actions compete with copy`);
+    assert.equal(banner.overflow, false, `${locale}/${width}: HD banner overflows`);
+    assert.equal(banner.buttonsWithin, true, `${locale}/${width}: HD banner action is clipped`);
+    if (locale === "en") {
+      const image = await call("Page.captureScreenshot", { format: "png" }, sessionId);
+      fs.writeFileSync(path.join(screenshots, `hd-banner-${width}.png`), Buffer.from(image.data, "base64"));
+    }
+  }
+  console.log("HD banner: readable copy and separate actions at 260/420px in all 11 languages.");
   for (const width of [320, 1200]) for (const locale of locales) {
     await call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
     const result = await evaluate(`renderLocale(${JSON.stringify(locale)},${width === 320 ? 20 : 16},${width === 1200})`);
@@ -226,14 +249,14 @@ try {
     }
   }
   const locations = await evaluate("checkOpenButtonPosition()");
-  assert.equal(locations.first.left, 20);
+  assert.equal(locations.width - locations.first.right, 20);
   assert.equal(locations.first.bottom, 50);
   assert.deepEqual(locations.reopened, locations.first);
   assert.equal(locations.clickSaved, null);
   assert.ok(locations.clamped.left >= 0 && locations.clamped.right <= locations.width && locations.clamped.top >= 0);
-  assert.equal(locations.reset.left, 20);
+  assert.equal(locations.width - locations.reset.right, 20);
   assert.equal(locations.reset.bottom, 50);
-  console.log("Real DOM: Open stays bottom-left across close/reopen; custom positions clamp and reset correctly.");
+  console.log("Real DOM: Open stays bottom-right across close/reopen; custom positions clamp and reset correctly.");
   const reset = await evaluate("checkFactoryReset()");
   assert.deepEqual(reset, { hd: true, closed: false, settingsOpen: false, oldWrapperRemoved: true, shortcutRemoved: true, freshCheckbox: true });
   console.log("Real DOM: factory reset restores HD on, downloader open, and rebuilt controls.");

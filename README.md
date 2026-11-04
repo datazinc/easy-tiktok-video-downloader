@@ -64,7 +64,7 @@ Experimental HD uses one continuous indicator for the current video, with status
 
 For new users, Experimental HD is enabled and the main downloader opens by default. Existing saved choices are respected. Factory Reset clears those choices and restores HD enabled with the downloader open, including after a page reload.
 
-The downloader and floating Open button default to bottom-left. Selected corners and actual dragged positions are retained; ordinary clicks do not save a new position. Factory Reset also clears saved panel and Open-button locations.
+The downloader and floating Open button default to bottom-right. Selected corners and actual dragged positions are retained; ordinary clicks do not save a new position. Factory Reset also clears saved panel and Open-button locations.
 
 While a list page is loading, the button shows **Loading posts** and the number already confirmed saved, without a guessed total. Once the current batch is queued, its counter uses only those confirmed posts. The configured maximum batch size is never presented as a discovered post count or a whole-list total.
 

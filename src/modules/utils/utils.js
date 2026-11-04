@@ -5372,7 +5372,7 @@ export function showCelebration(type = "tier", message, count = 10) {
   const now = Date.now();
   const conf = AppState.downloadPreferences.disableConfetti || reducedMotion ||
     document.hidden || document.querySelector(".ettpd-modal-overlay") ||
-    now - lastConfettiAt < CELEBRATION_COOLDOWN_MS
+    (type !== "mindblown" && now - lastConfettiAt < CELEBRATION_COOLDOWN_MS)
     ? null
     : getConfetti();
   if (conf) lastConfettiAt = now;
